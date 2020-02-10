@@ -1,3 +1,4 @@
+#!/bin/bash
 #-----------------------------------------------------------------------------
 #
 #  TSDuck - The MPEG Transport Stream Toolkit
@@ -27,31 +28,23 @@
 #
 #-----------------------------------------------------------------------------
 #
-#  GitHub Actions configuration file : Nightly builds update
-#
-#  The "nightly build" workflow runs every night at 01:10 GMT. It builds
-#  installers and documentations and uploads them as artifacts. These
-#  artifacts are made available only when the "nightly build" workflow
-#  completes. The present workflow runs three hours after "nightly build".
-#  We expect the artifacts to be available at that time. This workflow
-#  triggers an action at tsduck.io which downloads the new installers and
-#  documentation and make them available on the Web site.
+#  This script extracts the TSDuck version from the source files.
 #
 #-----------------------------------------------------------------------------
 
-name: Nightly build update
+SCRIPT=$(basename $BASH_SOURCE)
+ROOTDIR=$(cd $(dirname $BASH_SOURCE)/..; pwd)
+VERSFILE="$ROOTDIR/src/libtsduck/tsVersion.h"
 
-# Trigger the workflow every day at 04:10 GMT
-on:
-  schedule:
-    - cron:  '10 4 * * *'
+TS_MAJOR=$(grep '\#define *TS_VERSION_MAJOR ' "$VERSFILE" | sed -e 's/.* //')
+TS_MINOR=$(grep '\#define *TS_VERSION_MINOR ' "$VERSFILE" | sed -e 's/.* //')
+TS_COMMIT=$(grep '\#define *TS_COMMIT ' "$VERSFILE" | sed -e 's/.* //')
+TS_VERSION=
 
-jobs:
-  update:
-    name: Update nightly builds
-    runs-on: ubuntu-latest
-    steps:
-    - name: Install dependencies
-      run: sudo apt install -y curl jq
-    - name: Trigger download
-      run: curl -sL https://tsduck.io/download/prerelease/get-nightly-builds | jq .
+case "$1" in
+    --major)  echo "$TS_MAJOR" ;;
+    --minor)  echo "$TS_MINOR" ;;
+    --commit) echo "$TS_COMMIT" ;;
+    --main)   echo "$TS_MAJOR.$TS_MINOR" ;;
+    *)        echo "$TS_MAJOR.$TS_MINOR-$TS_COMMIT" ;;
+esac
