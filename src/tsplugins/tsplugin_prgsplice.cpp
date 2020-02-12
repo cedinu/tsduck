@@ -726,7 +726,7 @@ void ts::PrgSplicePlugin::processSpliceCommand(PID pid, SpliceInformationTable& 
 
     // Start of message.
     UString msg(u"");
-    UINT segmentation_type_id;
+    uint8_t segmentation_type_id;
 
     if (sit.splice_command_type == SPLICE_TIME_SIGNAL) {
         double tsvalue;
@@ -736,7 +736,7 @@ void ts::PrgSplicePlugin::processSpliceCommand(PID pid, SpliceInformationTable& 
         msg += UString::Float(tsvalue, 10, 3, false);
 
         if (sit.descs[0]->size() > 14) {
-            segmentation_type_id = (UINT)sit.descs[0]->content()[14];
+            segmentation_type_id = (uint8_t)sit.descs[0]->content()[14];
             //    msg += UString::Format(u"\nDesc 0: %x", { (INT64)sit.descs[0]->content() });
             msg += UString::Format(u"_%02x \r\n", { segmentation_type_id });
         }
