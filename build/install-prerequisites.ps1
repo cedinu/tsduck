@@ -1,4 +1,4 @@
-#-----------------------------------------------------------------------------
+﻿#-----------------------------------------------------------------------------
 #
 #  TSDuck - The MPEG Transport Stream Toolkit
 #  Copyright (c) 2005-2020, Thierry Lelegard
@@ -26,33 +26,39 @@
 #  THE POSSIBILITY OF SUCH DAMAGE.
 #
 #-----------------------------------------------------------------------------
-#
-#  GitHub Actions configuration file : Nightly builds update
-#
-#  The "nightly build" workflow runs every night at 01:10 GMT. It builds
-#  installers and documentations and uploads them as artifacts. These
-#  artifacts are made available only when the "nightly build" workflow
-#  completes. The present workflow runs three hours after "nightly build".
-#  We expect the artifacts to be available at that time. This workflow
-#  triggers an action at tsduck.io which downloads the new installers and
-#  documentation and make them available on the Web site.
-#
-#-----------------------------------------------------------------------------
 
-name: Nightly build update
+<#
+ .SYNOPSIS
 
-# Trigger the workflow every day at 04:10 GMT
-on:
-  schedule:
-    - cron:  '10 4 * * *'
+  Install all pre-requisites packages to build TSDuck on Windows.
 
-jobs:
-  update:
-    name: Update nightly builds
-    runs-on: ubuntu-latest
-    steps:
-    - name: Install dependencies
-      run: sudo apt install -y curl jq
-    - name: Trigger download
-      run: |
-        curl -sL -H 'X-Upload-Credentials: ${{ secrets.UPLOAD_CREDENTIALS }}' https://tsduck.io/download/prerelease/get-nightly-builds | jq .
+ .PARAMETER ForceDownload
+
+  Force downloads even if packages are already downloaded.
+
+ .PARAMETER GitHubActions
+
+  When used in a GitHub Action workflow, make sure that the required
+  environment variables are propagated to subsequent jobs.
+
+ .PARAMETER NoPause
+
+  Do not wait for the user to press <enter> at end of execution. By default,
+  execute a "pause" instruction at the end of execution, which is useful
+  when the script was run from Windows Explorer.
+#>
+[CmdletBinding(SupportsShouldProcess=$true)]
+param(
+    [switch]$ForceDownload = $false,
+    [switch]$GitHubActions = $false,
+    [switch]$NoPause = $false
+)
+
+$RootDir = (Split-Path -Parent $PSScriptRoot)
+$DektecDir = (Join-Path $RootDir dektec)
+
+& (Join-Path $PSScriptRoot install-nsis.ps1) -NoPause -ForceDownload:$ForceDownload
+& (Join-Path $PSScriptRoot install-libsrt.ps1) -NoPause -ForceDownload:$ForceDownload -GitHubActions:$GitHubActions
+& (Join-Path $PSScriptRoot install-graphviz.ps1) -NoPause -ForceDownload:$ForceDownload
+& (Join-Path $PSScriptRoot install-doxygen.ps1) -NoPause -ForceDownload:$ForceDownload
+& (Join-Path $DektecDir install-dtapi.ps1) -NoPause:$NoPause -ForceDownload:$ForceDownload
