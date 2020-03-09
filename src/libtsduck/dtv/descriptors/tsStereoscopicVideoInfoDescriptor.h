@@ -28,30 +28,49 @@
 //----------------------------------------------------------------------------
 //!
 //!  @file
-//!  General-purpose PMT handler interface.
+//!  Representation of a stereoscopic_video_info_descriptor.
 //!
 //----------------------------------------------------------------------------
 
 #pragma once
-#include "tsPMT.h"
+#include "tsAbstractDescriptor.h"
 
 namespace ts {
     //!
-    //! General-purpose PMT handler interface.
-    //! @ingroup mpeg
+    //! Representation of a stereoscopic_video_info_descriptor.
+    //! @see ISO/IEC 13818-1, ITU-T Rec. H.222.0, 2.6.88.
+    //! @ingroup descriptor
     //!
-    class TSDUCKDLL PMTHandlerInterface
+    class TSDUCKDLL StereoscopicVideoInfoDescriptor : public AbstractDescriptor
     {
     public:
-        //!
-        //! This hook is invoked when a new PMT is available.
-        //! @param [in] table A reference to the new PMT.
-        //!
-        virtual void handlePMT(const PMT& table) = 0;
+        // StereoscopicVideoInfoDescriptor public members:
+        bool    base_video;                    //!< Base video stream
+        bool    leftview;                      //!< True if left view video stream (when base_video is true).
+        bool    usable_as_2D;                  //!< Can be sued as a 2D video stream (when base_video is false).
+        uint8_t horizontal_upsampling_factor;  //!< 4 bits, horizontal upsampling factor code (when base_video is false).
+        uint8_t vertical_upsampling_factor;    //!< 4 bits, vertical upsampling factor code (when base_video is false).
 
         //!
-        //! Virtual destructor.
+        //! Default constructor.
         //!
-        virtual ~PMTHandlerInterface();
+        StereoscopicVideoInfoDescriptor();
+
+        //!
+        //! Constructor from a binary descriptor
+        //! @param [in,out] duck TSDuck execution context.
+        //! @param [in] bin A binary descriptor to deserialize.
+        //!
+        StereoscopicVideoInfoDescriptor(DuckContext& duck, const Descriptor& bin);
+
+        // Inherited methods
+        virtual void serialize(DuckContext&, Descriptor&) const override;
+        virtual void deserialize(DuckContext&, const Descriptor&) override;
+        virtual void fromXML(DuckContext&, const xml::Element*) override;
+        DeclareDisplayDescriptor();
+
+    protected:
+        // Inherited methods
+        virtual void buildXML(DuckContext&, xml::Element*) const override;
     };
 }
