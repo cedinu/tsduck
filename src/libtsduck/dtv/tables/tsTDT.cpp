@@ -120,8 +120,7 @@ void ts::TDT::DisplaySection(TablesDisplay& display, const ts::Section& section,
         Time time;
         DecodeMJD(data, 5, time);
         data += 5; size -= 5;
-        strm << std::string(indent, ' ') << "UTC time: "
-             << time.format(Time::DATE | Time::TIME) << std::endl;
+        strm << std::string(indent, ' ') << "UTC time: " << time.format(Time::DATETIME) << std::endl;
     }
 
     display.displayExtraData(data, size, indent);

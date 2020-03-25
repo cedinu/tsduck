@@ -25,6 +25,7 @@
     REF_TYPE(TOT);
     REF_TYPE(TSDT);
     REF_TYPE(TVCT);
+    REF_TYPE(UNT);
 
     REF_TYPE(AACDescriptor);
     REF_TYPE(AdaptationFieldDataDescriptor);
@@ -120,6 +121,7 @@
     REF_TYPE(IPSignallingDescriptor);
     REF_TYPE(ISO639LanguageDescriptor);
     REF_TYPE(ISPAccessModeDescriptor);
+    REF_TYPE(J2KVideoDescriptor);
     REF_TYPE(LinkageDescriptor);
     REF_TYPE(LocalTimeOffsetDescriptor);
     REF_TYPE(LogicalChannelNumberDescriptor);
@@ -157,6 +159,7 @@
     REF_TYPE(S2SatelliteDeliverySystemDescriptor);
     REF_TYPE(S2XSatelliteDeliverySystemDescriptor);
     REF_TYPE(SatelliteDeliverySystemDescriptor);
+    REF_TYPE(SchedulingDescriptor);
     REF_TYPE(ScramblingDescriptor);
     REF_TYPE(ServiceAvailabilityDescriptor);
     REF_TYPE(ServiceDescriptor);
@@ -178,7 +181,13 @@
     REF_TYPE(SpliceSegmentationDescriptor);
     REF_TYPE(SpliceTimeDescriptor);
     REF_TYPE(SSUDataBroadcastIdDescriptor);
+    REF_TYPE(SSUEnhancedMessageDescriptor);
+    REF_TYPE(SSUEventNameDescriptor);
     REF_TYPE(SSULinkageDescriptor);
+    REF_TYPE(SSULocationDescriptor);
+    REF_TYPE(SSUMessageDescriptor);
+    REF_TYPE(SSUSubgroupAssociationDescriptor);
+    REF_TYPE(SSUURIDescriptor);
     REF_TYPE(STDDescriptor);
     REF_TYPE(StereoscopicProgramInfoDescriptor);
     REF_TYPE(StereoscopicVideoInfoDescriptor);
@@ -212,6 +221,7 @@
     REF_TYPE(TransportProfileDescriptor);
     REF_TYPE(TransportProtocolDescriptor);
     REF_TYPE(TransportStreamDescriptor);
+    REF_TYPE(UpdateDescriptor);
     REF_TYPE(URILinkageDescriptor);
     REF_TYPE(VBIDataDescriptor);
     REF_TYPE(VBITeletextDescriptor);
