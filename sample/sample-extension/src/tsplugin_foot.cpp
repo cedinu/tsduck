@@ -2,7 +2,6 @@
 // This file is included in the shared library.
 // It exports the required symbol for this shared library to be recognized as a valid TSDuck extension.
 
-#include "tsduck.h"
 #include "fooTable.h"
 
 //----------------------------------------------------------------------------
@@ -37,8 +36,7 @@ namespace foo {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(foot, foo::FootPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"foot", foo::FootPlugin);
 
 
 //----------------------------------------------------------------------------

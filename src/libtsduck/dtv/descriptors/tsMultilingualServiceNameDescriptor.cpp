@@ -30,34 +30,28 @@
 #include "tsMultilingualServiceNameDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"multilingual_service_name_descriptor"
+#define MY_CLASS ts::MultilingualServiceNameDescriptor
 #define MY_DID ts::DID_MLINGUAL_SERVICE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MultilingualServiceNameDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MultilingualServiceNameDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MultilingualServiceNameDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::MultilingualServiceNameDescriptor::MultilingualServiceNameDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::MultilingualServiceNameDescriptor::MultilingualServiceNameDescriptor(DuckContext& duck, const Descriptor& desc) :
     MultilingualServiceNameDescriptor()
@@ -65,10 +59,10 @@ ts::MultilingualServiceNameDescriptor::MultilingualServiceNameDescriptor(DuckCon
     deserialize(duck, desc);
 }
 
-
-//----------------------------------------------------------------------------
-// Contructor for language entry.
-//----------------------------------------------------------------------------
+void ts::MultilingualServiceNameDescriptor::clearContent()
+{
+    entries.clear();
+}
 
 ts::MultilingualServiceNameDescriptor::Entry::Entry(const UString& lang_, const UString& prov_, const UString& name_) :
     language(lang_),
@@ -91,8 +85,8 @@ void ts::MultilingualServiceNameDescriptor::serialize(DuckContext& duck, Descrip
             desc.invalidate();
             return;
         }
-        bbp->append(duck.toDVBWithByteLength(it->service_provider_name));
-        bbp->append(duck.toDVBWithByteLength(it->service_name));
+        bbp->append(duck.encodedWithByteLength(it->service_provider_name));
+        bbp->append(duck.encodedWithByteLength(it->service_name));
     }
 
     serializeEnd(desc, bbp);
@@ -105,7 +99,7 @@ void ts::MultilingualServiceNameDescriptor::serialize(DuckContext& duck, Descrip
 
 void ts::MultilingualServiceNameDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
     entries.clear();
@@ -119,7 +113,7 @@ void ts::MultilingualServiceNameDescriptor::deserialize(DuckContext& duck, const
             const size_t name_len = data[prov_len];
             _is_valid = prov_len + 1 + name_len <= size;
             if (_is_valid) {
-                entries.push_back(Entry(lang, duck.fromDVB(data, prov_len), duck.fromDVB(data + prov_len + 1, name_len)));
+                entries.push_back(Entry(lang, duck.decoded(data, prov_len), duck.decoded(data + prov_len + 1, name_len)));
                 data += prov_len + 1 + name_len;
                 size -= prov_len + 1 + name_len;
             }
@@ -135,18 +129,19 @@ void ts::MultilingualServiceNameDescriptor::deserialize(DuckContext& duck, const
 
 void ts::MultilingualServiceNameDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 4) {
         const size_t prov_len = std::min<size_t>(data[3], size - 4);
         strm << margin
              << "Language: " << DeserializeLanguageCode(data)
-             << ", provider: \"" << display.duck().fromDVB(data + 4, prov_len) << "\"";
+             << ", provider: \"" << duck.decoded(data + 4, prov_len) << "\"";
         data += 4 + prov_len; size -= 4 + prov_len;
         if (size >= 1) {
             const size_t name_len = std::min<size_t>(data[0], size - 1);
-            strm << ", service: \"" << display.duck().fromDVB(data + 1, name_len) << "\"";
+            strm << ", service: \"" << duck.decoded(data + 1, name_len) << "\"";
             data += 1 + name_len; size -= 1 + name_len;
         }
         strm << std::endl;
@@ -175,23 +170,17 @@ void ts::MultilingualServiceNameDescriptor::buildXML(DuckContext& duck, xml::Ele
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MultilingualServiceNameDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MultilingualServiceNameDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"language");
+    bool ok = element->getChildren(children, u"language");
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getAttribute(entry.language, u"code", true, u"", 3, 3) &&
-            children[i]->getAttribute(entry.service_provider_name, u"service_provider_name", true) &&
-            children[i]->getAttribute(entry.service_name, u"service_name", true);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getAttribute(entry.language, u"code", true, u"", 3, 3) &&
+             children[i]->getAttribute(entry.service_provider_name, u"service_provider_name", true) &&
+             children[i]->getAttribute(entry.service_name, u"service_name", true);
+        entries.push_back(entry);
     }
+    return ok;
 }

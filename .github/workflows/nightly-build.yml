@@ -68,29 +68,21 @@ jobs:
       if: env.REBUILD == 'false'
       run: Write-Output "Same version as latest pre-release, not rebuilt"
 
-    - name: Install NSIS
+    - name: Install dependencies
       if: env.REBUILD == 'true'
-      run: build/install-nsis.ps1 -NoPause
-
-    - name: Install libsrt
-      if: env.REBUILD == 'true'
-      run: build/install-libsrt.ps1 -GitHubActions -NoPause
-
-    - name: Install Dektec SDK
-      if: env.REBUILD == 'true'
-      run: dektec/Download-Install-Dtapi.ps1 -NoPause
+      run: build/install-prerequisites.ps1 -GitHubActions -NoPause
 
     - name: Build installers
       if: env.REBUILD == 'true'
-      run: build/Build-Installer.ps1 -NoPause -NoLowPriority -NoSource
+      run: build/build-installer.ps1 -NoPause -NoLowPriority -NoSource
 
     - name: Check built version (64-bit)
       if: env.REBUILD == 'true'
-      run: build/msvc/Release-x64/tsversion.exe --version=all
+      run: bin/Release-x64/tsversion.exe --version=all
 
     - name: Check built version (32-bit)
       if: env.REBUILD == 'true'
-      run: build/msvc/Release-Win32/tsversion.exe --version=all
+      run: bin/Release-Win32/tsversion.exe --version=all
 
     - name: Upload version
       if: env.REBUILD == 'true'
@@ -136,15 +128,19 @@ jobs:
       uses: actions/checkout@master
 
     - name: Install dependencies
-      run: build/install-prerequisites.sh
+      run: |
+        build/install-prerequisites.sh
+        sudo apt install -y jq
 
     - name: Check if rebuild is necessary
       run: |
         remote_version=$(curl -sL https://tsduck.io/download/prerelease/get-versions | jq -r '.latest?'; true)
         version=$(build/get-version-from-sources.sh)
+        fullversion=$(build/get-version-from-sources.sh --full)
         [[ "$version" == "$remote_version" ]] && rebuild=false || rebuild=true
         echo "Current version: $version, latest on tsduck.io: $remote_version"
         echo "::set-env name=VERSION::$version"
+        echo "::set-env name=FULLVERSION::$fullversion"
         echo "::set-env name=REBUILD::$rebuild"
 
     - name: Check same version
@@ -157,17 +153,17 @@ jobs:
 
     - name: Check built version
       if: env.REBUILD == 'true'
-      run: source src/tstools/release-x86_64/setenv.sh && tsversion --version=all
+      run: source build/setenv.sh && tsversion --version=all
 
     - name: Prepare upload package
       if: env.REBUILD == 'true'
       run: |
-        source src/tstools/release-x86_64/setenv.sh
+        source build/setenv.sh
         tsp --version=short &>tsp.version.txt
         tsp --list=input &>tsp.input.txt
         tsp --list=output &>tsp.output.txt
         tsp --list=packet &>tsp.packet.txt
-        for cmd in $(find src/tstools/release-x86_64 -type f -executable -name 'ts*' ! -name '*.*' | sort); do
+        for cmd in $(find $(build/setenv.sh --display) -type f -executable -name 'ts*' ! -name '*.*' | sort); do
             echo -n $(basename $cmd):
             $cmd --help=description 2>&1
         done >tsduck.commands.txt
@@ -185,14 +181,14 @@ jobs:
       uses: actions/upload-artifact@master
       with:
         name: ubuntu-package
-        path: installers/tsduck_${{ env.VERSION }}_amd64.deb
+        path: installers/tsduck_${{ env.FULLVERSION }}_amd64.deb
         
     - name: Upload Ubuntu dev package
       if: env.REBUILD == 'true'
       uses: actions/upload-artifact@master
       with:
         name: ubuntu-dev-package
-        path: installers/tsduck-dev_${{ env.VERSION }}_amd64.deb
+        path: installers/tsduck-dev_${{ env.FULLVERSION }}_amd64.deb
         
   doc:
     name: Documentation build
@@ -222,8 +218,8 @@ jobs:
       if: env.REBUILD == 'true'
       run: |
         make doxygen
-        echo "${{ env.VERSION }}" >doxy/docversion.txt
-        zip -qr9 doxy.zip doxy
+        echo "${{ env.VERSION }}" >bin/doxy/docversion.txt
+        (cd bin; zip -qr9 ../doxy.zip doxy)
 
     - name: Upload doxygen package
       if: env.REBUILD == 'true'

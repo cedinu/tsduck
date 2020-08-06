@@ -26,43 +26,43 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of an application_signalling_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsApplicationSignallingDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"application_signalling_descriptor"
+#define MY_CLASS ts::ApplicationSignallingDescriptor
 #define MY_DID ts::DID_APPLI_SIGNALLING
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ApplicationSignallingDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ApplicationSignallingDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ApplicationSignallingDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::ApplicationSignallingDescriptor::ApplicationSignallingDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
 }
 
 
 //----------------------------------------------------------------------------
 // Constructor from a binary descriptor
 //----------------------------------------------------------------------------
+
+void ts::ApplicationSignallingDescriptor::clearContent()
+{
+    entries.clear();
+}
 
 ts::ApplicationSignallingDescriptor::ApplicationSignallingDescriptor(DuckContext& duck, const Descriptor& desc) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
@@ -95,7 +95,7 @@ void ts::ApplicationSignallingDescriptor::serialize(DuckContext& duck, Descripto
 
 void ts::ApplicationSignallingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() % 3 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 3 == 0;
     entries.clear();
 
     if (_is_valid) {
@@ -128,24 +128,18 @@ void ts::ApplicationSignallingDescriptor::buildXML(DuckContext& duck, xml::Eleme
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationSignallingDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ApplicationSignallingDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"application", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"application", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getIntAttribute<uint16_t>(entry.application_type, u"application_type", true, 0, 0x0000, 0x7FFF) &&
-            children[i]->getIntAttribute<uint8_t>(entry.AIT_version_number, u"AIT_version_number", true, 0, 0x00, 0x1F);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(entry.application_type, u"application_type", true, 0, 0x0000, 0x7FFF) &&
+             children[i]->getIntAttribute<uint8_t>(entry.AIT_version_number, u"AIT_version_number", true, 0, 0x00, 0x1F);
+        entries.push_back(entry);
     }
+    return ok;
 }
 
 
@@ -155,7 +149,8 @@ void ts::ApplicationSignallingDescriptor::fromXML(DuckContext& duck, const xml::
 
 void ts::ApplicationSignallingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 3) {

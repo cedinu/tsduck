@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 TSDUCK_SOURCE;
 
@@ -57,8 +56,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(skip, ts::SkipPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"skip", ts::SkipPlugin);
 
 
 //----------------------------------------------------------------------------

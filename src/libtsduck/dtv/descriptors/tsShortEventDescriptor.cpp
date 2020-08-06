@@ -30,17 +30,17 @@
 #include "tsShortEventDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"short_event_descriptor"
+#define MY_CLASS ts::ShortEventDescriptor
 #define MY_DID ts::DID_SHORT_EVENT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ShortEventDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ShortEventDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ShortEventDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,6 @@ ts::ShortEventDescriptor::ShortEventDescriptor() :
     event_name(),
     text()
 {
-    _is_valid = true;
 }
 
 ts::ShortEventDescriptor::ShortEventDescriptor(const UString& lang_, const UString& name_, const UString& text_) :
@@ -62,7 +61,13 @@ ts::ShortEventDescriptor::ShortEventDescriptor(const UString& lang_, const UStri
     event_name(name_),
     text(text_)
 {
-    _is_valid = true;
+}
+
+void ts::ShortEventDescriptor::clearContent()
+{
+    language_code.clear();
+    event_name.clear();
+    text.clear();
 }
 
 ts::ShortEventDescriptor::ShortEventDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -105,7 +110,7 @@ size_t ts::ShortEventDescriptor::splitAndAdd(DuckContext& duck, DescriptorList& 
 
         // Insert as much as possible of event name.
         uint8_t* addr = buffer;
-        const size_t name_size = duck.toDVBWithByteLength(event_name, addr, remain, name_index);
+        const size_t name_size = duck.encodeWithByteLength(addr, remain, event_name, name_index);
         sed.event_name = event_name.substr(name_index, name_size);
         name_index += name_size;
 
@@ -113,7 +118,7 @@ size_t ts::ShortEventDescriptor::splitAndAdd(DuckContext& duck, DescriptorList& 
         remain++;
 
         // Insert as much as possible of event text.
-        const size_t text_size = duck.toDVBWithByteLength(text, addr, remain, text_index);
+        const size_t text_size = duck.encodeWithByteLength(addr, remain, text, text_index);
         sed.text = text.substr(text_index, text_size);
         text_index += text_size;
 
@@ -137,8 +142,8 @@ void ts::ShortEventDescriptor::serialize(DuckContext& duck, Descriptor& desc) co
         desc.invalidate();
         return;
     }
-    bbp->append(duck.toDVBWithByteLength(event_name));
-    bbp->append(duck.toDVBWithByteLength(text));
+    bbp->append(duck.encodedWithByteLength(event_name));
+    bbp->append(duck.encodedWithByteLength(text));
     serializeEnd(desc, bbp);
 }
 
@@ -149,7 +154,7 @@ void ts::ShortEventDescriptor::serialize(DuckContext& duck, Descriptor& desc) co
 
 void ts::ShortEventDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 4)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 4)) {
         return;
     }
 
@@ -159,8 +164,8 @@ void ts::ShortEventDescriptor::deserialize(DuckContext& duck, const Descriptor& 
     language_code = DeserializeLanguageCode(data);
     data += 3; size -= 3;
 
-    event_name = duck.fromDVBWithByteLength(data, size);
-    text = duck.fromDVBWithByteLength(data, size);
+    duck.decodeWithByteLength(event_name, data, size);
+    duck.decodeWithByteLength(text, data, size);
     _is_valid = size == 0;
 }
 
@@ -171,14 +176,15 @@ void ts::ShortEventDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 
 void ts::ShortEventDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
         const UString lang(DeserializeLanguageCode(data));
         data += 3; size -= 3;
-        const UString name(display.duck().fromDVBWithByteLength(data, size));
-        const UString text(display.duck().fromDVBWithByteLength(data, size));
+        const UString name(duck.decodedWithByteLength(data, size));
+        const UString text(duck.decodedWithByteLength(data, size));
         strm << margin << "Language: " << lang << std::endl
              << margin << "Event name: \"" << name << "\"" << std::endl
              << margin << "Description: \"" << text << "\"" << std::endl;
@@ -204,11 +210,9 @@ void ts::ShortEventDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ShortEventDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ShortEventDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
-        element->getTextChild(event_name, u"event_name") &&
-        element->getTextChild(text, u"text");
+    return element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
+           element->getTextChild(event_name, u"event_name") &&
+           element->getTextChild(text, u"text");
 }

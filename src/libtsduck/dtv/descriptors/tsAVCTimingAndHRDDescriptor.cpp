@@ -30,21 +30,21 @@
 #include "tsAVCTimingAndHRDDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"AVC_timing_and_HRD_descriptor"
+#define MY_CLASS ts::AVCTimingAndHRDDescriptor
 #define MY_DID ts::DID_AVC_TIMING_HRD
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::AVCTimingAndHRDDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::AVCTimingAndHRDDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::AVCTimingAndHRDDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::AVCTimingAndHRDDescriptor::AVCTimingAndHRDDescriptor() :
@@ -57,18 +57,23 @@ ts::AVCTimingAndHRDDescriptor::AVCTimingAndHRDDescriptor() :
     temporal_poc(false),
     picture_to_display_conversion(false)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::AVCTimingAndHRDDescriptor::AVCTimingAndHRDDescriptor(DuckContext& duck, const Descriptor& desc) :
     AVCTimingAndHRDDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::AVCTimingAndHRDDescriptor::clearContent()
+{
+    hrd_management_valid = false;
+    N_90khz.clear();
+    K_90khz.clear();
+    num_units_in_tick.clear();
+    fixed_frame_rate = false;
+    temporal_poc = false;
+    picture_to_display_conversion = false;
 }
 
 
@@ -107,11 +112,11 @@ void ts::AVCTimingAndHRDDescriptor::deserialize(DuckContext& duck, const Descrip
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2;
 
-    N_90khz.reset();
-    K_90khz.reset();
-    num_units_in_tick.reset();
+    N_90khz.clear();
+    K_90khz.clear();
+    num_units_in_tick.clear();
 
     if (_is_valid) {
         hrd_management_valid = (data[0] & 0x80) != 0;
@@ -152,7 +157,8 @@ void ts::AVCTimingAndHRDDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::AVCTimingAndHRDDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -209,15 +215,13 @@ void ts::AVCTimingAndHRDDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AVCTimingAndHRDDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AVCTimingAndHRDDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(hrd_management_valid, u"hrd_management_valid", true) &&
-        element->getOptionalIntAttribute<uint32_t>(N_90khz, u"N_90khz") &&
-        element->getOptionalIntAttribute<uint32_t>(K_90khz, u"K_90khz") &&
-        element->getOptionalIntAttribute<uint32_t>(num_units_in_tick, u"num_units_in_tick") &&
-        element->getBoolAttribute(fixed_frame_rate, u"fixed_frame_rate", true) &&
-        element->getBoolAttribute(temporal_poc, u"temporal_poc", true) &&
-        element->getBoolAttribute(picture_to_display_conversion, u"picture_to_display_conversion", true);
+    return  element->getBoolAttribute(hrd_management_valid, u"hrd_management_valid", true) &&
+            element->getOptionalIntAttribute<uint32_t>(N_90khz, u"N_90khz") &&
+            element->getOptionalIntAttribute<uint32_t>(K_90khz, u"K_90khz") &&
+            element->getOptionalIntAttribute<uint32_t>(num_units_in_tick, u"num_units_in_tick") &&
+            element->getBoolAttribute(fixed_frame_rate, u"fixed_frame_rate", true) &&
+            element->getBoolAttribute(temporal_poc, u"temporal_poc", true) &&
+            element->getBoolAttribute(picture_to_display_conversion, u"picture_to_display_conversion", true);
 }

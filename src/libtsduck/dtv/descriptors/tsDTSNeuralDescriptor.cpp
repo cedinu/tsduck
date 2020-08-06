@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DTS_neural_descriptor"
+#define MY_CLASS ts::DTSNeuralDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_DTS_NEURAL
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DTSNeuralDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::DTSNeuralDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::DTSNeuralDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,13 +54,18 @@ ts::DTSNeuralDescriptor::DTSNeuralDescriptor() :
     config_id(0),
     additional_info()
 {
-    _is_valid = true;
 }
 
 ts::DTSNeuralDescriptor::DTSNeuralDescriptor(DuckContext& duck, const Descriptor& desc) :
     DTSNeuralDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::DTSNeuralDescriptor::clearContent()
+{
+    config_id = 0;
+    additional_info.clear();
 }
 
 
@@ -86,7 +91,7 @@ void ts::DTSNeuralDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 2 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID;
 
     if (_is_valid) {
         config_id = data[1];
@@ -102,9 +107,7 @@ void ts::DTSNeuralDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 void ts::DTSNeuralDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
     root->setIntAttribute(u"config_id", config_id, true);
-    if (!additional_info.empty()) {
-        root->addElement(u"additional_info")->addHexaText(additional_info);
-    }
+    root->addHexaTextChild(u"additional_info", additional_info, true);
 }
 
 
@@ -112,12 +115,10 @@ void ts::DTSNeuralDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DTSNeuralDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DTSNeuralDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(config_id, u"config_id", true) &&
-        element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 4);
+    return element->getIntAttribute<uint8_t>(config_id, u"config_id", true) &&
+           element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 4);
 }
 
 
@@ -132,12 +133,11 @@ void ts::DTSNeuralDescriptor::DisplayDescriptor(TablesDisplay& display, DID did,
     // See ts::TablesDisplay::displayDescriptorData()
 
     if (size > 0) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
+
         strm << margin << UString::Format(u"Config Id: 0x%X (%d))", {data[0], data[0]}) << std::endl;
-        if (size > 1) {
-            strm << margin << "Additional info:" << std::endl
-                 << UString::Dump(data + 1, size - 1, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-        }
+        display.displayPrivateData(u"Additional info", data + 1, size - 1, indent);
     }
 }

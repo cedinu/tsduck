@@ -30,18 +30,18 @@
 #include "tsECMRepetitionRateDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"ECM_repetition_rate_descriptor"
+#define MY_CLASS ts::ECMRepetitionRateDescriptor
 #define MY_DID ts::DID_ECM_REPETITION_RATE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ECMRepetitionRateDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ECMRepetitionRateDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ECMRepetitionRateDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,7 +54,13 @@ ts::ECMRepetitionRateDescriptor::ECMRepetitionRateDescriptor() :
     ECM_repetition_rate(0),
     private_data()
 {
-    _is_valid = true;
+}
+
+void ts::ECMRepetitionRateDescriptor::clearContent()
+{
+    CA_system_id = 0;
+    ECM_repetition_rate = 0;
+    private_data.clear();
 }
 
 ts::ECMRepetitionRateDescriptor::ECMRepetitionRateDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -89,7 +95,7 @@ void ts::ECMRepetitionRateDescriptor::deserialize(DuckContext& duck, const Descr
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4;
 
     if (_is_valid) {
         CA_system_id = GetUInt16(data);
@@ -107,9 +113,7 @@ void ts::ECMRepetitionRateDescriptor::buildXML(DuckContext& duck, xml::Element* 
 {
     root->setIntAttribute(u"CA_system_id", CA_system_id, true);
     root->setIntAttribute(u"ECM_repetition_rate", ECM_repetition_rate, false);
-    if (!private_data.empty()) {
-        root->addElement(u"private_data")->addHexaText(private_data);
-    }
+    root->addHexaTextChild(u"private_data", private_data, true);
 }
 
 
@@ -117,15 +121,11 @@ void ts::ECMRepetitionRateDescriptor::buildXML(DuckContext& duck, xml::Element* 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ECMRepetitionRateDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ECMRepetitionRateDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    private_data.clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(CA_system_id, u"CA_system_id", true) &&
-        element->getIntAttribute<uint16_t>(ECM_repetition_rate, u"ECM_repetition_rate", true) &&
-        element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 6);
+    return element->getIntAttribute<uint16_t>(CA_system_id, u"CA_system_id", true) &&
+           element->getIntAttribute<uint16_t>(ECM_repetition_rate, u"ECM_repetition_rate", true) &&
+           element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 6);
 }
 
 
@@ -135,19 +135,16 @@ void ts::ECMRepetitionRateDescriptor::fromXML(DuckContext& duck, const xml::Elem
 
 void ts::ECMRepetitionRateDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
-        strm << margin << UString::Format(u"CA System Id: %s", {names::CASId(GetUInt16(data), names::FIRST)}) << std::endl
-             << margin << UString::Format(u"ECM repetition rate: %d ms", {GetUInt16(data + 2)}) << std::endl;
-        data += 4; size -= 4;
-        if (size > 0) {
-            strm << margin << "Private data:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            data += size; size = 0;
-        }
+        strm << margin << UString::Format(u"CA System Id: %s", { names::CASId(duck, GetUInt16(data), names::FIRST) }) << std::endl
+             << margin << UString::Format(u"ECM repetition rate: %d ms", { GetUInt16(data + 2) }) << std::endl;
+        display.displayPrivateData(u"Private data", data + 4, size - 4, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }

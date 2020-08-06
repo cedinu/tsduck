@@ -76,12 +76,16 @@ namespace ts {
         // Inherited methods
         virtual void serialize(DuckContext&, Descriptor&) const override;
         virtual void deserialize(DuckContext&, const Descriptor&) override;
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+
+        // These specific cases of data_broadcast_id_descriptor reuse buildXML().
+        friend class SSUDataBroadcastIdDescriptor;
 
     private:
         // Display selector bytes of various types.

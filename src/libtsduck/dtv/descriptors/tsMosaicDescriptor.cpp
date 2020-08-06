@@ -30,18 +30,18 @@
 #include "tsMosaicDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"mosaic_descriptor"
+#define MY_CLASS ts::MosaicDescriptor
 #define MY_DID ts::DID_MOSAIC
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MosaicDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MosaicDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MosaicDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +55,14 @@ ts::MosaicDescriptor::MosaicDescriptor() :
     number_of_vertical_elementary_cells(0),
     cells()
 {
-    _is_valid = true;
+}
+
+void ts::MosaicDescriptor::clearContent()
+{
+    mosaic_entry_point = false;
+    number_of_horizontal_elementary_cells = 0;
+    number_of_vertical_elementary_cells = 0;
+    cells.clear();
 }
 
 ts::MosaicDescriptor::MosaicDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -128,7 +135,7 @@ void ts::MosaicDescriptor::deserialize(DuckContext& duck, const Descriptor& desc
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
     cells.clear();
 
     if (_is_valid) {
@@ -202,7 +209,8 @@ void ts::MosaicDescriptor::deserialize(DuckContext& duck, const Descriptor& desc
 
 void ts::MosaicDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
     bool ok = size >= 1;
 
@@ -317,40 +325,33 @@ void ts::MosaicDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MosaicDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MosaicDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    cells.clear();
-
     xml::ElementVector xcells;
-    _is_valid = 
-        checkXMLName(element) &&
+    bool ok =
         element->getBoolAttribute(mosaic_entry_point, u"mosaic_entry_point", true) &&
         element->getIntAttribute<uint8_t>(number_of_horizontal_elementary_cells, u"number_of_horizontal_elementary_cells", true, 0, 0, 7) &&
         element->getIntAttribute<uint8_t>(number_of_vertical_elementary_cells, u"number_of_vertical_elementary_cells", true, 0, 0, 7) &&
         element->getChildren(xcells, u"cell");
 
-    for (size_t i1 = 0; _is_valid && i1 < xcells.size(); ++i1) {
+    for (size_t i1 = 0; ok && i1 < xcells.size(); ++i1) {
         Cell cell;
         xml::ElementVector xids;
-        _is_valid =
-            xcells[i1]->getIntAttribute<uint8_t>(cell.logical_cell_id, u"logical_cell_id", true, 0, 0x00, 0x3F) &&
-            xcells[i1]->getIntAttribute<uint8_t>(cell.logical_cell_presentation_info, u"logical_cell_presentation_info", true, 0, 0x00, 0x07) &&
-            xcells[i1]->getIntAttribute<uint8_t>(cell.cell_linkage_info, u"cell_linkage_info", true) &&
-            xcells[i1]->getIntAttribute<uint16_t>(cell.bouquet_id, u"bouquet_id", cell.cell_linkage_info == 1) &&
-            xcells[i1]->getIntAttribute<uint16_t>(cell.original_network_id, u"original_network_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
-            xcells[i1]->getIntAttribute<uint16_t>(cell.transport_stream_id, u"transport_stream_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
-            xcells[i1]->getIntAttribute<uint16_t>(cell.service_id, u"service_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
-            xcells[i1]->getIntAttribute<uint16_t>(cell.event_id, u"event_id", cell.cell_linkage_info == 4) &&
-            xcells[i1]->getChildren(xids, u"elementary_cell");
-        for (size_t i2 = 0; _is_valid && i2 < xids.size(); ++i2) {
+        ok = xcells[i1]->getIntAttribute<uint8_t>(cell.logical_cell_id, u"logical_cell_id", true, 0, 0x00, 0x3F) &&
+             xcells[i1]->getIntAttribute<uint8_t>(cell.logical_cell_presentation_info, u"logical_cell_presentation_info", true, 0, 0x00, 0x07) &&
+             xcells[i1]->getIntAttribute<uint8_t>(cell.cell_linkage_info, u"cell_linkage_info", true) &&
+             xcells[i1]->getIntAttribute<uint16_t>(cell.bouquet_id, u"bouquet_id", cell.cell_linkage_info == 1) &&
+             xcells[i1]->getIntAttribute<uint16_t>(cell.original_network_id, u"original_network_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
+             xcells[i1]->getIntAttribute<uint16_t>(cell.transport_stream_id, u"transport_stream_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
+             xcells[i1]->getIntAttribute<uint16_t>(cell.service_id, u"service_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
+             xcells[i1]->getIntAttribute<uint16_t>(cell.event_id, u"event_id", cell.cell_linkage_info == 4) &&
+             xcells[i1]->getChildren(xids, u"elementary_cell");
+        for (size_t i2 = 0; ok && i2 < xids.size(); ++i2) {
             uint8_t id = 0;
-            _is_valid = xids[i2]->getIntAttribute<uint8_t>(id, u"id", true, 0, 0x00, 0x3F);
-            if (_is_valid) {
-                cell.elementary_cell_ids.push_back(id);
-            }
+            ok = xids[i2]->getIntAttribute<uint8_t>(id, u"id", true, 0, 0x00, 0x3F);
+            cell.elementary_cell_ids.push_back(id);
         }
-        if (_is_valid) {
-            cells.push_back(cell);
-        }
+        cells.push_back(cell);
     }
+    return ok;
 }

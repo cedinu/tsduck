@@ -32,8 +32,8 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
+#include "tsBinaryTable.h"
 #include "tsSectionDemux.h"
 #include "tsService.h"
 #include "tsTime.h"
@@ -106,8 +106,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(eit, ts::EITPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"eit", ts::EITPlugin);
 
 
 //----------------------------------------------------------------------------
@@ -196,7 +195,7 @@ bool ts::EITPlugin::start()
     _eits_act_count = 0;
     _eits_oth_count = 0;
     _services.clear();
-    _ts_id.reset();
+    _ts_id.clear();
     _demux.reset();
     _demux.addPID(PID_PAT);
     _demux.addPID(PID_SDT);

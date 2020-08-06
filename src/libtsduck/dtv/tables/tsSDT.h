@@ -41,6 +41,7 @@
 namespace ts {
     //!
     //! Representation of a Service Description Table (SDT).
+    //! @see ETSI EN 300 468, 5.2.3
     //! @ingroup table
     //!
     class TSDUCKDLL SDT : public AbstractLongTable
@@ -248,19 +249,16 @@ namespace ts {
         bool findService(DuckContext& duck, ts::Service& service, bool exact_match = false) const;
 
         // Inherited methods
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
+        virtual uint16_t tableIdExtension() const override;
         DeclareDisplaySection();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual bool isValidTableId(TID tid) const override;
-        virtual void serializeContent(DuckContext&, BinaryTable&) const override;
-        virtual void deserializeContent(DuckContext&, const BinaryTable&) override;
+        virtual void serializePayload(BinaryTable& table, PSIBuffer& payload) const override;
+        virtual void deserializePayload(PSIBuffer& buf, const Section& section) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-
-    private:
-        // Add a new section to a table being serialized
-        // Section number is incremented. Data and remain are reinitialized.
-        void addSection(BinaryTable& table, int& section_number, uint8_t* payload, uint8_t*& data, size_t& remain) const;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
     };
 }

@@ -32,17 +32,16 @@
 #include "tsBinaryTable.h"
 #include "tsStreamIdentifierDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"MGT"
 #define MY_TID ts::TID_MGT
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_TABLE_FACTORY(ts::MGT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::MGT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::MGT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(ts::MGT, {MY_TID}, MY_STD, MY_XML_NAME, ts::MGT::DisplaySection, nullptr, {ts::PID_PSIP});
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +54,6 @@ ts::MGT::MGT(uint8_t version_) :
     tables(this),
     descs(this)
 {
-    _is_valid = true;
 }
 
 ts::MGT::MGT(const MGT& other) :
@@ -79,6 +77,28 @@ ts::MGT::TableType::TableType(const AbstractTable* table) :
     table_type_version_number(0),
     number_bytes(0)
 {
+}
+
+
+//----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::MGT::tableIdExtension() const
+{
+    return 0;
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::MGT::clearContent()
+{
+    protocol_version = 0;
+    tables.clear();
+    descs.clear();
 }
 
 
@@ -252,8 +272,10 @@ ts::UString ts::MGT::TableTypeName(uint16_t table_type)
 
 void ts::MGT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -323,27 +345,22 @@ void ts::MGT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MGT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MGT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    descs.clear();
-    tables.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
         descs.fromXML(duck, children, element, u"table");
 
-    for (size_t index = 0; _is_valid && index < children.size(); ++index) {
+    for (size_t index = 0; ok && index < children.size(); ++index) {
         // Add a new TableType at the end of the list.
         TableType& tt(tables.newEntry());
-
-        _is_valid =
-            children[index]->getIntEnumAttribute(tt.table_type, *TableTypeEnum::Instance(), u"type", true) &&
-            children[index]->getIntAttribute<PID>(tt.table_type_PID, u"PID", true, 0, 0x0000, 0x1FFF) &&
-            children[index]->getIntAttribute<uint8_t>(tt.table_type_version_number, u"version_number", true, 0, 0, 31) &&
-            children[index]->getIntAttribute<uint32_t>(tt.number_bytes, u"number_bytes", true) &&
-            tt.descs.fromXML(duck, children[index]);
+        ok = children[index]->getIntEnumAttribute(tt.table_type, *TableTypeEnum::Instance(), u"type", true) &&
+             children[index]->getIntAttribute<PID>(tt.table_type_PID, u"PID", true, 0, 0x0000, 0x1FFF) &&
+             children[index]->getIntAttribute<uint8_t>(tt.table_type_version_number, u"version_number", true, 0, 0, 31) &&
+             children[index]->getIntAttribute<uint32_t>(tt.number_bytes, u"number_bytes", true) &&
+             tt.descs.fromXML(duck, children[index]);
     }
+    return ok;
 }

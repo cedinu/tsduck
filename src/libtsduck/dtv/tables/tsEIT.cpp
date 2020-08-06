@@ -26,28 +26,28 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of an Event Information Table (EIT)
-//
-//----------------------------------------------------------------------------
 
 #include "tsEIT.h"
+#include "tsAlgorithm.h"
 #include "tsNames.h"
 #include "tsRST.h"
 #include "tsBCD.h"
 #include "tsMJD.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"EIT"
-#define MY_STD ts::STD_DVB
+#define MY_CLASS ts::EIT
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::EIT, MY_XML_NAME);
-TS_ID_TABLE_RANGE_FACTORY(ts::EIT, ts::TID_EIT_MIN, ts::TID_EIT_MAX, MY_STD);
-TS_FACTORY_REGISTER(ts::EIT::DisplaySection, ts::TID_EIT_MIN, ts::TID_EIT_MAX, ts::CASID_NULL, ts::CASID_NULL);
+TS_REGISTER_TABLE(MY_CLASS, ts::Range<ts::TID>(ts::TID_EIT_MIN, ts::TID_EIT_MAX),
+                  MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection, nullptr,
+                  // DVB has only one standard PID for EIT, ISDB adds two others.
+                  {ts::PID_EIT, ts::PID_ISDB_EIT_2, ts::PID_ISDB_EIT_3});
 
 
 //----------------------------------------------------------------------------
@@ -69,7 +69,6 @@ ts::EIT::EIT(bool is_actual_,
     last_table_id(_table_id),
     events(this)
 {
-    _is_valid = true;
 }
 
 ts::EIT::EIT(DuckContext& duck, const BinaryTable& table) :
@@ -106,12 +105,61 @@ ts::EIT::Event::Event(const AbstractTable* table) :
 
 
 //----------------------------------------------------------------------------
-// This  method checks if a table id is valid for this object.
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::EIT::tableIdExtension() const
+{
+    return service_id;
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::EIT::clearContent()
+{
+    service_id = 0;
+    ts_id = 0;
+    onetw_id = 0;
+    last_table_id = 0;
+    events.clear();
+}
+
+
+//----------------------------------------------------------------------------
+// Comparison operator for events according to their start time.
+//----------------------------------------------------------------------------
+
+bool ts::EIT::Event::operator<(const Event& other) const
+{
+    return this->start_time < other.start_time;
+}
+
+bool ts::EIT::LessEventPtr(const Event* ev1, const Event* ev2)
+{
+    return ev1 != nullptr && ev2 != nullptr && *ev1 < *ev2;
+}
+
+bool ts::EIT::BinaryEvent::operator<(const BinaryEvent& other) const
+{
+    return this->start_time < other.start_time;
+}
+
+bool ts::EIT::LessBinaryEventPtr(const BinaryEventPtr& ev1, const BinaryEventPtr& ev2)
+{
+    return !ev1.isNull() && !ev2.isNull() && *ev1 < *ev2;
+}
+
+
+//----------------------------------------------------------------------------
+// This method checks if a table id is valid for this object.
 //----------------------------------------------------------------------------
 
 bool ts::EIT::isValidTableId(TID tid) const
 {
-    return tid >= TID_EIT_PF_ACT && tid <= TID_EIT_S_OTH_MAX;
+    return IsEIT(tid);
 }
 
 
@@ -129,14 +177,51 @@ ts::TID ts::EIT::ComputeTableId(bool is_actual, bool is_pf, uint8_t eits_index)
     }
 }
 
-
-//----------------------------------------------------------------------------
-// Check if this is an "actual" EIT.
-//----------------------------------------------------------------------------
-
-bool ts::EIT::isActual() const
+ts::TID ts::EIT::SegmentToTableId(bool is_actual, size_t segment)
 {
-    return _table_id == TID_EIT_PF_ACT || (_table_id >= TID_EIT_S_ACT_MIN &&_table_id <= TID_EIT_S_ACT_MAX);
+    // Each table id has 32 segments (SEGMENTS_PER_TABLE).
+    return TID((is_actual ? TID_EIT_S_ACT_MIN : TID_EIT_S_OTH_MIN) + (std::min(segment, SEGMENTS_COUNT - 1) / SEGMENTS_PER_TABLE));
+}
+
+
+//----------------------------------------------------------------------------
+// Compute the segment of an event in an EIT schedule.
+//----------------------------------------------------------------------------
+
+size_t ts::EIT::TimeToSegment(const Time& last_midnight, const Time& event_start_time)
+{
+    if (event_start_time < last_midnight) {
+        // Should not happen, last midnight is the start time of the reference period.
+        return 0;
+    }
+    else {
+        // Each segment covers 3 hours (SEGMENT_DURATION).
+        return size_t((event_start_time - last_midnight) / SEGMENT_DURATION);
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// Toggle an EIT table id between Actual and Other.
+//----------------------------------------------------------------------------
+
+ts::TID ts::EIT::ToggleActual(TID tid, bool actual)
+{
+    if (tid == TID_EIT_PF_ACT && !actual) {
+        return TID_EIT_PF_OTH;
+    }
+    else if (tid == TID_EIT_PF_OTH && actual) {
+        return TID_EIT_PF_ACT;
+    }
+    else if (tid >= TID_EIT_S_ACT_MIN && tid <= TID_EIT_S_ACT_MAX && !actual) {
+        return tid + 0x10;
+    }
+    else if (tid >= TID_EIT_S_OTH_MIN && tid <= TID_EIT_S_OTH_MAX && actual) {
+        return tid - 0x10;
+    }
+    else {
+        return tid;
+    }
 }
 
 
@@ -237,29 +322,15 @@ void ts::EIT::deserializeContent(DuckContext& duck, const BinaryTable& table)
 
 void ts::EIT::serializeContent(DuckContext& duck, BinaryTable& table) const
 {
-    // Inside an EIT, events shall be sorted in start time order.
-    // Build a list of events in order of start time.
-    std::list<const Event*> ordered_events;
-    for (auto it1 = events.begin(); it1 != events.end(); ++it1) {
-        const Event* const ev = &it1->second;
-        auto it2 = ordered_events.begin();
-        while (it2 != ordered_events.end() && (*it2)->start_time <= ev->start_time) {
-            ++it2;
-        }
-        ordered_events.insert(it2, ev);
-    }
-
-    // For EIT schedule, sections are grouped into 32 segments of 8 sections.
-    // Each segment covers a period of 3 hours (8 segments per day, one EIT covers 4 days).
-    // The first segment starts the first day at 00:00:00, this is the base time for this EIT.
-    // See ETSI TR 101 211, section 4.1.4.2.
-    Time base_time;
-    if (!ordered_events.empty()) {
-        base_time = ordered_events.front()->start_time.thisDay();
-    }
+    // In the serialize() method, we do not attempt to reorder events and
+    // sections according to rules from ETSI TS 101 211. This is impossible in
+    // the general case since those rules prescript to skip sessions between
+    // segments, making the result an "invalid" table in the MPEG-TS sense.
+    // Applications wanting to produce a conformant set of EIT sections shall
+    // use the static method EIT::ReorganizeSections().
 
     // Build the sections
-    uint8_t payload[MAX_PSI_LONG_SECTION_PAYLOAD_SIZE];
+    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
     int section_number = 0;
     uint8_t* data = payload;
     size_t remain = sizeof(payload);
@@ -273,71 +344,32 @@ void ts::EIT::serializeContent(DuckContext& duck, BinaryTable& table) const
     remain -= EIT_PAYLOAD_FIXED_SIZE;
 
     // Add all events in time order.
-    for (auto evit = ordered_events.begin(); evit != ordered_events.end(); ++evit) {
-        const Event* const ev = *evit;
+    for (auto evit = events.begin(); evit != events.end(); ++evit) {
+        const Event& ev(evit->second);
 
-        // Compute target section number for this event.
-        int target_section = section_number;
+        // Insert the characteristics of the event. When the rest of the section is not
+        // large enough to hold the entire event description, open a new section. Unless
+        // we are at the beginning of the section, in which case the event will be truncated.
 
-        // With EIT schedule, the events are grouped in 32 segments of 8 sections, covering 3 hours each.
-        if (_table_id >= TID_EIT_S_ACT_MIN && _table_id <= TID_EIT_S_OTH_MAX) {
-            assert(ev->start_time >= base_time);
-            target_section = 8 * std::min<int>(31, int((ev->start_time - base_time) / SEGMENT_DURATION));
-        }
-
-        // If we cannot at least add the fixed part, open a new section.
-        // Also add empty sections up to the target section.
-        while (remain < EIT_EVENT_FIXED_SIZE || section_number < target_section) {
+        if (data > payload + EIT_PAYLOAD_FIXED_SIZE && EIT_EVENT_FIXED_SIZE + ev.descs.binarySize() > remain) {
             addSection(table, section_number, payload, data, remain);
         }
 
-        // Insert the characteristics of the event. When the section is
-        // not large enough to hold the entire descriptor list, open a
-        // new section for the rest of the descriptors. In that case, the
-        // common properties of the event must be repeated.
-        bool starting = true;
-        size_t start_index = 0;
+        // Insert common characteristics of the service
+        assert(remain >= 12);
+        PutUInt16(data, ev.event_id);
+        EncodeMJD(ev.start_time, data + 2, 5);
+        data[7] = EncodeBCD(int(ev.duration / 3600));
+        data[8] = EncodeBCD(int((ev.duration / 60) % 60));
+        data[9] = EncodeBCD(int(ev.duration % 60));
+        data += 10;
+        remain -= 10;
 
-        while (starting || start_index < ev->descs.count()) {
+        // The following fields are inserted in the 4 "reserved" bits of the descriptor_loop_length.
+        const uint16_t reserved_bits = uint8_t(ev.running_status << 1) | (ev.CA_controlled ? 0x01 : 0x00);
 
-            // If we are at the beginning of an event description, make sure that the
-            // entire event description fits in the section. If it does not fit, start
-            // a new section. Note that huge event descriptions may not fit into one
-            // section. In that case, the event description will span two sections later.
-            if (starting && EIT_EVENT_FIXED_SIZE + ev->descs.binarySize() > remain) {
-                addSection(table, section_number, payload, data, remain);
-            }
-
-            starting = false;
-
-            // Insert common characteristics of the service
-            assert(remain >= 12);
-            PutUInt16(data, ev->event_id);
-            EncodeMJD(ev->start_time, data + 2, 5);
-            data[7] = EncodeBCD(int(ev->duration / 3600));
-            data[8] = EncodeBCD(int((ev->duration / 60) % 60));
-            data[9] = EncodeBCD(int(ev->duration % 60));
-            data += 10;
-            remain -= 10;
-
-            // Insert descriptors (all or some).
-            uint8_t* flags = data;
-            start_index = ev->descs.lengthSerialize(data, remain, start_index);
-
-            // The following fields are inserted in the 4 "reserved" bits of the descriptor_loop_length.
-            flags[0] = (flags[0] & 0x0F) | uint8_t(ev->running_status << 5) | (ev->CA_controlled ? 0x10 : 0x00);
-
-            // If not all descriptors were written, the section is full.
-            // Open a new one and continue with this event.
-            if (start_index < ev->descs.count()) {
-                addSection(table, section_number, payload, data, remain);
-            }
-        }
-
-        // With EIT p/f, close the section after each event (one event per section).
-        if (_table_id == TID_EIT_PF_ACT || _table_id == TID_EIT_PF_OTH) {
-            addSection(table, section_number, payload, data, remain);
-        }
+        // Insert descriptors (all or some).
+        ev.descs.lengthSerialize(data, remain, 0, reserved_bits);
     }
 
     // Add partial section (if there is one)
@@ -367,10 +399,9 @@ void ts::EIT::addSection(BinaryTable& table, int& section_number, uint8_t* paylo
                                  payload,
                                  data - payload)); // payload_size,
 
-    // Reinitialize pointers.
-    // Restart after constant part of payload (6 bytes).
-    remain += data - payload - 6;
-    data = payload + 6;
+    // Reinitialize pointers. Restart after constant part of payload (6 bytes).
+    remain += data - payload - EIT_PAYLOAD_FIXED_SIZE;
+    data = payload + EIT_PAYLOAD_FIXED_SIZE;
     section_number++;
 }
 
@@ -490,8 +521,10 @@ void ts::EIT::Fix(BinaryTable& table, FixMode mode)
 
 void ts::EIT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
     const uint16_t sid = section.tableIdExtension();
@@ -509,8 +542,11 @@ void ts::EIT::DisplaySection(TablesDisplay& display, const ts::Section& section,
              << margin << UString::Format(u"Original Network Id: %d (0x%X)", {onid, onid}) << std::endl
              << margin << UString::Format(u"Segment last section: %d (0x%X)", {seg_last, seg_last}) << std::endl
              << margin << UString::Format(u"Last Table Id: %d (0x%X), ", {last_tid, last_tid})
-             << names::TID(last_tid) << std::endl;
+             << names::TID(duck, last_tid) << std::endl;
     }
+
+    // The time reference is UTC as defined by DVB, but JST in Japan.
+    const char* const zone = (duck.standards() & Standards::JAPAN) == Standards::JAPAN ? "JST" : "UTC";
 
     while (size >= 12) {
         uint16_t evid = GetUInt16(data);
@@ -527,7 +563,7 @@ void ts::EIT::DisplaySection(TablesDisplay& display, const ts::Section& section,
             loop_length = size;
         }
         strm << margin << UString::Format(u"Event Id: %d (0x%X)", {evid, evid}) << std::endl
-             << margin << "Start UTC: " << start.format(Time::DATE | Time::TIME) << std::endl
+             << margin << "Start " << zone << ": " << start.format(Time::DATE | Time::TIME) << std::endl
              << margin << UString::Format(u"Duration: %02d:%02d:%02d", {hour, min, sec}) << std::endl
              << margin << "Running status: " << names::RunningStatus(run) << std::endl
              << margin << "CA mode: " << (ca_mode ? "controlled" : "free") << std::endl;
@@ -575,13 +611,10 @@ void ts::EIT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::EIT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::EIT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    events.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         getTableId(element) &&
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
@@ -592,16 +625,16 @@ void ts::EIT::fromXML(DuckContext& duck, const xml::Element* element)
         element->getChildren(children, u"event");
 
     // Get all events.
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Event& event(events.newEntry());
-        _is_valid =
-            children[i]->getIntAttribute<uint16_t>(event.event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
-            children[i]->getDateTimeAttribute(event.start_time, u"start_time", true) &&
-            children[i]->getTimeAttribute(event.duration, u"duration", true) &&
-            children[i]->getIntEnumAttribute<uint8_t>(event.running_status, RST::RunningStatusNames, u"running_status", false, 0) &&
-            children[i]->getBoolAttribute(event.CA_controlled, u"CA_mode", false, false) &&
-            event.descs.fromXML(duck, children[i]);
+        ok = children[i]->getIntAttribute<uint16_t>(event.event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
+             children[i]->getDateTimeAttribute(event.start_time, u"start_time", true) &&
+             children[i]->getTimeAttribute(event.duration, u"duration", true) &&
+             children[i]->getIntEnumAttribute<uint8_t>(event.running_status, RST::RunningStatusNames, u"running_status", false, 0) &&
+             children[i]->getBoolAttribute(event.CA_controlled, u"CA_mode", false, false) &&
+             event.descs.fromXML(duck, children[i]);
     }
+    return ok;
 }
 
 
@@ -631,5 +664,317 @@ bool ts::EIT::getTableId(const xml::Element* element)
     else {
         element->report().error(u"'%s' is not a valid value for attribute 'type' in <%s>, line %d", {type, element->name(), element->lineNumber()});
         return false;
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// An internal structure to store binary events from sections.
+// Constructor based on EIT section payload.
+//----------------------------------------------------------------------------
+
+ts::EIT::BinaryEvent::BinaryEvent(TID tid, const uint8_t*& data, size_t& size) :
+    actual(IsActual(tid)),
+    start_time(),
+    event_data()
+{
+    // The fixed header size of an event is 12 bytes.
+    if (data != nullptr && size >= EIT_EVENT_FIXED_SIZE) {
+        const size_t event_size = EIT_EVENT_FIXED_SIZE + (GetUInt16(data + EIT_EVENT_FIXED_SIZE - 2) & 0x0FFF);
+        if (size >= event_size) {
+            DecodeMJD(data + 2, 5, start_time);
+            event_data.copy(data, event_size);
+            data += event_size;
+            size -= event_size;
+        }
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// Build an empty EIT section for a given service. Return null pointer on error.
+//----------------------------------------------------------------------------
+
+ts::SectionPtr ts::EIT::BuildEmptySection(TID tid, uint8_t section_number, const ServiceIdTriplet& serv, SectionPtrVector& sections)
+{
+    // Build section data.
+    ByteBlockPtr section_data(new ByteBlock(LONG_SECTION_HEADER_SIZE + EIT_PAYLOAD_FIXED_SIZE + SECTION_CRC32_SIZE));
+    CheckNonNull(section_data.pointer());
+    uint8_t* data = section_data->data();
+
+    // Section header
+    PutUInt8(data, tid);
+    PutUInt16(data + 1, 0xF000 | uint16_t(section_data->size() - 3));
+    PutUInt16(data + 3, serv.service_id); // table id extension
+    PutUInt8(data + 5, 0xC1 | uint8_t(serv.version << 1));
+    PutUInt8(data + 6, section_number);
+    PutUInt8(data + 7, section_number);  // last section number
+
+    // EIT section payload, without event.
+    PutUInt16(data + 8, serv.transport_stream_id);
+    PutUInt16(data + 10, serv.original_network_id);
+    PutUInt8(data + 12, section_number);  // segment last section number
+    PutUInt8(data + 13, tid);  // last table id
+
+    // Build a section from the binary data.
+    const SectionPtr sec(new Section(section_data, PID_NULL, CRC32::IGNORE));
+
+    // Insert the section in the list of them before returning it.
+    sections.push_back(sec);
+    return sec;
+}
+
+
+//----------------------------------------------------------------------------
+// Extract the service id triplet from an EIT section.
+//----------------------------------------------------------------------------
+
+ts::ServiceIdTriplet ts::EIT::GetService(const SectionPtr& section)
+{
+    if (section->payloadSize() < EIT_PAYLOAD_FIXED_SIZE) {
+        return ServiceIdTriplet();
+    }
+    else {
+        const uint8_t* data = section->payload();
+        return ServiceIdTriplet(section->tableIdExtension(), GetUInt16(data), GetUInt16(data + 2), section->version());
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// Insert all events from an EIT section in a BinaryEventPtrMap.
+//----------------------------------------------------------------------------
+
+void ts::EIT::ExtractBinaryEvents(const SectionPtr& section, BinaryEventPtrMap& events)
+{
+    if (section->payloadSize() >= EIT_PAYLOAD_FIXED_SIZE) {
+        // Section payload.
+        const uint8_t* data = section->payload();
+        size_t size = section->payloadSize();
+
+        // Build the service id triplet.
+        const ServiceIdTriplet servid(GetService(section));
+
+        // Loop on all events in the EIT payload.
+        data += EIT_PAYLOAD_FIXED_SIZE;
+        size -= EIT_PAYLOAD_FIXED_SIZE;
+        while (size >= EIT_EVENT_FIXED_SIZE) {
+            // Get the next binary event.
+            BinaryEventPtr ev(new BinaryEvent(section->tableId(), data, size));
+            if (ev->event_data.empty()) {
+                // Could not get the event, EIT payload is probably corrupted.
+                break;
+            }
+            // Insert the binary event in the appropriate set of events.
+            events[servid].push_back(ev);
+        }
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// Sort all events in a map, get oldest event date.
+//----------------------------------------------------------------------------
+
+void ts::EIT::SortEvents(BinaryEventPtrMap& events, Time& oldest)
+{
+    // Loop on all services.
+    for (auto it = events.begin(); it != events.end(); ++it) {
+        // Sort the events by start date.
+        std::sort(it->second.begin(), it->second.end(), LessBinaryEventPtr);
+
+        // Check if the first event (oldest) has an older date.
+        if (!it->second.empty() && (oldest == Time::Epoch || it->second[0]->start_time < oldest)) {
+            oldest = it->second[0]->start_time;
+        }
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// Static method to reorganize EIT sections according to ETSI TS 101 211.
+//----------------------------------------------------------------------------
+
+void ts::EIT::ReorganizeSections(SectionPtrVector& sections, const Time& reftime)
+{
+    SectionPtrVector out_sections;   // List of output sections.
+    BinaryEventPtrMap events_pf;     // Set of all events from EIT p/f.
+    BinaryEventPtrMap events_sched;  // Set of all events from EIT schedule.
+
+    // Pass 1: Analyze all input EIT sections and extract binary events.
+    // Non-EIT sections are copied into the output vector of sections.
+    for (size_t isec = 0; isec < sections.size(); ++isec) {
+        const SectionPtr& sec(sections[isec]);
+        if (!sec.isNull() && sec->isValid()) {
+            if (IsEIT(sec->tableId())) {
+                // This is a valid EIT section.
+                ExtractBinaryEvents(sec, IsPresentFollowing(sec->tableId()) ? events_pf : events_sched);
+            }
+            else {
+                // This is a valid non-EIT section.
+                out_sections.push_back(sec);
+            }
+        }
+    }
+
+    // Pass 2: Sort events per service, get oldest start time.
+    Time last_midnight;
+    SortEvents(events_pf, last_midnight);
+    SortEvents(events_sched, last_midnight);
+
+    // Get the reference time ("last midnight").
+    if (reftime != Time::Epoch) {
+        last_midnight = reftime;
+    }
+    last_midnight = last_midnight.thisDay();
+
+    // Pass 3: EIT p/f processing according to ETSI TS 101 211:
+    // For each service, create exactly two sections: one for present and one for following event, possibly empty.
+    // If more than 2 events exist for the service, keep only the last two. If only one exist, use it as present
+    for (auto it = events_pf.begin(); it != events_pf.end(); ++it) {
+
+        // Get ordered list of events for a given service. Cannot be empty.
+        const BinaryEventPtrVector& events(it->second);
+        const size_t evcount = events.size();
+        assert(evcount > 0);
+
+        // Build present and following sections.
+        const TID tid = events[0]->actual ? TID_EIT_PF_ACT : TID_EIT_PF_OTH;
+        const SectionPtr psec(BuildEmptySection(tid, 0, it->first, out_sections));
+        const SectionPtr fsec(BuildEmptySection(tid, 1, it->first, out_sections));
+        if (evcount == 1) {
+            // Only a current event.
+            psec->appendPayload(events[0]->event_data, false);
+        }
+        else {
+            // Use last two events as present and following.
+            psec->appendPayload(events[evcount - 2]->event_data, false);
+            fsec->appendPayload(events[evcount - 1]->event_data, false);
+        }
+
+        // Fix last_section_number in both sections. Don't recompute CRC yet.
+        psec->setLastSectionNumber(1, false);
+        fsec->setLastSectionNumber(1, false);
+
+        // Fix segment_last_section_number (offset 4 in payload). Recompute CRC now.
+        psec->setUInt8(4, 1, true);
+        fsec->setUInt8(4, 1, true);
+    }
+
+    // Pass 4: EIT schedule processing according to ETSI TS 101 211.
+    for (auto it = events_sched.begin(); it != events_sched.end(); ++it) {
+
+        // Get ordered list of events for a given service. Cannot be empty.
+        const BinaryEventPtrVector& events(it->second);
+        const size_t evcount = events.size();
+        assert(evcount > 0);
+
+        // Characteristics of the service.
+        const ServiceIdTriplet service(it->first);
+        const bool actual = events[0]->actual;
+
+        // Create the section for segment 0. It can be empty, but all segments shall
+        // have at least an empty section, until the last event in the service.
+        size_t cur_segment = 0;
+        SectionPtr cur_section(BuildEmptySection(SegmentToTableId(actual, cur_segment), SegmentToSection(cur_segment), service, out_sections));
+
+        // Loop on all events for this service.
+        for (size_t i = 0; i < events.size(); ++i)  {
+
+            // If the event is before the reference "last midnight", it can't be scheduled and is ignored.
+            if (events[i]->start_time < last_midnight) {
+                continue;
+            }
+
+            // Compute the segment number of this event.
+            const size_t segment = TimeToSegment(last_midnight, events[i]->start_time);
+
+            // If we have changed segment, we need to create all intermediate segments as empty.
+            while (cur_segment < segment) {
+                cur_segment++;
+                cur_section = BuildEmptySection(SegmentToTableId(actual, cur_segment), SegmentToSection(cur_segment), service, out_sections);
+            }
+
+            // Check if the current event can fit into the current section.
+            if (cur_section->payloadSize() + events[i]->event_data.size() > MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE) {
+                // Need to create another section in this segment.
+                const uint8_t secnum = cur_section->sectionNumber() + 1;
+                if (secnum >= SegmentToSection(cur_segment) + SECTIONS_PER_SEGMENT) {
+                    // Too many events in that segment, drop this event.
+                    continue;
+                }
+                cur_section = BuildEmptySection(SegmentToTableId(actual, cur_segment), secnum, service, out_sections);
+            }
+
+            // Now append the event to the section payload.
+            cur_section->appendPayload(events[i]->event_data, false);
+        }
+    }
+
+    // Pass 5: Fix synthetic fields in EIT-schedule sections: last_section_number, segment_last_section_number, last_table_id.
+    // Browse through the list of sections from the end since sections are sorted and we need to fix "last" fields.
+    // Although recompute CRC of all sections. Stop when a non-EIT-schedule section is found.
+
+    uint8_t last_section_number = 0;          // last_section_number field in EIT
+    uint8_t segment_last_section_number = 0;  // segment_last_section_number field in EIT
+    TID last_table_id = TID_NULL;             // last_table_id field in EIT
+    ServiceIdTriplet cur_service;             // current service id
+    TID cur_table_id = TID_NULL;              // current table id
+    bool new_service = true;                  // next iteration starts a new service
+    bool new_table = true;                    // next iteration starts a new table id
+    bool new_segment = true;                  // next iteration starts a new segment
+
+    for (auto it = out_sections.rbegin(); it != out_sections.rend() && IsSchedule((*it)->tableId()); ++it) {
+
+        const ServiceIdTriplet this_service(GetService(*it));
+        const TID this_table_id = (*it)->tableId();
+        const uint8_t this_section_number = (*it)->sectionNumber();
+
+        // Update current data.
+        if (new_service || cur_service != this_service) {
+            cur_service = this_service;
+            last_table_id = this_table_id;
+            new_service = false;
+            new_table = true;
+        }
+        if (new_table || cur_table_id != this_table_id) {
+            cur_table_id = this_table_id;
+            last_section_number = this_section_number;
+            new_table = false;
+            new_segment = true;
+        }
+        if (new_segment) {
+            segment_last_section_number = this_section_number;
+            new_segment = false;
+        }
+        new_segment = this_section_number % SECTIONS_PER_SEGMENT == 0;
+
+        // Update the fields in the section. Recompute CRC the last time only.
+        (*it)->setLastSectionNumber(last_section_number, false);
+        (*it)->setUInt8(4, segment_last_section_number, false);
+        (*it)->setUInt8(5, last_table_id, true);
+    }
+
+    // Return the list of output sections.
+    sections.swap(out_sections);
+}
+
+//----------------------------------------------------------------------------
+// Modify an EIT-schedule section to make it standalone, outside any table.
+//----------------------------------------------------------------------------
+
+bool ts::EIT::SetStandaloneSchedule(Section& section)
+{
+    if (!section.isValid() || !IsSchedule(section.tableId()) || (section.sectionNumber() == 0 && section.lastSectionNumber() == 0)) {
+        // Nothing to modify.
+        return false;
+    }
+    else {
+        // Update the fields in the section. Recompute CRC the last time only.
+        section.setSectionNumber(0, false);
+        section.setLastSectionNumber(0, false);
+        section.setUInt8(4, 0, false);  // segment_last_section_number
+        section.setUInt8(5, section.tableId(), true);  // last_table_id
+        return true;
     }
 }

@@ -32,7 +32,9 @@
 //----------------------------------------------------------------------------
 
 #include "tsMain.h"
-#include "tsSectionFile.h"
+#include "tsDuckContext.h"
+#include "tsSectionFileArgs.h"
+#include "tsTSPacket.h"
 #include "tsFileNameRate.h"
 #include "tsOutputRedirector.h"
 #include "tsCyclingPacketizer.h"
@@ -45,28 +47,26 @@ TS_MAIN(MainCode);
 //  Command line options
 //----------------------------------------------------------------------------
 
-class Options: public ts::Args
-{
-    TS_NOBUILD_NOCOPY(Options);
-public:
-    Options(int argc, char *argv[]);
-    virtual ~Options();
+namespace {
+    class Options: public ts::Args
+    {
+        TS_NOBUILD_NOCOPY(Options);
+    public:
+        Options(int argc, char *argv[]);
 
-    ts::DuckContext           duck;
-    bool                      continuous; // Continuous packetization
-    ts::CyclingPacketizer::StuffingPolicy stuffing_policy;
-    ts::CRC32::Validation     crc_op;     // Validate/recompute CRC32
-    ts::PID                   pid;        // Target PID
-    ts::BitRate               bitrate;    // Target PID bitrate
-    ts::UString               outfile;    // Output file
-    ts::FileNameRateList      infiles;    // Input file names and repetition rates
-    ts::SectionFile::FileType inType;     // Input files type
-};
+        ts::DuckContext           duck;
+        bool                      continuous;    // Continuous packetization
+        ts::CyclingPacketizer::StuffingPolicy stuffing_policy;
+        ts::CRC32::Validation     crc_op;        // Validate/recompute CRC32
+        ts::PID                   pid;           // Target PID
+        ts::BitRate               bitrate;       // Target PID bitrate
+        ts::UString               outfile;       // Output file
+        ts::FileNameRateList      infiles;       // Input file names and repetition rates
+        ts::SectionFile::FileType inType;        // Input files type
+        ts::SectionFileArgs       sections_opt;  // Section file options
+    };
+}
 
-// Destructor.
-Options::~Options() {}
-
-// Constructor.
 Options::Options(int argc, char *argv[]) :
     Args(u"Packetize PSI/SI sections in a transport stream PID", u"[options] [input-file[=rate] ...]"),
     duck(this),
@@ -77,8 +77,12 @@ Options::Options(int argc, char *argv[]) :
     bitrate(0),
     outfile(),
     infiles(),
-    inType(ts::SectionFile::UNSPECIFIED)
+    inType(ts::SectionFile::UNSPECIFIED),
+    sections_opt()
 {
+    duck.defineArgsForCharset(*this);
+    sections_opt.defineArgs(*this);
+
     option(u"", 0, STRING);
     help(u"",
          u"Input binary or XML files containing one or more sections or tables. By default, "
@@ -125,6 +129,8 @@ Options::Options(int argc, char *argv[]) :
     help(u"xml", u"Specify that all input files are XML, regardless of their file name.");
 
     analyze(argc, argv);
+    duck.loadArgs(*this);
+    sections_opt.loadArgs(duck, *this);
 
     continuous = present(u"continuous");
     if (present(u"stuffing")) {
@@ -169,7 +175,7 @@ int MainCode(int argc, char *argv[])
 {
     Options opt(argc, argv);
     ts::OutputRedirector output(opt.outfile, opt);
-    ts::CyclingPacketizer pzer(opt.pid, opt.stuffing_policy, opt.bitrate);
+    ts::CyclingPacketizer pzer(opt.duck, opt.pid, opt.stuffing_policy, opt.bitrate);
     ts::SectionFile file(opt.duck);
     file.setCRCValidation(opt.crc_op);
 
@@ -182,7 +188,7 @@ int MainCode(int argc, char *argv[])
             SetBinaryModeStdin(opt);
             opt.inType = ts::SectionFile::BINARY;
         }
-        if (!file.load(std::cin, opt, opt.inType)) {
+        if (!file.load(std::cin, opt, opt.inType) || !opt.sections_opt.processSectionFile(file, opt)) {
             return EXIT_FAILURE;
         }
         pzer.addSections(file.sections());
@@ -192,7 +198,7 @@ int MainCode(int argc, char *argv[])
     }
     else {
         for (ts::FileNameRateList::const_iterator it = opt.infiles.begin(); it != opt.infiles.end(); ++it) {
-            if (!file.load(it->file_name, opt, opt.inType)) {
+            if (!file.load(it->file_name, opt, opt.inType) || !opt.sections_opt.processSectionFile(file, opt)) {
                 return EXIT_FAILURE;
             }
             pzer.addSections(file.sections(), it->repetition);

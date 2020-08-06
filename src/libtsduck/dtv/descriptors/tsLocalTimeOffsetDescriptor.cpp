@@ -26,10 +26,6 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a local_time_offset_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsLocalTimeOffsetDescriptor.h"
 #include "tsDescriptor.h"
@@ -37,17 +33,17 @@
 #include "tsBCD.h"
 #include "tsMJD.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"local_time_offset_descriptor"
+#define MY_CLASS ts::LocalTimeOffsetDescriptor
 #define MY_DID ts::DID_LOCAL_TIME_OFFSET
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::LocalTimeOffsetDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::LocalTimeOffsetDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::LocalTimeOffsetDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -58,7 +54,6 @@ ts::LocalTimeOffsetDescriptor::LocalTimeOffsetDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     regions()
 {
-    _is_valid = true;
 }
 
 ts::LocalTimeOffsetDescriptor::Region::Region() :
@@ -74,6 +69,11 @@ ts::LocalTimeOffsetDescriptor::LocalTimeOffsetDescriptor(DuckContext& duck, cons
     LocalTimeOffsetDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::LocalTimeOffsetDescriptor::clearContent()
+{
+    regions.clear();
 }
 
 
@@ -108,7 +108,7 @@ void ts::LocalTimeOffsetDescriptor::serialize(DuckContext& duck, Descriptor& des
 
 void ts::LocalTimeOffsetDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() % 13 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 13 == 0;
     regions.clear();
 
     if (_is_valid) {
@@ -142,7 +142,8 @@ void ts::LocalTimeOffsetDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::LocalTimeOffsetDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 3) {
@@ -165,7 +166,7 @@ void ts::LocalTimeOffsetDescriptor::DisplayDescriptor(TablesDisplay& display, DI
                     Time next_change;
                     DecodeMJD(data, 5, next_change);
                     data += 5; size -= 5;
-                    strm << margin << "Next change: " << next_change.format(Time::DATE | Time::TIME) << std::endl;
+                    strm << margin << "Next change: " << next_change.format(Time::DATETIME) << std::endl;
                     if (size >= 2) {
                         strm << margin
                              << UString::Format(u"Next time offset: %s%02d:%02d", {polarity ? u"-" : u"", DecodeBCD(data[0]), DecodeBCD(data[1])})
@@ -202,24 +203,19 @@ void ts::LocalTimeOffsetDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::LocalTimeOffsetDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::LocalTimeOffsetDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    regions.clear();
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"region");
+    bool ok = element->getChildren(children, u"region");
 
-    for (size_t index = 0; _is_valid && index < children.size(); ++index) {
+    for (size_t index = 0; ok && index < children.size(); ++index) {
         Region region;
-        _is_valid =
-            children[index]->getAttribute(region.country, u"country_code", true, u"", 3, 3) &&
-            children[index]->getIntAttribute<unsigned int>(region.region_id, u"country_region_id", true, 0, 0, 63) &&
-            children[index]->getIntAttribute<int>(region.time_offset, u"local_time_offset", true, 0, -780, 780) &&
-            children[index]->getDateTimeAttribute(region.next_change, u"time_of_change", true) &&
-            children[index]->getIntAttribute<int>(region.next_time_offset, u"next_time_offset", true, 0, -780, 780);
-        if (_is_valid) {
-            regions.push_back(region);
-        }
+        ok = children[index]->getAttribute(region.country, u"country_code", true, u"", 3, 3) &&
+             children[index]->getIntAttribute<unsigned int>(region.region_id, u"country_region_id", true, 0, 0, 63) &&
+             children[index]->getIntAttribute<int>(region.time_offset, u"local_time_offset", true, 0, -780, 780) &&
+             children[index]->getDateTimeAttribute(region.next_change, u"time_of_change", true) &&
+             children[index]->getIntAttribute<int>(region.next_time_offset, u"next_time_offset", true, 0, -780, 780);
+        regions.push_back(region);
     }
+    return ok;
 }

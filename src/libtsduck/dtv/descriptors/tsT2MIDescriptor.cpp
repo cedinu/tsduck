@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"T2MI_descriptor"
+#define MY_CLASS ts::T2MIDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_T2MI
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::T2MIDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::T2MIDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::T2MIDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -56,7 +56,14 @@ ts::T2MIDescriptor::T2MIDescriptor() :
     pcr_iscr_common_clock_flag(false),
     reserved()
 {
-    _is_valid = true;
+}
+
+void ts::T2MIDescriptor::clearContent()
+{
+    t2mi_stream_id = 0;
+    num_t2mi_streams_minus_one = 0;
+    pcr_iscr_common_clock_flag = false;
+    reserved.clear();
 }
 
 ts::T2MIDescriptor::T2MIDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -91,7 +98,7 @@ void ts::T2MIDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag && size >= 4 && data[0] == MY_EDID)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && size >= 4 && data[0] == MY_EDID)) {
         return;
     }
 
@@ -112,7 +119,7 @@ void ts::T2MIDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
     root->setIntAttribute(u"num_t2mi_streams_minus_one", num_t2mi_streams_minus_one);
     root->setBoolAttribute(u"pcr_iscr_common_clock_flag", pcr_iscr_common_clock_flag);
     if (!reserved.empty()) {
-        root->addElement(u"reserved")->addHexaText(reserved);
+        root->addHexaTextChild(u"reserved", reserved);
     }
 }
 
@@ -121,14 +128,12 @@ void ts::T2MIDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::T2MIDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::T2MIDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(t2mi_stream_id, u"t2mi_stream_id", true, 0, 0, 7) &&
-        element->getIntAttribute<uint8_t>(num_t2mi_streams_minus_one, u"num_t2mi_streams_minus_one", false, 0, 0, 7) &&
-        element->getBoolAttribute(pcr_iscr_common_clock_flag, u"pcr_iscr_common_clock_flag", false, false) &&
-        element->getHexaTextChild(reserved, u"reserved", false, 0, MAX_DESCRIPTOR_SIZE - 6);
+    return element->getIntAttribute<uint8_t>(t2mi_stream_id, u"t2mi_stream_id", true, 0, 0, 7) &&
+           element->getIntAttribute<uint8_t>(num_t2mi_streams_minus_one, u"num_t2mi_streams_minus_one", false, 0, 0, 7) &&
+           element->getBoolAttribute(pcr_iscr_common_clock_flag, u"pcr_iscr_common_clock_flag", false, false) &&
+           element->getHexaTextChild(reserved, u"reserved", false, 0, MAX_DESCRIPTOR_SIZE - 6);
 }
 
 
@@ -143,8 +148,10 @@ void ts::T2MIDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, cons
     // See ts::TablesDisplay::displayDescriptorData()
 
     if (size >= 3) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
+
         strm << margin << "T2-MI stream id: " << int(data[0] & 0x07)
              << ", T2-MI stream count: " << int((data[1] & 0x07) + 1)
              << ", PCR/ISCR common clock: " << UString::YesNo(data[2] & 0x01)

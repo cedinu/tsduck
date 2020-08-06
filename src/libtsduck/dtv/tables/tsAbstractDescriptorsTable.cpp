@@ -26,13 +26,11 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Base class for MPEG tables containing only a list of descriptors.
-//
-//----------------------------------------------------------------------------
 
 #include "tsAbstractDescriptorsTable.h"
 #include "tsBinaryTable.h"
+#include "tsPSIBuffer.h"
+#include "tsSection.h"
 #include "tsTablesDisplay.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -47,7 +45,6 @@ ts::AbstractDescriptorsTable::AbstractDescriptorsTable(TID tid_, const UChar* xm
     descs(this),
     _tid_ext(tid_ext_)
 {
-    _is_valid = true;
 }
 
 ts::AbstractDescriptorsTable::AbstractDescriptorsTable(const ts::AbstractDescriptorsTable& other) :
@@ -68,34 +65,34 @@ ts::AbstractDescriptorsTable::AbstractDescriptorsTable(DuckContext& duck, TID ti
 
 
 //----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::AbstractDescriptorsTable::tableIdExtension() const
+{
+    return _tid_ext;
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::AbstractDescriptorsTable::clearContent()
+{
+    descs.clear();
+    _tid_ext = 0xFFFF;
+}
+
+
+//----------------------------------------------------------------------------
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::AbstractDescriptorsTable::deserializeContent(DuckContext& duck, const BinaryTable& table)
+void ts::AbstractDescriptorsTable::deserializePayload(PSIBuffer& buf, const Section& section)
 {
-    // Clear table content
-    descs.clear();
-
-    // Loop on all sections
-    for (size_t si = 0; si < table.sectionCount(); ++si) {
-
-        // Reference to current section
-        const Section& sect(*table.sectionAt(si));
-
-        // Get common properties
-        version = sect.version();
-        is_current = sect.isCurrent();
-        _tid_ext = sect.tableIdExtension();
-
-        // Analyze the section payload:
-        const uint8_t* data = sect.payload();
-        size_t remain = sect.payloadSize();
-
-        // Get descriptor list
-        descs.add(data, remain);
-    }
-
-    _is_valid = true;
+    _tid_ext = section.tableIdExtension();
+    buf.getDescriptorList(descs);
 }
 
 
@@ -103,36 +100,12 @@ void ts::AbstractDescriptorsTable::deserializeContent(DuckContext& duck, const B
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AbstractDescriptorsTable::serializeContent(DuckContext& duck, BinaryTable& table) const
+void ts::AbstractDescriptorsTable::serializePayload(BinaryTable& table, PSIBuffer& payload) const
 {
-    // Add all descriptors, creating several sections if necessary.
-    // Make sure to create at least one section if the list is empty.
-    uint8_t payload[MAX_PSI_LONG_SECTION_PAYLOAD_SIZE];
-    int section_number = 0;
-    uint8_t* data = payload;
-    size_t remain = sizeof(payload);
-    size_t start_index = 0;
-
-    while ((section_number == 0 || start_index < descs.count()) && section_number < 256) {
-
-        // Serialize as much descriptors as possible
-        start_index = descs.serialize(data, remain, start_index);
-
-        // Add section in the table
-        table.addSection(new Section(_table_id,
-                                     false,  // is_private_section
-                                     _tid_ext,
-                                     version,
-                                     is_current,
-                                     uint8_t(section_number),
-                                     uint8_t(section_number), // last_section_number
-                                     payload,
-                                     data - payload));        // payload_size,
-
-        // Prepare for next section (if any)
-        section_number++;
-        data = payload;
-        remain = sizeof(payload);
+    size_t start = 0;
+    while (!payload.error() && start < descs.size()) {
+        start = payload.putPartialDescriptorList(descs, start);
+        addOneSection(table, payload);
     }
 }
 
@@ -163,12 +136,9 @@ void ts::AbstractDescriptorsTable::buildXML(DuckContext& duck, xml::Element* roo
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AbstractDescriptorsTable::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AbstractDescriptorsTable::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    descs.clear();
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
-        element->getBoolAttribute(is_current, u"current", false, true) &&
-        descs.fromXML(duck, element);
+    return element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+           element->getBoolAttribute(is_current, u"current", false, true) &&
+           descs.fromXML(duck, element);
 }

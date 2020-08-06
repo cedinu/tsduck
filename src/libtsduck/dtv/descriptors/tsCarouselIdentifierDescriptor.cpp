@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"carousel_identifier_descriptor"
+#define MY_CLASS ts::CarouselIdentifierDescriptor
 #define MY_DID ts::DID_CAROUSEL_IDENTIFIER
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CarouselIdentifierDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CarouselIdentifierDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::CarouselIdentifierDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,12 @@ ts::CarouselIdentifierDescriptor::CarouselIdentifierDescriptor() :
     carousel_id(0),
     private_data()
 {
-    _is_valid = true;
+}
+
+void ts::CarouselIdentifierDescriptor::clearContent()
+{
+    carousel_id = 0;
+    private_data.clear();
 }
 
 ts::CarouselIdentifierDescriptor::CarouselIdentifierDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -85,7 +90,7 @@ void ts::CarouselIdentifierDescriptor::deserialize(DuckContext& duck, const Desc
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4;
 
     if (_is_valid) {
         carousel_id = GetUInt32(data);
@@ -100,19 +105,17 @@ void ts::CarouselIdentifierDescriptor::deserialize(DuckContext& duck, const Desc
 
 void ts::CarouselIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
-        strm << margin << UString::Format(u"Carousel id: 0x%X (%d)", {GetUInt32(data), GetUInt32(data)}) << std::endl;
-        if (size > 4) {
-            strm << margin << "Private data:" << std::endl
-                 << UString::Dump(data + 4, size - 4, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-        }
-        size = 0;
+        strm << margin << UString::Format(u"Carousel id: 0x%X (%d)", { GetUInt32(data), GetUInt32(data) }) << std::endl;
+        display.displayPrivateData(u"Private data", data + 4, size - 4, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 
@@ -124,7 +127,7 @@ void ts::CarouselIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element*
 {
     root->setIntAttribute(u"carousel_id", carousel_id, true);
     if (!private_data.empty()) {
-        root->addElement(u"private_data")->addHexaText(private_data);
+        root->addHexaTextChild(u"private_data", private_data);
     }
 }
 
@@ -133,10 +136,8 @@ void ts::CarouselIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element*
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CarouselIdentifierDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CarouselIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(carousel_id, u"carousel_id", true) &&
-        element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 6);
+    return element->getIntAttribute<uint32_t>(carousel_id, u"carousel_id", true) &&
+           element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 6);
 }

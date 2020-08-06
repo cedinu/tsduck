@@ -33,7 +33,7 @@
 //----------------------------------------------------------------------------
 
 #pragma once
-#include "tsPlugin.h"
+#include "tsOutputPlugin.h"
 #include "tsTSFile.h"
 
 namespace ts {
@@ -57,9 +57,22 @@ namespace ts {
         virtual bool stop() override;
         virtual bool send(const TSPacket*, const TSPacketMetadata*, size_t) override;
 
+        //! @cond nodoxygen
+        // A dummy storage value to force inclusion of this module when using the static library.
+        static const int REFERENCE;
+        //! @endcond
+
     private:
         UString           _name;
         TSFile::OpenFlags _flags;
+        TSPacketFormat    _file_format;
+        bool              _reopen;
+        MilliSecond       _retry_interval;
+        size_t            _retry_max;
         TSFile            _file;
+
+        // Open the file, retry on error if necessary.
+        // Use max number of retries. Updated with remaining number of retries.
+        bool openAndRetry(bool initial_wait, size_t& retry_allowed);
     };
 }

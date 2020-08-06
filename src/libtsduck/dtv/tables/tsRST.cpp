@@ -30,17 +30,18 @@
 #include "tsRST.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"RST"
+#define MY_CLASS ts::RST
 #define MY_TID ts::TID_RST
-#define MY_STD ts::STD_DVB
+#define MY_PID ts::PID_RST
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::RST, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::RST, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::RST::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection, nullptr, {MY_PID});
 
 
 //----------------------------------------------------------------------------
@@ -65,13 +66,22 @@ ts::RST::RST() :
     AbstractTable(MY_TID, MY_XML_NAME, MY_STD),
     events()
 {
-    _is_valid = true;
 }
 
 ts::RST::RST(DuckContext& duck, const BinaryTable& table) :
     RST()
 {
     deserialize(duck, table);
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::RST::clearContent()
+{
+    events.clear();
 }
 
 
@@ -119,7 +129,7 @@ void ts::RST::deserializeContent(DuckContext& duck, const BinaryTable& table)
 void ts::RST::serializeContent(DuckContext& duck, BinaryTable& table) const
 {
     // Build the section
-    uint8_t payload[MAX_PSI_SHORT_SECTION_PAYLOAD_SIZE];
+    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
     uint8_t* data = payload;
     size_t remain = sizeof(payload);
 
@@ -147,8 +157,10 @@ void ts::RST::serializeContent(DuckContext& duck, BinaryTable& table) const
 
 void ts::RST::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -196,25 +208,21 @@ void ts::RST::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::RST::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::RST::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    events.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"event");
+    bool ok = element->getChildren(children, u"event");
 
-    for (size_t index = 0; _is_valid && index < children.size(); ++index) {
+    for (size_t index = 0; ok && index < children.size(); ++index) {
         Event event;
-        _is_valid =
-            children[index]->getIntAttribute<uint16_t>(event.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
-            children[index]->getIntAttribute<uint16_t>(event.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
-            children[index]->getIntAttribute<uint16_t>(event.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
-            children[index]->getIntAttribute<uint16_t>(event.event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
-            children[index]->getIntEnumAttribute<uint8_t>(event.running_status, RunningStatusNames, u"running_status", true);
-        if (_is_valid) {
+        ok = children[index]->getIntAttribute<uint16_t>(event.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntAttribute<uint16_t>(event.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntAttribute<uint16_t>(event.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntAttribute<uint16_t>(event.event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntEnumAttribute<uint8_t>(event.running_status, RunningStatusNames, u"running_status", true);
+        if (ok) {
             events.push_back(event);
         }
     }
+    return ok;
 }

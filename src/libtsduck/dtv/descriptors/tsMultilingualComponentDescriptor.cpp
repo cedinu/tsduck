@@ -30,34 +30,38 @@
 #include "tsMultilingualComponentDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"multilingual_component_descriptor"
 #define MY_XML_ATTR u"description"
+#define MY_CLASS ts::MultilingualComponentDescriptor
 #define MY_DID ts::DID_MLINGUAL_COMPONENT
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MultilingualComponentDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MultilingualComponentDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MultilingualComponentDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::MultilingualComponentDescriptor::MultilingualComponentDescriptor() :
     AbstractMultilingualDescriptor(MY_DID, MY_XML_NAME, MY_XML_ATTR),
     component_tag(0)
 {
-    _is_valid = true;
 }
 
 
 //----------------------------------------------------------------------------
 // Constructor from a binary descriptor
 //----------------------------------------------------------------------------
+
+void ts::MultilingualComponentDescriptor::clearContent()
+{
+    component_tag = 0;
+}
 
 ts::MultilingualComponentDescriptor::MultilingualComponentDescriptor(DuckContext& duck, const Descriptor& desc) :
     MultilingualComponentDescriptor()
@@ -92,7 +96,8 @@ void ts::MultilingualComponentDescriptor::deserializeProlog(DuckContext& duck, c
 
 void ts::MultilingualComponentDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -119,8 +124,8 @@ void ts::MultilingualComponentDescriptor::buildXML(DuckContext& duck, xml::Eleme
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MultilingualComponentDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MultilingualComponentDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    AbstractMultilingualDescriptor::fromXML(duck, element);
-    _is_valid = _is_valid && element->getIntAttribute<uint8_t>(component_tag, u"component_tag", true);
+    return AbstractMultilingualDescriptor::analyzeXML(duck, element) &&
+           element->getIntAttribute<uint8_t>(component_tag, u"component_tag", true);
 }

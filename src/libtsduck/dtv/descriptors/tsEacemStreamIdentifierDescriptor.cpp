@@ -26,48 +26,41 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of an eacem_stream_identifier_descriptor.
-//  Private descriptor, must be preceeded by the EACEM/EICTA PDS.
-//
-//----------------------------------------------------------------------------
 
 #include "tsEacemStreamIdentifierDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"eacem_stream_identifier_descriptor"
+#define MY_CLASS ts::EacemStreamIdentifierDescriptor
 #define MY_DID ts::DID_EACEM_STREAM_ID
 #define MY_PDS ts::PDS_EACEM
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::EacemStreamIdentifierDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::EacemStreamIdentifierDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::EacemStreamIdentifierDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 // Incorrect use of TPS private data, TPS broadcasters should use EACEM/EICTA PDS instead.
-TS_ID_DESCRIPTOR_FACTORY(ts::EacemStreamIdentifierDescriptor, ts::EDID::Private(MY_DID, ts::PDS_TPS));
-TS_FACTORY_REGISTER(ts::EacemStreamIdentifierDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, ts::PDS_TPS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, ts::PDS_TPS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::EacemStreamIdentifierDescriptor::EacemStreamIdentifierDescriptor(uint8_t version_) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, MY_PDS),
     version(version_)
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::EacemStreamIdentifierDescriptor::clearContent()
+{
+    version = 0;
+}
 
 ts::EacemStreamIdentifierDescriptor::EacemStreamIdentifierDescriptor(DuckContext& duck, const Descriptor& desc) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, MY_PDS),
@@ -95,7 +88,7 @@ void ts::EacemStreamIdentifierDescriptor::serialize(DuckContext& duck, Descripto
 
 void ts::EacemStreamIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 1;
 
     if (_is_valid) {
         const uint8_t* data = desc.payload();
@@ -110,7 +103,8 @@ void ts::EacemStreamIdentifierDescriptor::deserialize(DuckContext& duck, const D
 
 void ts::EacemStreamIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -124,7 +118,7 @@ void ts::EacemStreamIdentifierDescriptor::DisplayDescriptor(TablesDisplay& displ
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::EacemStreamIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -132,14 +126,7 @@ void ts::EacemStreamIdentifierDescriptor::buildXML(DuckContext& duck, xml::Eleme
     root->setIntAttribute(u"version_byte", version, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::EacemStreamIdentifierDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::EacemStreamIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(version, u"version_byte", true, 0, 0x00, 0xFF);
+    return element->getIntAttribute<uint8_t>(version, u"version_byte", true, 0, 0x00, 0xFF);
 }

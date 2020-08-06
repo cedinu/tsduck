@@ -33,9 +33,10 @@
 
 #include "tsMain.h"
 #include "tsDuckContext.h"
-#include "tsInputRedirector.h"
+#include "tsTSFile.h"
 #include "tsPagerArgs.h"
 #include "tsPSILogger.h"
+#include "tsTSPacket.h"
 TSDUCK_SOURCE;
 TS_MAIN(MainCode);
 
@@ -50,42 +51,47 @@ const ts::StaticReferencesDVB dependenciesForStaticLib;
 //  Command line options
 //----------------------------------------------------------------------------
 
-class Options: public ts::Args
-{
-    TS_NOBUILD_NOCOPY(Options);
-public:
-    Options(int argc, char *argv[]);
-    virtual ~Options();
+namespace {
+    class Options: public ts::Args
+    {
+        TS_NOBUILD_NOCOPY(Options);
+    public:
+        Options(int argc, char *argv[]);
 
-    ts::DuckContext   duck;     // TSDuck execution context.
-    ts::TablesDisplay display;  // Table formatting options.
-    ts::PSILogger     logger;   // Table logging options
-    ts::PagerArgs     pager;    // Output paging options.
-    ts::UString       infile;   // Input file name
-};
+        ts::DuckContext    duck;     // TSDuck execution context.
+        ts::TablesDisplay  display;  // Table formatting options.
+        ts::PSILogger      logger;   // Table logging options
+        ts::PagerArgs      pager;    // Output paging options.
+        ts::UString        infile;   // Input file name.
+        ts::TSPacketFormat format;   // Input file format.
+    };
+}
 
-// Destructor.
-Options::~Options() {}
-
-// Constructor.
 Options::Options(int argc, char *argv[]) :
     Args(u"Extract all standard PSI from an MPEG transport stream", u"[options] [filename]"),
     duck(this),
     display(duck),
     logger(display),
     pager(true, true),
-    infile()
+    infile(),
+    format(ts::TSPacketFormat::AUTODETECT)
 {
     duck.defineArgsForCAS(*this);
     duck.defineArgsForPDS(*this);
     duck.defineArgsForStandards(*this);
-    duck.defineArgsForDVBCharset(*this);
+    duck.defineArgsForCharset(*this);
     pager.defineArgs(*this);
     logger.defineArgs(*this);
     display.defineArgs(*this);
 
     option(u"", 0, STRING, 0, 1);
     help(u"", u"Input MPEG capture file (standard input if omitted).");
+
+    option(u"format", 0, ts::TSPacketFormatEnum);
+    help(u"format", u"name",
+         u"Specify the format of the input file. By default, the format is automatically detected. "
+         u"But the auto-detection may fail in some cases (for instance when the first time-stamp of an M2TS file starts with 0x47). "
+         u"Using this option forces a specific format.");
 
     analyze(argc, argv);
 
@@ -95,6 +101,7 @@ Options::Options(int argc, char *argv[]) :
     display.loadArgs(duck, *this);
 
     infile = value(u"");
+    format = enumValue<ts::TSPacketFormat>(u"format", ts::TSPacketFormat::AUTODETECT);
 
     exitOnError();
 }
@@ -106,20 +113,27 @@ Options::Options(int argc, char *argv[]) :
 
 int MainCode(int argc, char *argv[])
 {
+    // Decode command line options.
     Options opt(argc, argv);
-    ts::InputRedirector input(opt.infile, opt);
-    ts::TSPacket pkt;
 
     // Redirect display on pager process or stdout only.
     opt.duck.setOutput(&opt.pager.output(opt), false);
 
+    // Open the TS file.
+    ts::TSFile file;
+    if (!file.openRead(opt.infile, 1, 0, opt, opt.format)) {
+        return EXIT_FAILURE;
+    }
+
     // Read all packets in the file and pass them to the logger
+    ts::TSPacket pkt;
     if (!opt.logger.open()) {
         return EXIT_FAILURE;
     }
-    while (!opt.logger.completed() && pkt.read(std::cin, true, opt)) {
+    while (!opt.logger.completed() && file.readPackets(&pkt, nullptr, 1, opt) > 0) {
         opt.logger.feedPacket(pkt);
     }
+    file.close(opt);
     opt.logger.close();
 
     // Report errors

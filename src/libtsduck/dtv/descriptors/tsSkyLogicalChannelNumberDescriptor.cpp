@@ -26,28 +26,23 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a sky_logical_channel_number_descriptor.
-//  Private descriptor, must be preceeded by the BskyB PDS.
-//
-//----------------------------------------------------------------------------
 
 #include "tsSkyLogicalChannelNumberDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"sky_logical_channel_number_descriptor"
+#define MY_CLASS ts::SkyLogicalChannelNumberDescriptor
 #define MY_DID ts::DID_LOGICAL_CHANNEL_SKY
 #define MY_PDS ts::PDS_BSKYB
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::SkyLogicalChannelNumberDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::SkyLogicalChannelNumberDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::SkyLogicalChannelNumberDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -59,7 +54,12 @@ ts::SkyLogicalChannelNumberDescriptor::SkyLogicalChannelNumberDescriptor() :
     entries(),
     region_id(0)
 {
-    _is_valid = true;
+}
+
+void ts::SkyLogicalChannelNumberDescriptor::clearContent()
+{
+    entries.clear();
+    region_id = 0;
 }
 
 ts::SkyLogicalChannelNumberDescriptor::SkyLogicalChannelNumberDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -94,7 +94,7 @@ void ts::SkyLogicalChannelNumberDescriptor::serialize(DuckContext& duck, Descrip
 
 void ts::SkyLogicalChannelNumberDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() % 9 == 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 9 == 2;
     entries.clear();
 
     if (_is_valid) {
@@ -124,7 +124,8 @@ void ts::SkyLogicalChannelNumberDescriptor::deserialize(DuckContext& duck, const
 
 void ts::SkyLogicalChannelNumberDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     uint16_t region_id = GetUInt16(data);
@@ -177,26 +178,21 @@ void ts::SkyLogicalChannelNumberDescriptor::buildXML(DuckContext& duck, xml::Ele
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SkyLogicalChannelNumberDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SkyLogicalChannelNumberDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint16_t>(region_id, u"region_id", true, 0, 0x0000, 0xFFFF) &&
         element->getChildren(children, u"service", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getIntAttribute<uint16_t>(entry.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
-            children[i]->getIntAttribute<uint8_t>(entry.service_type, u"service_type", true, 0, 0x00, 0xFF) &&
-            children[i]->getIntAttribute<uint16_t>(entry.channel_id, u"channel_id", true, 0, 0x0000, 0xFFFF) &&
-            children[i]->getIntAttribute<uint16_t>(entry.lcn, u"logical_channel_number", true, 0, 0x0000, 0xFFFF) &&
-            children[i]->getIntAttribute<uint16_t>(entry.sky_id, u"sky_id", true, 0, 0x0000, 0xFFFF);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(entry.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
+             children[i]->getIntAttribute<uint8_t>(entry.service_type, u"service_type", true, 0, 0x00, 0xFF) &&
+             children[i]->getIntAttribute<uint16_t>(entry.channel_id, u"channel_id", true, 0, 0x0000, 0xFFFF) &&
+             children[i]->getIntAttribute<uint16_t>(entry.lcn, u"logical_channel_number", true, 0, 0x0000, 0xFFFF) &&
+             children[i]->getIntAttribute<uint16_t>(entry.sky_id, u"sky_id", true, 0, 0x0000, 0xFFFF);
+        entries.push_back(entry);
     }
+    return ok;
 }

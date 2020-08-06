@@ -26,30 +26,26 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a component_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsComponentDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"component_descriptor"
+#define MY_CLASS ts::ComponentDescriptor
 #define MY_DID ts::DID_COMPONENT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ComponentDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ComponentDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ComponentDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::ComponentDescriptor::ComponentDescriptor() :
@@ -61,18 +57,22 @@ ts::ComponentDescriptor::ComponentDescriptor() :
     language_code(),
     text()
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::ComponentDescriptor::ComponentDescriptor(DuckContext& duck, const Descriptor& desc) :
     ComponentDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::ComponentDescriptor::clearContent()
+{
+    stream_content_ext = 0;
+    stream_content = 0;
+    component_type = 0;
+    component_tag = 0;
+    language_code.clear();
+    text.clear();
 }
 
 
@@ -91,7 +91,7 @@ void ts::ComponentDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
         desc.invalidate();
         return;
     }
-    bbp->append(duck.toDVB(text));
+    bbp->append(duck.encoded(text));
 
     serializeEnd(desc, bbp);
 }
@@ -106,15 +106,15 @@ void ts::ComponentDescriptor::deserialize(DuckContext& duck, const Descriptor& d
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 6;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 6;
 
     if (_is_valid) {
         stream_content_ext = (data[0] >> 4) & 0x0F;
         stream_content = data[0] & 0x0F;
         component_type = data[1];
         component_tag = data[2];
-        language_code.assign(duck.fromDVB(data + 3, 3));
-        text.assign(duck.fromDVB(data + 6, size - 6));
+        language_code = DeserializeLanguageCode(data + 3);
+        duck.decode(text, data + 6, size - 6);
     }
 }
 
@@ -125,18 +125,19 @@ void ts::ComponentDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 
 void ts::ComponentDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 6) {
         const uint16_t type = GetUInt16(data);
         const uint8_t tag = data[2];
-        strm << margin << "Content/type: " << names::ComponentType(type, names::FIRST) << std::endl
+        strm << margin << "Content/type: " << names::ComponentType(duck, type, names::FIRST) << std::endl
              << margin << UString::Format(u"Component tag: %d (0x%X)", {tag, tag}) << std::endl
-             << margin << "Language: " << display.duck().fromDVB(data + 3, 3) << std::endl;
+             << margin << "Language: " << DeserializeLanguageCode(data + 3) << std::endl;
         data += 6; size -= 6;
         if (size > 0) {
-            strm << margin << "Description: \"" << display.duck().fromDVB(data, size) << "\"" << std::endl;
+            strm << margin << "Description: \"" << duck.decoded(data, size) << "\"" << std::endl;
         }
         data += size; size = 0;
     }
@@ -164,14 +165,12 @@ void ts::ComponentDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ComponentDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ComponentDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(stream_content, u"stream_content", true, 0x00, 0x00, 0x0F) &&
-        element->getIntAttribute<uint8_t>(stream_content_ext, u"stream_content_ext", false, 0x0F, 0x00, 0x0F) &&
-        element->getIntAttribute<uint8_t>(component_type, u"component_type", true, 0x00, 0x00, 0xFF) &&
-        element->getIntAttribute<uint8_t>(component_tag, u"component_tag", false, 0x00, 0x00, 0xFF) &&
-        element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
-        element->getAttribute(text, u"text", false, u"", 0, MAX_DESCRIPTOR_SIZE - 8);
+    return element->getIntAttribute<uint8_t>(stream_content, u"stream_content", true, 0x00, 0x00, 0x0F) &&
+           element->getIntAttribute<uint8_t>(stream_content_ext, u"stream_content_ext", false, 0x0F, 0x00, 0x0F) &&
+           element->getIntAttribute<uint8_t>(component_type, u"component_type", true, 0x00, 0x00, 0xFF) &&
+           element->getIntAttribute<uint8_t>(component_tag, u"component_tag", false, 0x00, 0x00, 0xFF) &&
+           element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
+           element->getAttribute(text, u"text", false, u"", 0, MAX_DESCRIPTOR_SIZE - 8);
 }

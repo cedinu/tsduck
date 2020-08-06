@@ -30,19 +30,19 @@
 #include "tsGenreDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"genre_descriptor"
+#define MY_CLASS ts::GenreDescriptor
 #define MY_DID ts::DID_ATSC_GENRE
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::GenreDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::GenreDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::GenreDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,13 +53,17 @@ ts::GenreDescriptor::GenreDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     attributes()
 {
-    _is_valid = true;
 }
 
 ts::GenreDescriptor::GenreDescriptor(DuckContext& duck, const Descriptor& desc) :
     GenreDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::GenreDescriptor::clearContent()
+{
+    attributes.clear();
 }
 
 
@@ -87,7 +91,7 @@ void ts::GenreDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size > 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size > 0;
 
     if (_is_valid) {
         const size_t count = data[0] & 0x1F;
@@ -106,7 +110,8 @@ void ts::GenreDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 void ts::GenreDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
     if (size > 0) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
 
         size_t count = data[0] & 0x1F;
@@ -139,20 +144,15 @@ void ts::GenreDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::GenreDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::GenreDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    attributes.clear();
     xml::ElementVector children;
+    bool ok = element->getChildren(children, u"attribute", 0, 0x1F);
 
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"attribute", 0, 0x1F);
-
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         uint8_t attr = 0;
-        _is_valid = children[i]->getIntAttribute<uint8_t>(attr, u"value", true);
-        if (_is_valid) {
-            attributes.push_back(attr);
-        }
+        ok = children[i]->getIntAttribute<uint8_t>(attr, u"value", true);
+        attributes.push_back(attr);
     }
+    return ok;
 }

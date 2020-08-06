@@ -33,9 +33,11 @@
 
 #include "tsMain.h"
 #include "tsDuckContext.h"
-#include "tsInputRedirector.h"
+#include "tsTSFile.h"
 #include "tsTablesDisplay.h"
 #include "tsSectionDemux.h"
+#include "tsBinaryTable.h"
+#include "tsTSPacket.h"
 #include "tsNames.h"
 #include "tsTDT.h"
 #include "tsTOT.h"
@@ -47,20 +49,22 @@ TS_MAIN(MainCode);
 //  Command line options
 //----------------------------------------------------------------------------
 
-class Options: public ts::Args
-{
-    TS_NOBUILD_NOCOPY(Options);
-public:
-    Options(int argc, char *argv[]);
-    virtual ~Options();
+namespace {
+    class Options: public ts::Args
+    {
+        TS_NOBUILD_NOCOPY(Options);
+    public:
+        Options(int argc, char *argv[]);
 
-    ts::DuckContext   duck;     // TSDuck execution context.
-    ts::TablesDisplay display;  // Table formatting options (all default values, nothing on command line).
-    bool              no_tdt;   // Do not try to get a TDT
-    bool              no_tot;   // Do not try to get a TOT
-    bool              all;      // Report all tables, not only the first one.
-    ts::UString       infile;   // Input file name
-};
+        ts::DuckContext    duck;     // TSDuck execution context.
+        ts::TablesDisplay  display;  // Table formatting options (all default values, nothing on command line).
+        bool               no_tdt;   // Do not try to get a TDT
+        bool               no_tot;   // Do not try to get a TOT
+        bool               all;      // Report all tables, not only the first one.
+        ts::UString        infile;   // Input file name
+        ts::TSPacketFormat format;   // Input file format.
+    };
+}
 
 Options::Options(int argc, char *argv[]) :
     Args(u"Extract the date and time (TDT/TOT) from a transport stream", u"[options] [filename]"),
@@ -69,13 +73,22 @@ Options::Options(int argc, char *argv[]) :
     no_tdt(false),
     no_tot(false),
     all(false),
-    infile()
+    infile(),
+    format(ts::TSPacketFormat::AUTODETECT)
 {
     option(u"", 0, STRING, 0, 1);
     help(u"", u"MPEG capture file (standard input if omitted).");
 
     option(u"all", 'a');
     help(u"all", u"Report all TDT/TOT tables (default: report only the first table of each type).");
+
+    option(u"format", 'f', ts::TSPacketFormatEnum);
+    help(u"format", u"name",
+         u"Specify the format of the input file. "
+         u"By default, the format is automatically detected. "
+         u"But the auto-detection may fail in some cases "
+         u"(for instance when the first time-stamp of an M2TS file starts with 0x47). "
+         u"Using this option forces a specific format.");
 
     option(u"notdt", 0);
     help(u"notdt", u"Ignore Time & Date Table (TDT).");
@@ -89,12 +102,9 @@ Options::Options(int argc, char *argv[]) :
     all = present(u"all");
     no_tdt = present(u"notdt");
     no_tot = present(u"notot");
+    format = enumValue<ts::TSPacketFormat>(u"format", ts::TSPacketFormat::AUTODETECT);
 
     exitOnError();
-}
-
-Options::~Options()
-{
 }
 
 
@@ -189,7 +199,7 @@ void TableHandler::handleTable(ts::SectionDemux&, const ts::BinaryTable& table)
             if (_opt.verbose()) {
                 const ts::TID tid = table.tableId();
                 const ts::PID pid = table.sourcePID();
-                std::cout << ts::UString::Format(u"* Got unexpected %s, TID %d (0x%X) on PID %d (0x%X)", {ts::names::TID(tid), tid, tid, pid, pid}) << std::endl;
+                std::cout << ts::UString::Format(u"* Got unexpected %s, TID %d (0x%X) on PID %d (0x%X)", {ts::names::TID(_opt.duck, tid), tid, tid, pid, pid}) << std::endl;
             }
         }
     }
@@ -202,17 +212,26 @@ void TableHandler::handleTable(ts::SectionDemux&, const ts::BinaryTable& table)
 
 int MainCode(int argc, char *argv[])
 {
+    // Decode command line options.
     Options opt(argc, argv);
+
+    // Configure the demux.
     TableHandler handler(opt);
     ts::SectionDemux demux(opt.duck, &handler);
-    ts::InputRedirector input(opt.infile, opt);
-    ts::TSPacket pkt;
-
     demux.addPID(ts::PID_TDT);  // also equal PID_TOT
 
-    while (!handler.completed() && pkt.read(std::cin, true, opt)) {
+    // Open the TS file.
+    ts::TSFile file;
+    if (!file.openRead(opt.infile, 1, 0, opt, opt.format)) {
+        return EXIT_FAILURE;
+    }
+
+    // Read all packets in the file until the date is found.
+    ts::TSPacket pkt;
+    while (!handler.completed() && file.readPackets(&pkt, nullptr, 1, opt) > 0 ) {
         demux.feedPacket(pkt);
     }
+    file.close(opt);
 
     return EXIT_SUCCESS;
 }

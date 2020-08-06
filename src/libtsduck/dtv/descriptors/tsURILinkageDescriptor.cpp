@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"URI_linkage_descriptor"
+#define MY_CLASS ts::URILinkageDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_URI_LINKAGE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::URILinkageDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::URILinkageDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::URILinkageDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -56,7 +56,14 @@ ts::URILinkageDescriptor::URILinkageDescriptor() :
     min_polling_interval(0),
     private_data()
 {
-    _is_valid = true;
+}
+
+void ts::URILinkageDescriptor::clearContent()
+{
+    uri_linkage_type = 0;
+    uri.clear();
+    min_polling_interval = 0;
+    private_data.clear();
 }
 
 ts::URILinkageDescriptor::URILinkageDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -75,7 +82,7 @@ void ts::URILinkageDescriptor::serialize(DuckContext& duck, Descriptor& desc) co
     ByteBlockPtr bbp(serializeStart());
     bbp->appendUInt8(MY_EDID);
     bbp->appendUInt8(uri_linkage_type);
-    bbp->append(duck.toDVBWithByteLength(uri));
+    bbp->append(duck.encodedWithByteLength(uri));
     if (uri_linkage_type == 0x00 || uri_linkage_type == 0x01) {
         bbp->appendUInt16(min_polling_interval);
     }
@@ -93,12 +100,12 @@ void ts::URILinkageDescriptor::deserialize(DuckContext& duck, const Descriptor& 
     private_data.clear();
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 3 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 3 && data[0] == MY_EDID;
 
     if (_is_valid) {
         uri_linkage_type = data[1];
         data += 2; size -= 2;
-        uri = duck.fromDVBWithByteLength(data, size);
+        duck.decodeWithByteLength(uri, data, size);
         if (uri_linkage_type == 0x00 || uri_linkage_type == 0x01) {
             _is_valid = size >= 2;
             if (_is_valid) {
@@ -122,25 +129,25 @@ void ts::URILinkageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did
     // See ts::TablesDisplay::displayDescriptorData()
 
     if (size >= 2) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
 
         const uint8_t type = data[0];
         strm << margin << "URI linkage type: " << NameFromSection(u"URILinkageType", type, names::HEXA_FIRST) << std::endl;
         data++; size--;
-        strm << margin << "URI: " << display.duck().fromDVBWithByteLength(data, size) << std::endl;
+        strm << margin << "URI: " << duck.decodedWithByteLength(data, size) << std::endl;
 
         if ((type == 0x00 || type == 0x01) && size >= 2) {
             const int interval = GetUInt16(data);
             data += 2; size -= 2;
             strm << margin << UString::Format(u"Min polling interval: %d (%d seconds)", {interval, 2 * interval}) << std::endl;
         }
-        if (size > 0) {
-            strm << margin << "Private data:" << std::endl << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            size = 0;
-        }
+        display.displayPrivateData(u"Private data", data, size, indent);
     }
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 
@@ -156,7 +163,7 @@ void ts::URILinkageDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
         root->setIntAttribute(u"min_polling_interval", min_polling_interval);
     }
     if (!private_data.empty()) {
-        root->addElement(u"private_data")->addHexaText(private_data);
+        root->addHexaTextChild(u"private_data", private_data);
     }
 }
 
@@ -165,12 +172,10 @@ void ts::URILinkageDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::URILinkageDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::URILinkageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(uri_linkage_type, u"uri_linkage_type", true) &&
-        element->getAttribute(uri, u"uri", true) &&
-        element->getIntAttribute<uint16_t>(min_polling_interval, u"min_polling_interval", uri_linkage_type <= 1) &&
-        element->getHexaTextChild(private_data, u"private_data", false);
+    return element->getIntAttribute<uint8_t>(uri_linkage_type, u"uri_linkage_type", true) &&
+           element->getAttribute(uri, u"uri", true) &&
+           element->getIntAttribute<uint16_t>(min_polling_interval, u"min_polling_interval", uri_linkage_type <= 1) &&
+           element->getHexaTextChild(private_data, u"private_data", false);
 }

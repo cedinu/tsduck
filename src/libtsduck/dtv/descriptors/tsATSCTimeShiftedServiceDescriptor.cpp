@@ -30,18 +30,18 @@
 #include "tsATSCTimeShiftedServiceDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"ATSC_time_shifted_service_descriptor"
+#define MY_CLASS ts::ATSCTimeShiftedServiceDescriptor
 #define MY_DID ts::DID_ATSC_TIME_SHIFT
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ATSCTimeShiftedServiceDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ATSCTimeShiftedServiceDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::ATSCTimeShiftedServiceDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,11 @@ ts::ATSCTimeShiftedServiceDescriptor::ATSCTimeShiftedServiceDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
+}
+
+void ts::ATSCTimeShiftedServiceDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 ts::ATSCTimeShiftedServiceDescriptor::ATSCTimeShiftedServiceDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -96,7 +100,7 @@ void ts::ATSCTimeShiftedServiceDescriptor::deserialize(DuckContext& duck, const 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         size_t count = data[0] & 0x1F;
@@ -116,7 +120,8 @@ void ts::ATSCTimeShiftedServiceDescriptor::deserialize(DuckContext& duck, const 
 
 void ts::ATSCTimeShiftedServiceDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -154,23 +159,17 @@ void ts::ATSCTimeShiftedServiceDescriptor::buildXML(DuckContext& duck, xml::Elem
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ATSCTimeShiftedServiceDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ATSCTimeShiftedServiceDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"service", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"service", 0, MAX_ENTRIES);
 
     for (size_t i = 0; _is_valid && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getIntAttribute<uint16_t>(entry.time_shift, u"time_shift", true, 0, 0, 0x03FF) &&
-            children[i]->getIntAttribute<uint16_t>(entry.major_channel_number, u"major_channel_number", true, 0, 0, 0x03FF) &&
-            children[i]->getIntAttribute<uint16_t>(entry.minor_channel_number, u"minor_channel_number", true, 0, 0, 0x03FF);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(entry.time_shift, u"time_shift", true, 0, 0, 0x03FF) &&
+             children[i]->getIntAttribute<uint16_t>(entry.major_channel_number, u"major_channel_number", true, 0, 0, 0x03FF) &&
+             children[i]->getIntAttribute<uint16_t>(entry.minor_channel_number, u"minor_channel_number", true, 0, 0, 0x03FF);
+        entries.push_back(entry);
     }
+    return ok;
 }

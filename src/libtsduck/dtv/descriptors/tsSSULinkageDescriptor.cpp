@@ -30,13 +30,18 @@
 #include "tsSSULinkageDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
-#define MY_XML_NAME u""   // No XML conversion.
+// This is not a fully registered descriptor. This is just a specific case of linkage_descriptor.
+// It has no specific XML representation. It cannot be converted from XML because it has no specific
+// syntax. It can be converted to XML, as a <linkage_descriptor>.
+
+#define MY_XML_NAME u"linkage_descriptor"
 #define MY_DID ts::DID_LINKAGE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
 
 //----------------------------------------------------------------------------
@@ -51,7 +56,6 @@ ts::SSULinkageDescriptor::SSULinkageDescriptor(uint16_t ts, uint16_t onetw, uint
     entries(),
     private_data()
 {
-    _is_valid = true;
 }
 
 ts::SSULinkageDescriptor::SSULinkageDescriptor(uint16_t ts, uint16_t onetw, uint16_t service, uint32_t oui) :
@@ -63,7 +67,6 @@ ts::SSULinkageDescriptor::SSULinkageDescriptor(uint16_t ts, uint16_t onetw, uint
     private_data()
 {
     entries.push_back(Entry(oui));
-    _is_valid = true;
 }
 
 ts::SSULinkageDescriptor::SSULinkageDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -72,11 +75,22 @@ ts::SSULinkageDescriptor::SSULinkageDescriptor(DuckContext& duck, const Descript
     deserialize(duck, desc);
 }
 
+void ts::SSULinkageDescriptor::clearContent()
+{
+    ts_id = 0;
+    onetw_id = 0;
+    service_id = 0;
+    entries.clear();
+    private_data.clear();
+}
+
 ts::SSULinkageDescriptor::SSULinkageDescriptor(DuckContext& duck, const ts::LinkageDescriptor& desc) :
     SSULinkageDescriptor()
 {
-    _is_valid = desc.isValid() && desc.linkage_type == LINKAGE_SSU;
-    if (_is_valid) {
+    if (!desc.isValid() || desc.linkage_type != LINKAGE_SSU) {
+        invalidate();
+    }
+    else {
         // Convert using serialization / deserialization.
         Descriptor bin;
         desc.serialize(duck, bin);
@@ -133,7 +147,7 @@ void ts::SSULinkageDescriptor::serialize(DuckContext& duck, Descriptor& desc) co
 
 void ts::SSULinkageDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 8;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 8;
 
     if (_is_valid) {
         const uint8_t* data = desc.payload();
@@ -177,13 +191,13 @@ void ts::SSULinkageDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 // XML serialization
 //----------------------------------------------------------------------------
 
-ts::xml::Element* ts::SSULinkageDescriptor::toXML(DuckContext& duck, xml::Element* parent) const
+void ts::SSULinkageDescriptor::buildXML(DuckContext& duck, xml::Element* parent) const
 {
     // There is no specific representation of this descriptor.
     // Convert to a linkage_descriptor.
     LinkageDescriptor desc;
     toLinkageDescriptor(duck, desc);
-    return desc.toXML(duck, parent);
+    desc.buildXML(duck, parent);
 }
 
 
@@ -191,12 +205,12 @@ ts::xml::Element* ts::SSULinkageDescriptor::toXML(DuckContext& duck, xml::Elemen
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SSULinkageDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SSULinkageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     // There is no specific representation of this descriptor.
     // We cannot be called since there is no registration in the XML factory.
     element->report().error(u"Internal error, there is no XML representation for SSULinkageDescriptor");
-    _is_valid = false;
+    return false;
 }
 
 

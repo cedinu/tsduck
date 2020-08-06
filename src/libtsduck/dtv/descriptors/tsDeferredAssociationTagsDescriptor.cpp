@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"deferred_association_tags_descriptor"
+#define MY_CLASS ts::DeferredAssociationTagsDescriptor
 #define MY_DID ts::DID_DEFERRED_ASSOC_TAGS
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DeferredAssociationTagsDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::DeferredAssociationTagsDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::DeferredAssociationTagsDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +55,14 @@ ts::DeferredAssociationTagsDescriptor::DeferredAssociationTagsDescriptor() :
     program_number(0),
     private_data()
 {
-    _is_valid = true;
+}
+
+void ts::DeferredAssociationTagsDescriptor::clearContent()
+{
+    association_tags.clear();
+    transport_stream_id = 0;
+    program_number = 0;
+    private_data.clear();
 }
 
 ts::DeferredAssociationTagsDescriptor::DeferredAssociationTagsDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -95,7 +102,7 @@ void ts::DeferredAssociationTagsDescriptor::deserialize(DuckContext& duck, const
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         size_t len = data[0];
@@ -120,7 +127,8 @@ void ts::DeferredAssociationTagsDescriptor::deserialize(DuckContext& duck, const
 
 void ts::DeferredAssociationTagsDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -133,10 +141,7 @@ void ts::DeferredAssociationTagsDescriptor::DisplayDescriptor(TablesDisplay& dis
         if (size >= 4 && len == 0) {
             strm << margin << UString::Format(u"Transport stream id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
                  << margin << UString::Format(u"Program number: 0x%X (%d)", {GetUInt16(data + 2), GetUInt16(data + 2)}) << std::endl;
-            if (size > 4) {
-                strm << margin << "Private data:" << std::endl
-                     << UString::Dump(data + 4, size - 4, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            }
+            display.displayPrivateData(u"Private data", data + 4, size - 4, indent);
             size = 0;
         }
     }
@@ -156,9 +161,7 @@ void ts::DeferredAssociationTagsDescriptor::buildXML(DuckContext& duck, xml::Ele
     for (auto it = association_tags.begin(); it != association_tags.end(); ++it) {
         root->addElement(u"association")->setIntAttribute(u"tag", *it, true);
     }
-    if (!private_data.empty()) {
-        root->addElement(u"private_data")->addHexaText(private_data);
-    }
+    root->addHexaTextChild(u"private_data", private_data, true);
 }
 
 
@@ -166,24 +169,19 @@ void ts::DeferredAssociationTagsDescriptor::buildXML(DuckContext& duck, xml::Ele
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DeferredAssociationTagsDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DeferredAssociationTagsDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    association_tags.clear();
-    private_data.clear();
     xml::ElementVector children;
-
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint16_t>(transport_stream_id, u"transport_stream_id", true) &&
         element->getIntAttribute<uint16_t>(program_number, u"program_number", true) &&
         element->getChildren(children, u"association") &&
         element->getHexaTextChild(private_data, u"private_data", false);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         uint16_t tag = 0;
-        _is_valid = children[i]->getIntAttribute<uint16_t>(tag, u"tag", true);
-        if (_is_valid) {
-            association_tags.push_back(tag);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(tag, u"tag", true);
+        association_tags.push_back(tag);
     }
+    return ok;
 }

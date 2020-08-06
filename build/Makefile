@@ -71,8 +71,8 @@ install:
 	@true
 else
 install: 80-tsduck.rules 80-tsduck.perms
-	install -d -m 755 $(SYSROOT)$(ETCDIR)/udev/rules.d
-	install -m 644 80-tsduck.rules $(SYSROOT)$(ETCDIR)/udev/rules.d/
+	install -d -m 755 $(SYSROOT)$(UDEVDIR)
+	install -m 644 80-tsduck.rules $(SYSROOT)$(UDEVDIR)/
 	install -d -m 755 $(SYSROOT)$(ETCDIR)/security/console.perms.d
 	install -m 644 80-tsduck.perms $(SYSROOT)$(ETCDIR)/security/console.perms.d/
 endif
@@ -81,6 +81,7 @@ install-devel:
 
 # Build the source tarballs for distribution.
 VERSION = $(shell ./get-version-from-sources.sh)
+DISTRO  = $(shell ./get-version-from-sources.sh --distro)
 TARNAME = tsduck-$(VERSION)
 TARFILE = $(INSTALLERDIR)/$(TARNAME).tgz
 TMPROOT = $(INSTALLERDIR)/tmp
@@ -95,11 +96,6 @@ tarball:
 	$(MAKE) -C $(TMPROOT)/$(TARNAME) distclean
 	tar -C $(TMPROOT) -czf $(TARFILE) -p --owner=0 --group=0 $(TARNAME)
 	rm -rf $(TMPROOT)
-
-# Linux distro version.
-FC_DISTRO = $(if $(wildcard /etc/fedora-release),$(shell grep " release " /etc/fedora-release 2>/dev/null | sed -e 's/^.* release \([0-9]*\).*$$/\1/'),)
-RH_DISTRO = $(if $(wildcard /etc/redhat-release),$(shell grep " release " /etc/redhat-release 2>/dev/null | sed -e 's/^.* release \([0-9]*\).*$$/\1/'),)
-DISTRO    = $(if $(FC_DISTRO),.fc$(FC_DISTRO),$(if $(RH_DISTRO),.el$(RH_DISTRO),))
 
 # Installer target: rpm or deb.
 installer: $(if $(wildcard /etc/*fedora* /etc/*redhat*),rpm,$(if $(wildcard /etc/*debian*),deb,))
@@ -121,6 +117,9 @@ rpm: tarball $(RPMBUILDROOT)
 	      -D 'version $(shell ./get-version-from-sources.sh --main)' \
 	      -D 'commit $(shell ./get-version-from-sources.sh --commit)' \
 	      -D 'distro $(DISTRO)' \
+	      $(if $(NOSRT),-D 'nosrt 1',) \
+	      $(if $(NOPCSC),-D 'nopcsc 1',) \
+	      $(if $(NOCURL),-D 'nocurl 1',) \
 	      tsduck.spec
 	cp -uf $(RPMBUILDROOT)/RPMS/*/tsduck-$(VERSION)$(DISTRO).*.rpm $(INSTALLERDIR)
 	cp -uf $(RPMBUILDROOT)/RPMS/*/tsduck-devel-$(VERSION)$(DISTRO).*.rpm $(INSTALLERDIR)
@@ -137,11 +136,13 @@ deb-main:
 	rm -rf $(TMPDIR)
 	$(MAKE) NOTEST=true -C $(ROOTDIR) install SYSROOT=$(TMPDIR)
 	mkdir $(TMPDIR)/DEBIAN
-	sed -e 's/{{VERSION}}/$(VERSION)/g' \
+	sed -e 's/{{VERSION}}/$(VERSION)$(DISTRO)/g' \
 	    -e 's/{{ARCH}}/$(shell dpkg-architecture -qDEB_BUILD_ARCH)/g' \
+	    $(if $(NOSRT),-e '/libsrt/d',) \
+	    $(if $(NOPCSC),-e '/libpcsc/d',) \
+	    $(if $(NOCURL),-e '/libcurl/d',) \
 	    tsduck.control >$(TMPDIR)/DEBIAN/control
 	sed -e 's|{{EXECS}}|$(addprefix /usr/bin/,$(TSEXECS))|g' \
-	    -e 's|{{SHLIBS}}|$(addprefix /usr/bin/,$(SHARED_LIBTSDUCK) $(addsuffix .so,$(TSPLUGINS)))|g' \
 	    tsduck.postinst >$(TMPDIR)/DEBIAN/postinst
 	chmod a+x $(TMPDIR)/DEBIAN/postinst
 	dpkg --build $(TMPDIR) $(INSTALLERDIR)
@@ -151,8 +152,11 @@ deb-dev:
 	rm -rf $(TMPDIR)
 	$(MAKE) NOTEST=true -C $(ROOTDIR) install-devel SYSROOT=$(TMPDIR)
 	mkdir $(TMPDIR)/DEBIAN
-	sed -e 's/{{VERSION}}/$(VERSION)/g' \
+	sed -e 's/{{VERSION}}/$(VERSION)$(DISTRO)/g' \
 	    -e 's/{{ARCH}}/$(shell dpkg-architecture -qDEB_BUILD_ARCH)/g' \
+	    $(if $(NOSRT),-e '/libsrt/d',) \
+	    $(if $(NOPCSC),-e '/libpcsc/d',) \
+	    $(if $(NOCURL),-e '/libcurl/d',) \
 	    tsduck-dev.control >$(TMPDIR)/DEBIAN/control
 	cp tsduck-dev.postinst $(TMPDIR)/DEBIAN/postinst
 	chmod a+x $(TMPDIR)/DEBIAN/postinst

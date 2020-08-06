@@ -30,19 +30,19 @@
 #include "tsRedistributionControlDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"redistribution_control_descriptor"
+#define MY_CLASS ts::RedistributionControlDescriptor
 #define MY_DID ts::DID_ATSC_REDIST_CONTROL
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::RedistributionControlDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::RedistributionControlDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::RedistributionControlDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,13 +53,18 @@ ts::RedistributionControlDescriptor::RedistributionControlDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     rc_information()
 {
-    _is_valid = true;
 }
 
 ts::RedistributionControlDescriptor::RedistributionControlDescriptor(DuckContext& duck, const Descriptor& desc) :
     RedistributionControlDescriptor()
 {
     deserialize(duck, desc);
+}
+
+
+void ts::RedistributionControlDescriptor::clearContent()
+{
+    rc_information.clear();
 }
 
 
@@ -81,7 +86,7 @@ void ts::RedistributionControlDescriptor::serialize(DuckContext& duck, Descripto
 
 void ts::RedistributionControlDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
 
     if (_is_valid) {
         rc_information.copy(desc.payload(), desc.payloadSize());
@@ -98,10 +103,7 @@ void ts::RedistributionControlDescriptor::deserialize(DuckContext& duck, const D
 
 void ts::RedistributionControlDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
-    const std::string margin(indent, ' ');
-    strm << margin << "RC information, " << size << " bytes" << std::endl
-         << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
+    display.displayPrivateData(u"RC information", data, size, indent);
 }
 
 
@@ -111,9 +113,7 @@ void ts::RedistributionControlDescriptor::DisplayDescriptor(TablesDisplay& displ
 
 void ts::RedistributionControlDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    if (!rc_information.empty()) {
-        root->addElement(u"rc_information")->addHexaText(rc_information);
-    }
+    root->addHexaTextChild(u"rc_information", rc_information, true);
 }
 
 
@@ -121,10 +121,7 @@ void ts::RedistributionControlDescriptor::buildXML(DuckContext& duck, xml::Eleme
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::RedistributionControlDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::RedistributionControlDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    rc_information.clear();
-    _is_valid =
-        checkXMLName(element) &&
-        element->getHexaTextChild(rc_information, u"rc_information", false, 0, 255);
+    return element->getHexaTextChild(rc_information, u"rc_information", false, 0, 255);
 }

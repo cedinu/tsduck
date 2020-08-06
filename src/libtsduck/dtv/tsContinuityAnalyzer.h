@@ -44,7 +44,6 @@ namespace ts {
     //!
     class TSDUCKDLL ContinuityAnalyzer
     {
-        TS_NOCOPY(ContinuityAnalyzer);
     public:
         //!
         //! Constructor.
@@ -52,6 +51,25 @@ namespace ts {
         //! @param [in] report Where to report discontinuity errors. Drop errors if null.
         //!
         explicit ContinuityAnalyzer(const PIDSet& pid_filter = NoPID, Report* report = nullptr);
+
+        // Implementation note:
+        // "= default" definitions required for copy constructor and assignments so that
+        // the compiler understands that we know what we do with the pointer member _report.
+        // Important: take care in case of internal modification, do not break the ownership
+        // of pointers because the compiler will no longer complain.
+
+        //!
+        //! Copy constructor.
+        //! @param [in] other Other instance to copy.
+        //!
+        ContinuityAnalyzer(const ContinuityAnalyzer& other) = default;
+
+        //!
+        //! Assignment operator.
+        //! @param [in] other Other instance to copy.
+        //! @return A reference to this instance.
+        //!
+        ContinuityAnalyzer& operator=(const ContinuityAnalyzer& other) = default;
 
         //!
         //! Reset all collected information.
@@ -193,6 +211,27 @@ namespace ts {
         //! This is the output CC value, possibly modified.
         //!
         uint8_t lastCC(PID pid) const;
+
+        //!
+        //! Get the last duplicate packet count for a PID.
+        //! @param [in] pid The PID to check.
+        //! @return The last duplicate packet count for the PID or ts::NPOS when the PID is not filtered.
+        //!
+        size_t dupCount(PID pid) const;
+
+        //!
+        //! Get the last transport stream packet that was passed to feedPacket() for a PID.
+        //! @param [in] pid The PID to check.
+        //! @return The last packet for the PID or ts::NullPacket when the PID is not filtered.
+        //!
+        TSPacket lastPacket(PID pid) const;
+
+        //!
+        //! Get the last transport stream packet that was passed to feedPacket() for a PID.
+        //! @param [in] pid The PID to check.
+        //! @param [out] packet The last packet for the PID or ts::NullPacket when the PID is not filtered.
+        //!
+        void getLastPacket(PID pid, TSPacket& packet) const;
 
         //!
         //! Compute the number of missing packets between two continuity counters.

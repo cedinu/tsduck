@@ -247,6 +247,7 @@ bool ts::SRTSocket::close(ts::Report& report) NOSRT_ERROR
 bool ts::SRTSocket::loadArgs(ts::DuckContext& duck, ts::Args& args) { return true; }
 bool ts::SRTSocket::send(const void* data, size_t size, ts::Report& report) NOSRT_ERROR
 bool ts::SRTSocket::receive(void* data, size_t max_size, size_t& ret_size, ts::Report& report) NOSRT_ERROR
+bool ts::SRTSocket::receive(void* data, size_t max_size, size_t& ret_size, MicroSecond& timestamp, ts::Report& report) NOSRT_ERROR
 bool ts::SRTSocket::getSockOpt(int optName, const char* optNameStr, void* optval, int& optlen, ts::Report& report) const NOSRT_ERROR
 int  ts::SRTSocket::getSocket() const { return -1; }
 bool ts::SRTSocket::getMessageApi() const { return false; }
@@ -352,7 +353,7 @@ public:
 
 ts::SRTSocket::Guts::Guts() :
     default_address(),
-    mode(LISTENER),
+    mode(SRTSocketMode::LISTENER),
     sock(-1),  // do not use TS_SOCKET_T_INVALID, an SRT socket is not a socket, it is always an int
     transtype(SRTT_INVALID),
     packet_filter(),
@@ -482,7 +483,7 @@ bool ts::SRTSocket::open(SRTSocketMode mode,
     _guts->sock = srt_socket(AF_INET, SOCK_DGRAM, 0);
 #endif
     if (_guts->sock < 0) {
-        report.error(u"error during srt_socket(), msg: %s", { srt_getlasterror_str() });
+        report.error(u"error during srt_socket(), msg: %s", {srt_getlasterror_str()});
         return false;
     }
 
@@ -491,26 +492,26 @@ bool ts::SRTSocket::open(SRTSocketMode mode,
     }
 
     switch (_guts->mode) {
-        case LISTENER:
+        case SRTSocketMode::LISTENER:
             ret = _guts->srtListen(local_addr, report);
             if (ret < 0) {
                 goto fail;
             }
             _guts->sock = ret;
             break;
-        case RENDEZVOUS:
+        case SRTSocketMode::RENDEZVOUS:
             ret = _guts->srtBind(local_addr, report);
             if (ret < 0) {
                 goto fail;
             }
             TS_FALLTHROUGH
-        case CALLER:
+        case SRTSocketMode::CALLER:
             ret = _guts->srtConnect(remote_addr, report);
             if (ret < 0) {
                 goto fail;
             }
             break;
-        case LEN:
+        case SRTSocketMode::LEN:
         default:
             report.error(u"unsupported socket mode");
             goto fail;
@@ -779,12 +780,23 @@ bool ts::SRTSocket::Guts::send(const void* data, size_t size, const ts::SocketAd
 
 bool ts::SRTSocket::receive(void* data, size_t max_size, size_t& ret_size, ts::Report& report)
 {
-    const int ret = srt_recv(_guts->sock, reinterpret_cast<char*>(data), int(max_size));
+    MicroSecond timestamp = 0; // unused
+    return receive(data, max_size, ret_size, timestamp, report);
+}
+
+bool ts::SRTSocket::receive(void* data, size_t max_size, size_t& ret_size, MicroSecond& timestamp, ts::Report& report)
+{
+    // Message data
+    ::SRT_MSGCTRL ctrl;
+    TS_ZERO(ctrl);
+
+    const int ret = srt_recvmsg2(_guts->sock, reinterpret_cast<char*>(data), int(max_size), &ctrl);
     if (ret < 0) {
         report.error(u"error during srt_recv(), msg: %s", { srt_getlasterror_str() });
         return false;
     }
     ret_size = size_t(ret);
+    timestamp = ctrl.srctime == 0 ? -1 : MicroSecond(ctrl.srctime);
     return true;
 }
 

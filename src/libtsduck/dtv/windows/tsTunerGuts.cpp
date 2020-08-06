@@ -273,9 +273,9 @@ bool ts::Tuner::getCurrentTuning(ModulationArgs& params, bool reset_unknown, Rep
             // returns the intermediate frequency and there is no unique satellite
             // frequency for a given intermediate frequency.
             if (reset_unknown) {
-                params.frequency.reset();
-                params.satellite_number.reset();
-                params.lnb.reset();
+                params.frequency.clear();
+                params.satellite_number.clear();
+                params.lnb.clear();
             }
             // Spectral inversion
             _guts->graph.searchVarProperty<::SpectralInversion>(
@@ -303,7 +303,7 @@ bool ts::Tuner::getCurrentTuning(ModulationArgs& params, bool reset_unknown, Rep
                 params.delivery_system = params.modulation == QPSK ? DS_DVB_S : DS_DVB_S2;
             }
             else if (reset_unknown) {
-                params.delivery_system.reset();
+                params.delivery_system.clear();
             }
             // DVB-S2 pilot
             _guts->graph.searchVarProperty<::Pilot>(
@@ -321,7 +321,7 @@ bool ts::Tuner::getCurrentTuning(ModulationArgs& params, bool reset_unknown, Rep
         case TT_DVB_C:
         case TT_ISDB_C: {
             if (reset_unknown) {
-                params.frequency.reset();
+                params.frequency.clear();
             }
             // Spectral inversion
             _guts->graph.searchVarProperty<::SpectralInversion>(
@@ -349,7 +349,7 @@ bool ts::Tuner::getCurrentTuning(ModulationArgs& params, bool reset_unknown, Rep
         case TT_DVB_T:
         case TT_ISDB_T: {
             if (reset_unknown) {
-                params.frequency.reset();
+                params.frequency.clear();
             }
             // Spectral inversion
             _guts->graph.searchVarProperty<::SpectralInversion>(
@@ -374,7 +374,7 @@ bool ts::Tuner::getCurrentTuning(ModulationArgs& params, bool reset_unknown, Rep
                 params.transmission_mode = ts::TransmissionMode(tm);
             }
             else if (reset_unknown) {
-                params.transmission_mode.reset();
+                params.transmission_mode.clear();
             }
             ::GuardInterval gi = ::BDA_GUARD_NOT_SET;
             found = _guts->graph.searchTunerProperty(gi, TunerGraph::psFIRST, KSPROPSETID_BdaDigitalDemodulator, KSPROPERTY_BDA_GUARD_INTERVAL);
@@ -382,19 +382,19 @@ bool ts::Tuner::getCurrentTuning(ModulationArgs& params, bool reset_unknown, Rep
                 params.guard_interval = ts::GuardInterval(gi);
             }
             else if (reset_unknown) {
-                params.guard_interval.reset();
+                params.guard_interval.clear();
             }
             // Other DVB-T parameters, not supported at all
-            params.bandwidth.reset();
-            params.hierarchy.reset();
-            params.fec_lp.reset();
-            params.plp.reset();
+            params.bandwidth.clear();
+            params.hierarchy.clear();
+            params.fec_lp.clear();
+            params.plp.clear();
             break;
         }
 
         case TT_ATSC: {
             if (reset_unknown) {
-                params.frequency.reset();
+                params.frequency.clear();
             }
             // Spectral inversion
             _guts->graph.searchVarProperty<::SpectralInversion>(
@@ -577,8 +577,11 @@ bool ts::Tuner::Guts::FindTuners(DuckContext& duck, Tuner* tuner, TunerPtrVector
 
     // Check if tuner device name is ":integer"
     int dvb_device_index = -1;
-    if (tuner != nullptr && !tuner->_device_name.empty() && tuner->_device_name[0] == ':') {
-        tuner->_device_name.substr(1).toInteger(dvb_device_index);
+    if (tuner != nullptr) {
+        report.debug(u"looking for DVB adapter number \"%d\"", {tuner->_device_name});
+        if (!tuner->_device_name.empty() && tuner->_device_name[0] == ':') {
+            tuner->_device_name.substr(1).toInteger(dvb_device_index);
+        }
     }
 
     // Enumerate all filters with category KSCATEGORY_BDA_NETWORK_TUNER.
@@ -601,11 +604,26 @@ bool ts::Tuner::Guts::FindTuners(DuckContext& duck, Tuner* tuner, TunerPtrVector
         const UString tuner_name(GetStringPropertyBag(tuner_monikers[moniker_index].pointer(), L"FriendlyName", debug_report));
         report.debug(u"found tuner filter \"%s\"", {tuner_name});
 
+        // Get physical device path.
+        UString device_path;
+        ::WCHAR* wstring = nullptr;
+        ::HRESULT hr = tuner_monikers[moniker_index]->GetDisplayName(0, 0, &wstring);
+        if (ComSuccess(hr, u"IMoniker::GetDisplayName", report)) {
+            device_path = ToString(wstring);
+            ::CoTaskMemFree(wstring);
+        }
+        report.debug(u"tuner device path: %s", {device_path});
+
         // If a device name was specified, filter this name.
         // First case: a tuner filter name was specified. In that case, there is
         // no need to test other filters, simply skip them. Since the filter names
         // are long and complicated, ignore case and blanks, use UString::similar().
-        if (tuner != nullptr && !tuner->_device_name.empty() && dvb_device_index < 0 && !tuner_name.similar(tuner->_device_name)) {
+        if (tuner != nullptr &&
+            !tuner->_device_name.empty() &&
+            dvb_device_index < 0 &&
+            !tuner_name.similar(tuner->_device_name) &&
+            (device_path.empty() || !device_path.similar(tuner->_device_name)))
+        {
             // Device specified by name, but not this one, try next tuner
             continue;
         }
@@ -631,7 +649,9 @@ bool ts::Tuner::Guts::FindTuners(DuckContext& duck, Tuner* tuner, TunerPtrVector
                 tref._is_open = true;
                 tref._info_only = true;
                 tref._device_name = tuner_name;
+                tref._device_path = device_path;
                 tref._device_info.clear();  // none on Windows
+                report.debug(u"found tuner device \"%s\"", {tref._device_name});
 
                 // Add tuner it to response set
                 if (tuner_list != nullptr) {

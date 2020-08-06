@@ -76,29 +76,30 @@ namespace {
     // Description of one delivery system.
     struct DeliverySystemDescription {
         ts::TunerType type;
+        ts::Standards standards;
         uint32_t      flags;
     };
     const std::map<ts::DeliverySystem,DeliverySystemDescription> DelSysDescs = {
-        {ts::DS_UNDEFINED,     {ts::TT_UNDEFINED, 0}},
-        {ts::DS_DVB_S,         {ts::TT_DVB_S,     DSF_SATELLITE}},
-        {ts::DS_DVB_S2,        {ts::TT_DVB_S,     DSF_SATELLITE}},
-        {ts::DS_DVB_S_TURBO,   {ts::TT_DVB_S,     DSF_SATELLITE}},
-        {ts::DS_DVB_T,         {ts::TT_DVB_T,     DSF_TERRESTRIAL}},
-        {ts::DS_DVB_T2,        {ts::TT_DVB_T,     DSF_TERRESTRIAL}},
-        {ts::DS_DVB_C_ANNEX_A, {ts::TT_DVB_C,     DSF_CABLE}},
-        {ts::DS_DVB_C_ANNEX_B, {ts::TT_DVB_C,     DSF_CABLE}},
-        {ts::DS_DVB_C_ANNEX_C, {ts::TT_DVB_C,     DSF_CABLE}},
-        {ts::DS_DVB_C2,        {ts::TT_DVB_C,     DSF_CABLE}},
-        {ts::DS_DVB_H,         {ts::TT_UNDEFINED, 0}},
-        {ts::DS_ISDB_S,        {ts::TT_ISDB_S,    DSF_SATELLITE}},
-        {ts::DS_ISDB_T,        {ts::TT_ISDB_T,    DSF_TERRESTRIAL}},
-        {ts::DS_ISDB_C,        {ts::TT_ISDB_C,    DSF_CABLE}},
-        {ts::DS_ATSC,          {ts::TT_ATSC,      DSF_TERRESTRIAL | DSF_CABLE}},
-        {ts::DS_ATSC_MH,       {ts::TT_UNDEFINED, 0}},
-        {ts::DS_DTMB,          {ts::TT_UNDEFINED, DSF_TERRESTRIAL}},
-        {ts::DS_CMMB,          {ts::TT_UNDEFINED, DSF_TERRESTRIAL}},
-        {ts::DS_DAB,           {ts::TT_UNDEFINED, 0}},
-        {ts::DS_DSS,           {ts::TT_UNDEFINED, DSF_SATELLITE}},
+        {ts::DS_UNDEFINED,     {ts::TT_UNDEFINED, ts::Standards::NONE, 0}},
+        {ts::DS_DVB_S,         {ts::TT_DVB_S,     ts::Standards::DVB,  DSF_SATELLITE}},
+        {ts::DS_DVB_S2,        {ts::TT_DVB_S,     ts::Standards::DVB,  DSF_SATELLITE}},
+        {ts::DS_DVB_S_TURBO,   {ts::TT_DVB_S,     ts::Standards::DVB,  DSF_SATELLITE}},
+        {ts::DS_DVB_T,         {ts::TT_DVB_T,     ts::Standards::DVB,  DSF_TERRESTRIAL}},
+        {ts::DS_DVB_T2,        {ts::TT_DVB_T,     ts::Standards::DVB,  DSF_TERRESTRIAL}},
+        {ts::DS_DVB_C_ANNEX_A, {ts::TT_DVB_C,     ts::Standards::DVB,  DSF_CABLE}},
+        {ts::DS_DVB_C_ANNEX_B, {ts::TT_DVB_C,     ts::Standards::DVB,  DSF_CABLE}},
+        {ts::DS_DVB_C_ANNEX_C, {ts::TT_DVB_C,     ts::Standards::DVB,  DSF_CABLE}},
+        {ts::DS_DVB_C2,        {ts::TT_DVB_C,     ts::Standards::DVB,  DSF_CABLE}},
+        {ts::DS_DVB_H,         {ts::TT_UNDEFINED, ts::Standards::DVB,  0}},
+        {ts::DS_ISDB_S,        {ts::TT_ISDB_S,    ts::Standards::ISDB, DSF_SATELLITE}},
+        {ts::DS_ISDB_T,        {ts::TT_ISDB_T,    ts::Standards::ISDB, DSF_TERRESTRIAL}},
+        {ts::DS_ISDB_C,        {ts::TT_ISDB_C,    ts::Standards::ISDB, DSF_CABLE}},
+        {ts::DS_ATSC,          {ts::TT_ATSC,      ts::Standards::ATSC, DSF_TERRESTRIAL | DSF_CABLE}},
+        {ts::DS_ATSC_MH,       {ts::TT_UNDEFINED, ts::Standards::ATSC, 0}},
+        {ts::DS_DTMB,          {ts::TT_UNDEFINED, ts::Standards::NONE, DSF_TERRESTRIAL}},
+        {ts::DS_CMMB,          {ts::TT_UNDEFINED, ts::Standards::NONE, DSF_TERRESTRIAL}},
+        {ts::DS_DAB,           {ts::TT_UNDEFINED, ts::Standards::NONE, 0}},
+        {ts::DS_DSS,           {ts::TT_UNDEFINED, ts::Standards::NONE, DSF_SATELLITE}},
     };
 }
 
@@ -171,6 +172,17 @@ ts::TunerType ts::TunerTypeOf(ts::DeliverySystem system)
 
 
 //----------------------------------------------------------------------------
+// Get the list of standards for a delivery system.
+//----------------------------------------------------------------------------
+
+ts::Standards ts::StandardsOf(DeliverySystem system)
+{
+    const auto it = DelSysDescs.find(system);
+    return it != DelSysDescs.end() ? it->second.standards : Standards::NONE;
+}
+
+
+//----------------------------------------------------------------------------
 // Delivery system sets.
 //----------------------------------------------------------------------------
 
@@ -194,6 +206,15 @@ ts::DeliverySystemList ts::DeliverySystemSet::toList() const
         }
     }
     return list;
+}
+
+ts::Standards ts::DeliverySystemSet::standards() const
+{
+    Standards st = Standards::NONE;
+    for (auto it = begin(); it != end(); ++it) {
+        st |= StandardsOf(*it);
+    }
+    return st;
 }
 
 ts::UString ts::DeliverySystemSet::toString() const

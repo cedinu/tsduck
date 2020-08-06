@@ -26,26 +26,22 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a CA_identifier_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsCAIdentifierDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"CA_identifier_descriptor"
+#define MY_CLASS ts::CAIdentifierDescriptor
 #define MY_DID ts::DID_CA_ID
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CAIdentifierDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CAIdentifierDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::CAIdentifierDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -56,7 +52,11 @@ ts::CAIdentifierDescriptor::CAIdentifierDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     casids()
 {
-    _is_valid = true;
+}
+
+void ts::CAIdentifierDescriptor::clearContent()
+{
+    casids.clear();
 }
 
 ts::CAIdentifierDescriptor::CAIdentifierDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -65,19 +65,10 @@ ts::CAIdentifierDescriptor::CAIdentifierDescriptor(DuckContext& duck, const Desc
     deserialize(duck, desc);
 }
 
-ts::CAIdentifierDescriptor::CAIdentifierDescriptor(int casid, ...) :
-    CAIdentifierDescriptor()
+ts::CAIdentifierDescriptor::CAIdentifierDescriptor(std::initializer_list<uint16_t> ids) :
+    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
+    casids(ids)
 {
-    _is_valid = true;
-    if (casid >= 0) {
-        casids.push_back(uint16_t(casid));
-        va_list ap;
-        va_start(ap, casid);
-        while ((casid = va_arg(ap, int)) >= 0) {
-            casids.push_back(uint16_t(casid));
-        }
-        va_end(ap);
-    }
 }
 
 
@@ -103,7 +94,7 @@ void ts::CAIdentifierDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 
 void ts::CAIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() % 2 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 2 == 0;
     casids.clear();
 
     if (_is_valid) {
@@ -124,13 +115,14 @@ void ts::CAIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor
 
 void ts::CAIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 2) {
         uint16_t cas_id = GetUInt16(data);
         data += 2; size -= 2;
-        strm << margin << "CA System Id: " << names::CASId(cas_id, names::FIRST) << std::endl;
+        strm << margin << "CA System Id: " << names::CASId(duck, cas_id, names::FIRST) << std::endl;
     }
 
     display.displayExtraData(data, size, indent);
@@ -153,18 +145,14 @@ void ts::CAIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CAIdentifierDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CAIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    casids.clear();
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"CA_system_id", 0, (MAX_DESCRIPTOR_SIZE - 2) / 2);
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    bool ok = element->getChildren(children, u"CA_system_id", 0, (MAX_DESCRIPTOR_SIZE - 2) / 2);
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         uint16_t id = 0;
-        _is_valid = children[i]->getIntAttribute<uint16_t>(id, u"value", true, 0, 0x0000, 0xFFFF);
-        if (_is_valid) {
-            casids.push_back(id);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(id, u"value", true, 0, 0x0000, 0xFFFF);
+        casids.push_back(id);
     }
+    return ok;
 }

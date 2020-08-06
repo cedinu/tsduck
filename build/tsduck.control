@@ -6,11 +6,11 @@ Architecture: {{ARCH}}
 Section: free/video
 Priority: optional
 Depends: libc6,
- libstdc++6,
- libgcc1,
+ libsrt1,
  libpcsclite1,
- libcurl3 | libcurl4
+ libcurl3 | libcurl4,
+ libstdc++6,
+ libgcc1
 Description: MPEG Transport Stream Toolkit
- The MPEG Transport Stream Toolkit provides some simple utilities to process
- MPEG Transport Streams (TS), either as recorded files or live streams. The
- structure of an MPEG TS is defined in ISO 13818-1.
+ TSDuck, the MPEG Transport Stream Toolkit, provides some simple utilities to
+ process MPEG Transport Streams (TS), either as recorded files or live streams.

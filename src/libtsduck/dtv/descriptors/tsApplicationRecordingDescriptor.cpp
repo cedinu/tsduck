@@ -30,23 +30,23 @@
 #include "tsApplicationRecordingDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"application_recording_descriptor"
+#define MY_CLASS ts::ApplicationRecordingDescriptor
 #define MY_DID ts::DID_AIT_APP_RECORDING
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::ApplicationRecordingDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::ApplicationRecordingDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::ApplicationRecordingDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::ApplicationRecordingDescriptor::ApplicationRecordingDescriptor() :
@@ -62,13 +62,21 @@ ts::ApplicationRecordingDescriptor::ApplicationRecordingDescriptor() :
     private_data(),
     reserved_future_use()
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::ApplicationRecordingDescriptor::clearContent()
+{
+    scheduled_recording = false;
+    trick_mode_aware = false;
+    time_shift = false;
+    dynamic = false;
+    av_synced = false;
+    initiating_replay = false;
+    labels.clear();
+    component_tags.clear();
+    private_data.clear();
+    reserved_future_use.clear();
+}
 
 ts::ApplicationRecordingDescriptor::ApplicationRecordingDescriptor(DuckContext& duck, const Descriptor& desc) :
     ApplicationRecordingDescriptor()
@@ -93,7 +101,7 @@ void ts::ApplicationRecordingDescriptor::serialize(DuckContext& duck, Descriptor
                      0x03);
     bbp->appendUInt8(uint8_t(labels.size()));
     for (auto it = labels.begin(); it != labels.end(); ++it) {
-        bbp->append(duck.toDVBWithByteLength(it->label));
+        bbp->append(duck.encodedWithByteLength(it->label));
         bbp->appendUInt8(uint8_t(it->storage_properties << 6) | 0x3F);
     }
     bbp->appendUInt8(uint8_t(component_tags.size()));
@@ -119,7 +127,7 @@ void ts::ApplicationRecordingDescriptor::deserialize(DuckContext& duck, const De
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4;
 
     // Flags in first byte.
     scheduled_recording = (data[0] & 0x80) != 0;
@@ -137,7 +145,7 @@ void ts::ApplicationRecordingDescriptor::deserialize(DuckContext& duck, const De
         _is_valid = size >= 1 && size >= size_t(data[0] + 2);
         if (_is_valid) {
             const size_t len = data[0];
-            labels.push_back(RecodingLabel(duck.fromDVB(data + 1, len), (data[len + 1] >> 6) & 0x03));
+            labels.push_back(RecodingLabel(duck.decoded(data + 1, len), (data[len + 1] >> 6) & 0x03));
             data += len + 2;
             size -= len + 2;
             labelCount--;
@@ -175,7 +183,8 @@ void ts::ApplicationRecordingDescriptor::deserialize(DuckContext& duck, const De
 
 void ts::ApplicationRecordingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     // Flags in first byte.
@@ -199,7 +208,7 @@ void ts::ApplicationRecordingDescriptor::DisplayDescriptor(TablesDisplay& displa
             valid = size >= 1 && size >= size_t(data[0] + 2);
             if (valid) {
                 const size_t len = data[0];
-                strm << margin << UString::Format(u"Label: \"%s\", storage properties: 0x%X", {display.duck().fromDVB(data + 1, len), uint8_t((data[len + 1] >> 6) & 0x03)}) << std::endl;
+                strm << margin << UString::Format(u"Label: \"%s\", storage properties: 0x%X", {duck.decoded(data + 1, len), uint8_t((data[len + 1] >> 6) & 0x03)}) << std::endl;
                 data += len + 2;
                 size -= len + 2;
                 labelCount--;
@@ -225,17 +234,9 @@ void ts::ApplicationRecordingDescriptor::DisplayDescriptor(TablesDisplay& displa
     if (valid) {
         uint8_t count = data[0];
         data++; size--;
-        if (count > 0) {
-            strm << margin << "Private data:" << std::endl
-                 << UString::Dump(data, count, UString::HEXA | UString::ASCII | UString::OFFSET, indent + 2);
-        }
-        data += count;
-        size -= count;
-    }
-
-    if (valid && size > 0) {
-        strm << margin << "Reserved bytes:" << std::endl
-             << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent + 2);
+        display.displayPrivateData(u"Private data", data, count, indent);
+        data += count; size -= count;
+        display.displayPrivateData(u"Reserved bytes", data, size, indent);
         size = 0;
     }
 
@@ -264,12 +265,8 @@ void ts::ApplicationRecordingDescriptor::buildXML(DuckContext& duck, xml::Elemen
     for (auto it = component_tags.begin(); it != component_tags.end(); ++it) {
         root->addElement(u"component")->setIntAttribute(u"tag", *it, true);
     }
-    if (!private_data.empty()) {
-        root->addElement(u"private")->addHexaText(private_data);
-    }
-    if (!reserved_future_use.empty()) {
-        root->addElement(u"reserved_future_use")->addHexaText(reserved_future_use);
-    }
+    root->addHexaTextChild(u"private", private_data, true);
+    root->addHexaTextChild(u"reserved_future_use", reserved_future_use, true);
 }
 
 
@@ -277,18 +274,11 @@ void ts::ApplicationRecordingDescriptor::buildXML(DuckContext& duck, xml::Elemen
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationRecordingDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ApplicationRecordingDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    labels.clear();
-    component_tags.clear();
-    private_data.clear();
-    reserved_future_use.clear();
-
     xml::ElementVector labelChildren;
     xml::ElementVector compChildren;
-
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getBoolAttribute(scheduled_recording, u"scheduled_recording", true) &&
         element->getBoolAttribute(trick_mode_aware, u"trick_mode_aware", true) &&
         element->getBoolAttribute(time_shift, u"time_shift", true) &&
@@ -300,21 +290,17 @@ void ts::ApplicationRecordingDescriptor::fromXML(DuckContext& duck, const xml::E
         element->getHexaTextChild(private_data, u"private") &&
         element->getHexaTextChild(reserved_future_use, u"reserved_future_use");
 
-    for (size_t i = 0; _is_valid && i < labelChildren.size(); ++i) {
+    for (size_t i = 0; ok && i < labelChildren.size(); ++i) {
         RecodingLabel lab;
-        _is_valid =
-            labelChildren[i]->getAttribute(lab.label, u"label", true) &&
-            labelChildren[i]->getIntAttribute<uint8_t>(lab.storage_properties, u"storage_properties", true, 0, 0, 3);
-        if (_is_valid) {
-            labels.push_back(lab);
-        }
+        ok = labelChildren[i]->getAttribute(lab.label, u"label", true) &&
+             labelChildren[i]->getIntAttribute<uint8_t>(lab.storage_properties, u"storage_properties", true, 0, 0, 3);
+        labels.push_back(lab);
     }
 
-    for (size_t i = 0; _is_valid && i < compChildren.size(); ++i) {
+    for (size_t i = 0; ok && i < compChildren.size(); ++i) {
         uint8_t tag = 0;
-        _is_valid = compChildren[i]->getIntAttribute<uint8_t>(tag, u"tag", true);
-        if (_is_valid) {
-            component_tags.push_back(tag);
-        }
+        ok = compChildren[i]->getIntAttribute<uint8_t>(tag, u"tag", true);
+        component_tags.push_back(tag);
     }
+    return ok;
 }

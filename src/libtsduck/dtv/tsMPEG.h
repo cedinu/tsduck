@@ -273,25 +273,6 @@ namespace ts {
     constexpr size_t MACROBLOCK_HEIGHT = 16;
 
     //---------------------------------------------------------------------
-    //! Bit masks for standards, used to qualify the signalization.
-    //---------------------------------------------------------------------
-
-    enum Standards : uint8_t {
-        STD_NONE = 0x00,  //!< No known standard
-        STD_MPEG = 0x01,  //!< Defined by MPEG, common to all standards
-        STD_DVB  = 0x02,  //!< Defined by ETSI/DVB.
-        STD_SCTE = 0x04,  //!< Defined by ANSI/SCTE.
-        STD_ATSC = 0x08,  //!< Defined by ATSC.
-        STD_ISDB = 0x10,  //!< Defined by ISDB.
-    };
-
-    //!
-    //! Enumeration description of standard values.
-    //! Typically using StandardsEnum::bitMaskNames().
-    //!
-    TSDUCKDLL extern const Enumeration StandardsEnum;
-
-    //---------------------------------------------------------------------
     //! Predefined PID values
     //---------------------------------------------------------------------
 
@@ -302,10 +283,11 @@ namespace ts {
         PID_PAT        = 0x0000, //!< PID for Program Association Table PAT
         PID_CAT        = 0x0001, //!< PID for Conditional Access Table
         PID_TSDT       = 0x0002, //!< PID for Transport Stream Description Table
-        PID_MPEG_LAST  = 0x000F, //!< Last reserved PID for MPEG.
+        PID_MPEG_LAST  = 0x000F, //!< Last reserved PID for MPEG
 
         // Valid in DVB context:
 
+        PID_DVB_FIRST  = 0x0010, //!< First reserved PID for DVB
         PID_NIT        = 0x0010, //!< PID for Network Information Table
         PID_SDT        = 0x0011, //!< PID for Service Description Table
         PID_BAT        = 0x0011, //!< PID for Bouquet Association Table
@@ -319,7 +301,25 @@ namespace ts {
         PID_MEASURE    = 0x001D, //!< PID for Measurement
         PID_DIT        = 0x001E, //!< PID for Discontinuity Information Table
         PID_SIT        = 0x001F, //!< PID for Selection Information Table
-        PID_DVB_LAST   = 0x001F, //!< Last reserved PID for DVB.
+        PID_DVB_LAST   = 0x001F, //!< Last reserved PID for DVB
+
+        // Valid in ISDB context:
+
+        PID_DCT        = 0x0017, //!< PID for ISDB Download Control Table
+        PID_ISDB_FIRST = 0x0020, //!< First reserved PID for ISDB
+        PID_LIT        = 0x0020, //!< PID for ISDB Local Event Information Table
+        PID_ERT        = 0x0021, //!< PID for ISDB Event Relation Table
+        PID_PCAT       = 0x0022, //!< PID for ISDB Partial Content Announcement Table
+        PID_SDTT       = 0x0023, //!< PID for ISDB Software Download Trigger Table
+        PID_BIT        = 0x0024, //!< PID for ISDB Broadcaster Information Table
+        PID_NBIT       = 0x0025, //!< PID for ISDB Network Board Information Table
+        PID_LDT        = 0x0025, //!< PID for ISDB Linked Description Table
+        PID_ISDB_EIT_2 = 0x0026, //!< Additional PID for ISDB Event Information Table
+        PID_ISDB_EIT_3 = 0x0027, //!< Additional PID for ISDB Event Information Table
+        PID_SDTT_TER   = 0x0028, //!< PID for ISDB Software Download Trigger Table (terrestrial)
+        PID_CDT        = 0x0029, //!< PID for ISDB Common Data Table
+        PID_AMT        = 0x002E, //!< PID for ISDB Address Map Table
+        PID_ISDB_LAST  = 0x002F, //!< Last reserved PID for ISDB
 
         // Valid in ATSC context:
 
@@ -328,16 +328,6 @@ namespace ts {
         PID_PSIP_TS_E  = 0x1FF9, //!< PID for ATSC Program and System Information Protocol in TS-E
         PID_PSIP       = 0x1FFB, //!< PID for ATSC Program and System Information Protocol (contains most ATSC tables)
         PID_ATSC_LAST  = 0x1FFE, //!< Last reserved PID for ATSC.
-
-        // Valid in ISDB context:
-
-        PID_DCT        = 0x0017, //!< PID for ISDB Download Control Table
-        PID_PCAT       = 0x0022, //!< PID for ISDB Partial Content Announcement Table
-        PID_SDTT       = 0x0023, //!< PID for ISDB Software Download Trigger Table
-        PID_BIT        = 0x0024, //!< PID for ISDB Broadcaster Information Table
-        PID_NBIT       = 0x0025, //!< PID for ISDB Network Board Information Table
-        PID_LDT        = 0x0025, //!< PID for ISDB Linked Description Table
-        PID_CDT        = 0x0029, //!< PID for ISDB Common Data Table
 
         // Valid in all MPEG contexts:
 
@@ -682,40 +672,58 @@ namespace ts {
     //---------------------------------------------------------------------
 
     enum : uint8_t {
-        ST_NULL          = 0x00, //!< Invalid stream type value, used to indicate an absence of value
-        ST_MPEG1_VIDEO   = 0x01, //!< MPEG-1 Video
-        ST_MPEG2_VIDEO   = 0x02, //!< MPEG-2 Video
-        ST_MPEG1_AUDIO   = 0x03, //!< MPEG-1 Audio
-        ST_MPEG2_AUDIO   = 0x04, //!< MPEG-2 Audio
-        ST_PRIV_SECT     = 0x05, //!< MPEG-2 Private sections
-        ST_PES_PRIV      = 0x06, //!< MPEG-2 PES private data
-        ST_MHEG          = 0x07, //!< MHEG
-        ST_DSMCC         = 0x08, //!< DSM-CC
-        ST_MPEG2_ATM     = 0x09, //!< MPEG-2 over ATM
-        ST_DSMCC_MPE     = 0x0A, //!< DSM-CC Multi-Protocol Encapsulation
-        ST_DSMCC_UN      = 0x0B, //!< DSM-CC User-to-Network messages
-        ST_DSMCC_SD      = 0x0C, //!< DSM-CC Stream Descriptors
-        ST_DSMCC_SECT    = 0x0D, //!< DSM-CC Sections
-        ST_MPEG2_AUX     = 0x0E, //!< MPEG-2 Auxiliary
-        ST_AAC_AUDIO     = 0x0F, //!< Advanced Audio Coding (ISO 13818-7)
-        ST_MPEG4_VIDEO   = 0x10, //!< MPEG-4 Video
-        ST_MPEG4_AUDIO   = 0x11, //!< MPEG-4 Audio
-        ST_MPEG4_PES     = 0x12, //!< MPEG-4 SL or FlexMux in PES packets
-        ST_MPEG4_SECT    = 0x13, //!< MPEG-4 SL or FlexMux in sections
-        ST_DSMCC_DLOAD   = 0x14, //!< DSM-CC Synchronized Download Protocol
-        ST_MDATA_PES     = 0x15, //!< MPEG-7 MetaData in PES packets
-        ST_MDATA_SECT    = 0x16, //!< MPEG-7 MetaData in sections
-        ST_MDATA_DC      = 0x17, //!< MPEG-7 MetaData in DSM-CC Data Carousel
-        ST_MDATA_OC      = 0x18, //!< MPEG-7 MetaData in DSM-CC Object Carousel
-        ST_MDATA_DLOAD   = 0x19, //!< MPEG-7 MetaData in DSM-CC Sync Downl Proto
-        ST_MPEG2_IPMP    = 0x1A, //!< MPEG-2 IPMP stream
-        ST_AVC_VIDEO     = 0x1B, //!< AVC video
-        ST_HEVC_VIDEO    = 0x24, //!< HEVC video
-        ST_HEVC_SUBVIDEO = 0x25, //!< HEVC temporal video subset of an HEVC video stream
-        ST_IPMP          = 0x7F, //!< IPMP stream
-        ST_AC3_AUDIO     = 0x81, //!< AC-3 Audio (ATSC only)
-        ST_SCTE35_SPLICE = 0x86, //!< SCTE 35 splice information tables
-        ST_EAC3_AUDIO    = 0x87, //!< Enhanced-AC-3 Audio (ATSC only)
+        ST_NULL             = 0x00, //!< Invalid stream type value, used to indicate an absence of value
+        ST_MPEG1_VIDEO      = 0x01, //!< MPEG-1 Video
+        ST_MPEG2_VIDEO      = 0x02, //!< MPEG-2 Video
+        ST_MPEG1_AUDIO      = 0x03, //!< MPEG-1 Audio
+        ST_MPEG2_AUDIO      = 0x04, //!< MPEG-2 Audio
+        ST_PRIV_SECT        = 0x05, //!< MPEG-2 Private sections
+        ST_PES_PRIV         = 0x06, //!< MPEG-2 PES private data
+        ST_MHEG             = 0x07, //!< MHEG
+        ST_DSMCC            = 0x08, //!< DSM-CC
+        ST_MPEG2_ATM        = 0x09, //!< MPEG-2 over ATM
+        ST_DSMCC_MPE        = 0x0A, //!< DSM-CC Multi-Protocol Encapsulation
+        ST_DSMCC_UN         = 0x0B, //!< DSM-CC User-to-Network messages
+        ST_DSMCC_SD         = 0x0C, //!< DSM-CC Stream Descriptors
+        ST_DSMCC_SECT       = 0x0D, //!< DSM-CC Sections
+        ST_MPEG2_AUX        = 0x0E, //!< MPEG-2 Auxiliary
+        ST_AAC_AUDIO        = 0x0F, //!< Advanced Audio Coding (ISO 13818-7)
+        ST_MPEG4_VIDEO      = 0x10, //!< MPEG-4 Video
+        ST_MPEG4_AUDIO      = 0x11, //!< MPEG-4 Audio
+        ST_MPEG4_PES        = 0x12, //!< MPEG-4 SL or FlexMux in PES packets
+        ST_MPEG4_SECT       = 0x13, //!< MPEG-4 SL or FlexMux in sections
+        ST_DSMCC_DLOAD      = 0x14, //!< DSM-CC Synchronized Download Protocol
+        ST_MDATA_PES        = 0x15, //!< MPEG-7 MetaData in PES packets
+        ST_MDATA_SECT       = 0x16, //!< MPEG-7 MetaData in sections
+        ST_MDATA_DC         = 0x17, //!< MPEG-7 MetaData in DSM-CC Data Carousel
+        ST_MDATA_OC         = 0x18, //!< MPEG-7 MetaData in DSM-CC Object Carousel
+        ST_MDATA_DLOAD      = 0x19, //!< MPEG-7 MetaData in DSM-CC Sync Downl Proto
+        ST_MPEG2_IPMP       = 0x1A, //!< MPEG-2 IPMP stream
+        ST_AVC_VIDEO        = 0x1B, //!< AVC video
+        ST_MPEG4_AUDIO_RAW  = 0x1C, //!< ISO/IEC 14496-3 Audio, without using any additional transport syntax, such as DST, ALS and SLS.
+        ST_MPEG4_TEXT       = 0x1D, //!< ISO/IEC 14496-17 Text
+        ST_AUX_VIDEO        = 0x1E, //!< Auxiliary video stream as defined in ISO/IEC 23002-3
+        ST_AVC_SUBVIDEO_G   = 0x1F, //!< SVC video sub-bitstream of an AVC video stream, Annex G of ISO 14496-10
+        ST_AVC_SUBVIDEO_H   = 0x20, //!< MVC video sub-bitstream of an AVC video stream, Annex H of ISO 14496-10
+        ST_J2K_VIDEO        = 0x21, //!< JPEG 2000 video stream ISO/IEC 15444-1
+        ST_MPEG2_3D_VIEW    = 0x22, //!< Additional view ISO/IEC 13818-2 video stream for stereoscopic 3D services
+        ST_AVC_3D_VIEW      = 0x23, //!< Additional view ISO/IEC 14496-10 video stream for stereoscopic 3D services
+        ST_HEVC_VIDEO       = 0x24, //!< HEVC video
+        ST_HEVC_SUBVIDEO    = 0x25, //!< HEVC temporal video subset of an HEVC video stream
+        ST_AVC_SUBVIDEO_I   = 0x26, //!< MVCD video sub-bitstream of an AVC video stream, Annex I of ISO 14496-10
+        ST_EXT_MEDIA        = 0x27, //!< Timeline and External Media Information Stream
+        ST_HEVC_SUBVIDEO_G  = 0x28, //!< HEVC enhancement sub-partition, Annex G of ISO 23008-2
+        ST_HEVC_SUBVIDEO_TG = 0x29, //!< HEVC temporal enhancement sub-partition, Annex G of ISO 23008-2
+        ST_HEVC_SUBVIDEO_H  = 0x2A, //!< HEVC enhancement sub-partition, Annex H of ISO 23008-2
+        ST_HEVC_SUBVIDEO_TH = 0x2B, //!< HEVC temporal enhancement sub-partition, Annex H of ISO 23008 - 2
+        ST_GREEN            = 0x2C, //!< Green access units carried in MPEG-2 sections
+        ST_MPH3D_MAIN       = 0x2D, //!< ISO 23008-3 Audio with MHAS transport syntax – main stream
+        ST_MPH3D_AUX        = 0x2E, //!< ISO 23008-3 Audio with MHAS transport syntax – auxiliary stream
+        ST_QUALITY          = 0x2F, //!< Quality access units carried in sections
+        ST_IPMP             = 0x7F, //!< IPMP stream
+        ST_AC3_AUDIO        = 0x81, //!< AC-3 Audio (ATSC only)
+        ST_SCTE35_SPLICE    = 0x86, //!< SCTE 35 splice information tables
+        ST_EAC3_AUDIO       = 0x87, //!< Enhanced-AC-3 Audio (ATSC only)
     };
 
     //!
@@ -766,7 +774,7 @@ namespace ts {
     constexpr size_t MAX_PSI_SECTION_SIZE = 1024;
 
     //! Maximum size of a private section (including DVB-defined sections).
-    constexpr size_t MAX_PRIVATE_SECTION_SIZE  = 4096;
+    constexpr size_t MAX_PRIVATE_SECTION_SIZE = 4096;
 
     //! Minimum size of a short section.
     constexpr size_t MIN_SHORT_SECTION_SIZE = SHORT_SECTION_HEADER_SIZE;
@@ -778,13 +786,13 @@ namespace ts {
     constexpr size_t MAX_PSI_SHORT_SECTION_PAYLOAD_SIZE = MAX_PSI_SECTION_SIZE - SHORT_SECTION_HEADER_SIZE;
 
     //! Maximum size of the payload of a PSI long section.
-    constexpr size_t MAX_PSI_LONG_SECTION_PAYLOAD_SIZE  = MAX_PSI_SECTION_SIZE - LONG_SECTION_HEADER_SIZE - SECTION_CRC32_SIZE;
+    constexpr size_t MAX_PSI_LONG_SECTION_PAYLOAD_SIZE = MAX_PSI_SECTION_SIZE - LONG_SECTION_HEADER_SIZE - SECTION_CRC32_SIZE;
 
     //! Maximum size of the payload of a private short section.
     constexpr size_t MAX_PRIVATE_SHORT_SECTION_PAYLOAD_SIZE = MAX_PRIVATE_SECTION_SIZE - SHORT_SECTION_HEADER_SIZE;
 
     //! Maximum size of the payload of a private long section.
-    constexpr size_t MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE  = MAX_PRIVATE_SECTION_SIZE - LONG_SECTION_HEADER_SIZE - SECTION_CRC32_SIZE;
+    constexpr size_t MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE = MAX_PRIVATE_SECTION_SIZE - LONG_SECTION_HEADER_SIZE - SECTION_CRC32_SIZE;
 
     //---------------------------------------------------------------------
     //! Table identification (TID) values
@@ -844,6 +852,20 @@ namespace ts {
         TID_ECM_80        = 0x80, //!< Table id for ECM 80
         TID_ECM_81        = 0x81, //!< Table id for ECM 81
         TID_EMM_FIRST     = 0x82, //!< Start of Table id range for EMM's
+        TID_EMM_82        = 0x82, //!< Table id for EMM 82
+        TID_EMM_83        = 0x83, //!< Table id for EMM 83
+        TID_EMM_84        = 0x84, //!< Table id for EMM 84
+        TID_EMM_85        = 0x85, //!< Table id for EMM 85
+        TID_EMM_86        = 0x86, //!< Table id for EMM 86
+        TID_EMM_87        = 0x87, //!< Table id for EMM 87
+        TID_EMM_88        = 0x88, //!< Table id for EMM 88
+        TID_EMM_89        = 0x89, //!< Table id for EMM 89
+        TID_EMM_8A        = 0x8A, //!< Table id for EMM 8A
+        TID_EMM_8B        = 0x8B, //!< Table id for EMM 8B
+        TID_EMM_8C        = 0x8C, //!< Table id for EMM 8C
+        TID_EMM_8D        = 0x8D, //!< Table id for EMM 8D
+        TID_EMM_8E        = 0x8E, //!< Table id for EMM 8E
+        TID_EMM_8F        = 0x8F, //!< Table id for EMM 8F
         TID_EMM_LAST      = 0x8F, //!< End of Table id range for EMM's
 
         // Ranges by type
@@ -918,13 +940,14 @@ namespace ts {
         TID_PCAT          = 0xC2, //!< Table id for Partial Content Announcement Table (ISDB)
         TID_SDTT          = 0xC3, //!< Table id for Software Download Trigger Table (ISDB)
         TID_BIT           = 0xC4, //!< Table id for Broadcaster Information Table (ISDB)
-        TID_NBIT_BODY     = 0xC5, //!< Table id for Network Board Information Table (body) (ISDB)
-        TID_NBIT_INFO     = 0xC6, //!< Table id for Network Board Information Table (reference information) (ISDB)
+        TID_NBIT_BODY     = 0xC5, //!< Table id for Network Board Information Table (information body) (ISDB)
+        TID_NBIT_REF      = 0xC6, //!< Table id for Network Board Information Table (reference to information) (ISDB)
         TID_LDT           = 0xC7, //!< Table id for Linked Description Table (ISDB)
         TID_CDT           = 0xC8, //!< Table id for Common Data Table (ISDB)
         TID_LIT           = 0xD0, //!< Table id for Local Event Information Table (ISDB)
         TID_ERT           = 0xD1, //!< Table id for Event Relation Table (ISDB)
         TID_ITT           = 0xD2, //!< Table id for Index Transmission Table (ISDB)
+        TID_AMT           = 0xFE, //!< Table id for Address Map Table (ISDB)
     };
 
     constexpr size_t TID_MAX = 0x100; //!< Maximum number of TID values.
@@ -949,6 +972,7 @@ namespace ts {
         PDS_LOGIWAYS  = 0x000000A2, //!< Private data specifier for Logiways.
         PDS_CANALPLUS = 0x000000C0, //!< Private data specifier for Canal+.
         PDS_EUTELSAT  = 0x0000055F, //!< Private data specifier for EutelSat.
+        PDS_OFCOM     = 0x0000233A, //!< Private data specifier for DTT UK (OFCOM, formerly ITC).
         PDS_ATSC      = 0x41545343, //!< Fake private data specifier for ATSC descriptors (value is "ATSC" in ASCII).
         PDS_ISDB      = 0x49534442, //!< Fake private data specifier for ISDB descriptors (value is "ISDB" in ASCII).
         PDS_NULL      = 0xFFFFFFFF, //!< An invalid private data specifier, can be used as placeholder.
@@ -1221,6 +1245,16 @@ namespace ts {
         DID_EACEM_STREAM_ID     = 0x86, //!< DID for EACEM/EICTA eacem_stream_identifier_descriptor
         DID_HD_SIMULCAST_LCN    = 0x88, //!< DID for EACEM/EICTA HD_simulcast_logical_channel_number_descriptor
 
+        // Valid after PDS_OFCOM private_data_specifier
+
+        DID_OFCOM_LOGICAL_CHAN  = 0x83, //!< DID for OFCOM/DTG logical_channel_descriptor
+        DID_OFCOM_PREF_NAME_LST = 0x84, //!< DID for OFCOM/DTG preferred_name_list_descriptor
+        DID_OFCOM_PREF_NAME_ID  = 0x85, //!< DID for OFCOM/DTG preferred_name_identifier_descriptor
+        DID_OFCOM_SERVICE_ATTR  = 0x86, //!< DID for OFCOM/DTG service_attribute_descriptor
+        DID_OFCOM_SHORT_SRV_NAM = 0x87, //!< DID for OFCOM/DTG short_service_name_descriptor
+        DID_OFCOM_HD_SIMULCAST  = 0x88, //!< DID for OFCOM/DTG HD_simulcast_logical_channel_descriptor
+        DID_OFCOM_GUIDANCE      = 0x89, //!< DID for OFCOM/DTG guidance_descriptor
+
         // Valid after PDS_CANALPLUS private_data_specifier
 
         DID_DTG_STREAM_IND      = 0x80, //!< DID for Canal+ DTG_Stream_indicator_descriptor
@@ -1301,6 +1335,59 @@ namespace ts {
 
         DID_LOGICAL_CHANNEL_SKY = 0xB1, //!< DID for BskyB logical_channel_number_by_region_descriptor
         DID_SERVICE_SKY         = 0xB2, //!< DID for BskyB service_descriptor
+
+        // Valid in ISDB context:
+        DID_ISDB_MATERIAL_INFO  = 0x67, //!< DID for ISDB Material information descriptor, in LIT only (WARNING: conflict with DVB)
+        DID_ISDB_HYBRID_INFO    = 0x68, //!< DID for ISDB Hybrid information descriptor (WARNING: conflict with DVB)
+        DID_ISDB_HIERARCH_TRANS = 0xC0, //!< DID for ISDB Hierarchical transmission descriptor
+        DID_ISDB_COPY_CONTROL   = 0xC1, //!< DID for ISDB Digital copy control descriptor
+        DID_ISDB_NETWORK_ID     = 0xC2, //!< DID for ISDB Network identification descriptor
+        DID_ISDB_PART_TS_TIME   = 0xC3, //!< DID for ISDB Partial Transport Stream time descriptor
+        DID_ISDB_AUDIO_COMP     = 0xC4, //!< DID for ISDB Audio component descriptor
+        DID_ISDB_HYPERLINK      = 0xC5, //!< DID for ISDB Hyperlink descriptor
+        DID_ISDB_TARGET_REGION  = 0xC6, //!< DID for ISDB Target region descriptor
+        DID_ISDB_DATA_CONTENT   = 0xC7, //!< DID for ISDB Data content descriptor
+        DID_ISDB_VIDEO_CONTROL  = 0xC8, //!< DID for ISDB Video decode control descriptor
+        DID_ISDB_DOWNLOAD_CONT  = 0xC9, //!< DID for ISDB Download content descriptor
+        DID_ISDB_CA_EMM_TS      = 0xCA, //!< DID for ISDB CA_EMM_TS descriptor
+        DID_ISDB_CA_CONTRACT    = 0xCB, //!< DID for ISDB CA contract information descriptor
+        DID_ISDB_CA_SERVICE     = 0xCC, //!< DID for ISDB CA service descriptor
+        DID_ISDB_TS_INFO        = 0xCD, //!< DID for ISDB TS information descriptor
+        DID_ISDB_EXT_BROADCAST  = 0xCE, //!< DID for ISDB Extended broadcaster descriptor
+        DID_ISDB_LOGO_TRANSM    = 0xCF, //!< DID for ISDB Logo transmission descriptor
+        DID_ISDB_BASIC_LOCAL_EV = 0xD0, //!< DID for ISDB Basic local event descriptor
+        DID_ISDB_REFERENCE      = 0xD1, //!< DID for ISDB Reference descriptor
+        DID_ISDB_NODE_RELATION  = 0xD2, //!< DID for ISDB Node relation descriptor
+        DID_ISDB_SHORT_NODE_INF = 0xD3, //!< DID for ISDB Short node information descriptor
+        DID_ISDB_STC_REF        = 0xD4, //!< DID for ISDB STC reference descriptor
+        DID_ISDB_SERIES         = 0xD5, //!< DID for ISDB Series descriptor
+        DID_ISDB_EVENT_GROUP    = 0xD6, //!< DID for ISDB Event group descriptor
+        DID_ISDB_SI_PARAMETER   = 0xD7, //!< DID for ISDB SI parameter descriptor
+        DID_ISDB_BROADCAST_NAME = 0xD8, //!< DID for ISDB Broadcaster name descriptor
+        DID_ISDB_COMP_GROUP     = 0xD9, //!< DID for ISDB Component group descriptor
+        DID_ISDB_SI_PRIME_TS    = 0xDA, //!< DID for ISDB SI prime TS descriptor
+        DID_ISDB_BOARD_INFO     = 0xDB, //!< DID for ISDB Board information descriptor
+        DID_ISDB_LDT_LINKAGE    = 0xDC, //!< DID for ISDB LDT linkage descriptor
+        DID_ISDB_CONNECT_TRANSM = 0xDD, //!< DID for ISDB Connected transmission descriptor
+        DID_ISDB_CONTENT_AVAIL  = 0xDE, //!< DID for ISDB Content availability descriptor
+        DID_ISDB_EXTENSION      = 0xDF, //!< DID for ISDB extension descriptor
+        DID_ISDB_SERVICE_GROUP  = 0xE0, //!< DID for ISDB Service group descriptor
+        DID_ISDB_AREA_BCAST_INF = 0xE1, //!< DID for ISDB Area broadcast information descriptor
+        DID_ISDB_NETW_DOWNLOAD  = 0xE2, //!< DID for ISDB Network download content descriptor
+        DID_ISDB_DOWNLOAD_PROT  = 0xE3, //!< DID for ISDB Download protection descriptor
+        DID_ISDB_CA_ACTIVATION  = 0xE4, //!< DID for ISDB CA activation descriptor
+        DID_ISDB_WMCTDS         = 0xF3, //!< DID for ISDB Wired multi-carrier transmission distribution system descriptor
+        DID_ISDB_ADV_WDS        = 0xF4, //!< DID for ISDB Advanced wired distribution system descriptor
+        DID_ISDB_SCRAMBLE_METH  = 0xF5, //!< DID for ISDB Scramble method descriptor
+        DID_ISDB_CA             = 0xF6, //!< DID for ISDB Access control descriptor
+        DID_ISDB_CAROUSEL_COMP  = 0xF7, //!< DID for ISDB Carousel compatible composite descriptor
+        DID_ISDB_COND_PLAYBACK  = 0xF8, //!< DID for ISDB Conditional playback descriptor
+        DID_ISDB_CABLE_TS_DIV   = 0xF9, //!< DID for ISDB Cable TS division system descriptor
+        DID_ISDB_TERRES_DELIV   = 0xFA, //!< DID for ISDB Terrestrial delivery system descriptor
+        DID_ISDB_PARTIAL_RECP   = 0xFB, //!< DID for ISDB Partial reception descriptor
+        DID_ISDB_EMERGENCY_INFO = 0xFC, //!< DID for ISDB Emergency information descriptor
+        DID_ISDB_DATA_COMP      = 0xFD, //!< DID for ISDB Data component descriptor
+        DID_ISDB_SYSTEM_MGMT    = 0xFE, //!< DID for ISDB System management descriptor
     };
 
     //---------------------------------------------------------------------
@@ -1519,6 +1606,7 @@ namespace ts {
 
     enum : uint16_t {
         NID_TNT_FRANCE = 0x20FA,  //!< Network id for the French national terrestrial network.
+        NID_DTT_UK     = 0x233A,  //!< Network id for the UK national terrestrial network.
     };
 
     //---------------------------------------------------------------------
@@ -1636,5 +1724,3 @@ namespace ts {
         ATSC_STYPE_SOFTWARE  = 0x05,  //!< ATSC Software Download Service
     };
 }
-
-TS_FLAGS_OPERATORS(ts::Standards)

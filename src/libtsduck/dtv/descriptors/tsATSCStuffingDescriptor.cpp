@@ -30,18 +30,18 @@
 #include "tsATSCStuffingDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"ATSC_stuffing_descriptor"
+#define MY_CLASS ts::ATSCStuffingDescriptor
 #define MY_DID ts::DID_ATSC_STUFFING
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ATSCStuffingDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ATSCStuffingDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::ATSCStuffingDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,11 @@ ts::ATSCStuffingDescriptor::ATSCStuffingDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     stuffing()
 {
-    _is_valid = true;
+}
+
+void ts::ATSCStuffingDescriptor::clearContent()
+{
+    stuffing.clear();
 }
 
 ts::ATSCStuffingDescriptor::ATSCStuffingDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -80,7 +84,7 @@ void ts::ATSCStuffingDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 
 void ts::ATSCStuffingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
 
     if (_is_valid) {
         stuffing.copy(desc.payload(), desc.payloadSize());
@@ -97,31 +101,20 @@ void ts::ATSCStuffingDescriptor::deserialize(DuckContext& duck, const Descriptor
 
 void ts::ATSCStuffingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
-    const std::string margin(indent, ' ');
-    strm << margin << "Stuffing data, " << size << " bytes" << std::endl
-         << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
+    display.displayPrivateData(u"Stuffing data", data, size, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::ATSCStuffingDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    if (!stuffing.empty()) {
-        root->addHexaText(stuffing);
-    }
+    root->addHexaText(stuffing, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::ATSCStuffingDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ATSCStuffingDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    stuffing.clear();
-    _is_valid = checkXMLName(element) && element->getHexaText(stuffing, 0, 255);
+    return element->getHexaText(stuffing, 0, 255);
 }

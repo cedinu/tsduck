@@ -30,18 +30,18 @@
 #include "tsTargetRegionNameDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"target_region_name_descriptor"
+#define MY_CLASS ts::TargetRegionNameDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_TARGET_REGION_NAME
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::TargetRegionNameDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetRegionNameDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::TargetRegionNameDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,7 +54,13 @@ ts::TargetRegionNameDescriptor::TargetRegionNameDescriptor() :
     ISO_639_language_code(),
     regions()
 {
-    _is_valid = true;
+}
+
+void ts::TargetRegionNameDescriptor::clearContent()
+{
+    country_code.clear();
+    ISO_639_language_code.clear();
+    regions.clear();
 }
 
 ts::TargetRegionNameDescriptor::TargetRegionNameDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -85,7 +91,7 @@ void ts::TargetRegionNameDescriptor::serialize(DuckContext& duck, Descriptor& de
         return;
     }
     for (auto it = regions.begin(); it != regions.end(); ++it) {
-        ByteBlock name(duck.toDVBWithByteLength(it->region_name));
+        ByteBlock name(duck.encodedWithByteLength(it->region_name));
         assert(!name.empty());
         if (name[0] > 0x3F) {
             return;
@@ -113,7 +119,7 @@ void ts::TargetRegionNameDescriptor::deserialize(DuckContext& duck, const Descri
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 7 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 7 && data[0] == MY_EDID;
     regions.clear();
 
     if (_is_valid) {
@@ -128,7 +134,7 @@ void ts::TargetRegionNameDescriptor::deserialize(DuckContext& duck, const Descri
 
         _is_valid = size > len;
         if (_is_valid) {
-            region.region_name = duck.fromDVB(data, len);
+            duck.decode(region.region_name, data, len);
             region.primary_region_code = data[len];
             data += len + 1; size -= len + 1;
         }
@@ -166,7 +172,8 @@ void ts::TargetRegionNameDescriptor::DisplayDescriptor(TablesDisplay& display, D
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
     bool ok = size >= 6;
     int index = 0;
@@ -185,7 +192,7 @@ void ts::TargetRegionNameDescriptor::DisplayDescriptor(TablesDisplay& display, D
 
         ok = size > len;
         if (ok) {
-            strm << margin << "  Region name: \"" << display.duck().fromDVB(data, len) << "\"" << std::endl
+            strm << margin << "  Region name: \"" << duck.decoded(data, len) << "\"" << std::endl
                  << margin << UString::Format(u"  Primary region code: 0x%X (%d)", {data[len], data[len]}) << std::endl;
             data += len + 1; size -= len + 1;
         }
@@ -235,35 +242,30 @@ void ts::TargetRegionNameDescriptor::buildXML(DuckContext& duck, xml::Element* r
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TargetRegionNameDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TargetRegionNameDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    regions.clear();
-
     xml::ElementVector xregions;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getAttribute(country_code, u"country_code", true, u"", 3, 3) &&
         element->getAttribute(ISO_639_language_code, u"ISO_639_language_code", true, u"", 3, 3) &&
         element->getChildren(xregions, u"region");
 
-    for (size_t i = 0; _is_valid && i < xregions.size(); ++i) {
+    for (size_t i = 0; ok && i < xregions.size(); ++i) {
         Region region;
-        _is_valid =
-            xregions[i]->getAttribute(region.region_name, u"region_name", true) &&
-            xregions[i]->getIntAttribute<uint8_t>(region.primary_region_code, u"primary_region_code", true) &&
-            xregions[i]->getIntAttribute<uint8_t>(region.secondary_region_code, u"secondary_region_code", false) &&
-            xregions[i]->getIntAttribute<uint16_t>(region.tertiary_region_code, u"tertiary_region_code", false);
-        if (_is_valid) {
-            if (xregions[i]->hasAttribute(u"tertiary_region_code")) {
-                region.region_depth = 3;
-            }
-            else if (xregions[i]->hasAttribute(u"secondary_region_code")) {
-                region.region_depth = 2;
-            }
-            else {
-                region.region_depth = 1;
-            }
-            regions.push_back(region);
+        ok = xregions[i]->getAttribute(region.region_name, u"region_name", true) &&
+             xregions[i]->getIntAttribute<uint8_t>(region.primary_region_code, u"primary_region_code", true) &&
+             xregions[i]->getIntAttribute<uint8_t>(region.secondary_region_code, u"secondary_region_code", false) &&
+             xregions[i]->getIntAttribute<uint16_t>(region.tertiary_region_code, u"tertiary_region_code", false);
+        if (xregions[i]->hasAttribute(u"tertiary_region_code")) {
+            region.region_depth = 3;
         }
+        else if (xregions[i]->hasAttribute(u"secondary_region_code")) {
+            region.region_depth = 2;
+        }
+        else {
+            region.region_depth = 1;
+        }
+        regions.push_back(region);
     }
+    return ok;
 }

@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsService.h"
 #include "tsSectionDemux.h"
@@ -89,8 +88,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(svrename, ts::SVRenamePlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"svrename", ts::SVRenamePlugin);
 
 
 //----------------------------------------------------------------------------
@@ -108,12 +106,15 @@ ts::SVRenamePlugin::SVRenamePlugin(TSP* tsp_) :
     _ignore_eit(false),
     _ignore_nit(false),
     _demux(duck, this),
-    _pzer_pat(PID_PAT, CyclingPacketizer::ALWAYS),
-    _pzer_pmt(PID_NULL, CyclingPacketizer::ALWAYS),
-    _pzer_sdt_bat(PID_SDT, CyclingPacketizer::ALWAYS),
-    _pzer_nit(PID_NIT, CyclingPacketizer::ALWAYS),
+    _pzer_pat(duck, PID_PAT, CyclingPacketizer::ALWAYS),
+    _pzer_pmt(duck, PID_NULL, CyclingPacketizer::ALWAYS),
+    _pzer_sdt_bat(duck, PID_SDT, CyclingPacketizer::ALWAYS),
+    _pzer_nit(duck, PID_NIT, CyclingPacketizer::ALWAYS),
     _eit_process(duck, PID_EIT)
 {
+    // We need to define character sets to specify service names.
+    duck.defineArgsForCharset(*this);
+
     option(u"", 0, STRING, 0, 1);
     help(u"",
          u"Specifies the service to rename. If the argument is an integer value "
@@ -161,6 +162,7 @@ ts::SVRenamePlugin::SVRenamePlugin(TSP* tsp_) :
 bool ts::SVRenamePlugin::start()
 {
     // Get option values
+    duck.loadArgs(*this);
     _old_service.set(value(u""));
     _ignore_bat = present(u"ignore-bat");
     _ignore_eit = present(u"ignore-eit");
@@ -229,7 +231,7 @@ void ts::SVRenamePlugin::handleTable(SectionDemux& demux, const BinaryTable& tab
 {
     if (tsp->debug()) {
         tsp->debug(u"Got %s v%d, PID %d (0x%X), TIDext %d (0x%X)",
-                   {names::TID(table.tableId()), table.version(),
+                   {names::TID(duck, table.tableId()), table.version(),
                     table.sourcePID(), table.sourcePID(),
                     table.tableIdExtension(), table.tableIdExtension()});
     }

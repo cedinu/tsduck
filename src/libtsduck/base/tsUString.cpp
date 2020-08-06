@@ -26,10 +26,6 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Unicode string.
-//
-//----------------------------------------------------------------------------
 
 // In the implementation of UString, we allow the implicit UTF-8 conversions
 // to ensure that the symbols are defined and exported from the DLL on Windows.
@@ -40,8 +36,6 @@
 #include "tsUString.h"
 #include "tsByteBlock.h"
 #include "tsSysUtils.h"
-#include "tsDVBCharsetSingleByte.h"
-#include "tsDVBCharsetUTF8.h"
 TSDUCK_SOURCE;
 
 // The UTF-8 Byte Order Mark
@@ -1455,7 +1449,7 @@ bool ts::UString::toTristate(Tristate& value) const
 
     if (iValue == Enumeration::UNKNOWN) {
         // Invalid string and invalid integer.
-        value = MAYBE;
+        value = Tristate::MAYBE;
         return false;
     }
     else {
@@ -1464,16 +1458,16 @@ bool ts::UString::toTristate(Tristate& value) const
             case TSE_FALSE:
             case TSE_NO:
             case TSE_OFF:
-                value = FALSE;
+                value = Tristate::FALSE;
                 break;
             case TSE_TRUE:
             case TSE_YES:
             case TSE_ON:
-                value = TRUE;
+                value = Tristate::TRUE;
                 break;
             case TSE_MAYBE:
             case TSE_UNKNOWN:
-                value = MAYBE;
+                value = Tristate::MAYBE;
                 break;
             default:
                 // Got an integer value.
@@ -1489,13 +1483,13 @@ bool ts::UString::toTristate(Tristate& value) const
 // Interpret this string as a sequence of hexadecimal digits (ignore blanks).
 //----------------------------------------------------------------------------
 
-bool ts::UString::hexaDecode(ts::ByteBlock& result) const
+bool ts::UString::hexaDecode(ByteBlock& result, bool c_style) const
 {
     result.clear();
-    return hexaDecodeAppend(result);
+    return hexaDecodeAppend(result, c_style);
 }
 
-bool ts::UString::hexaDecodeAppend(ts::ByteBlock& result) const
+bool ts::UString::hexaDecodeAppend(ts::ByteBlock& result, bool c_style) const
 {
     // Oversize the prereservation in output buffer.
     result.reserve(result.size() + size() / 2);
@@ -1505,8 +1499,13 @@ bool ts::UString::hexaDecodeAppend(ts::ByteBlock& result) const
     uint8_t nibble = 0;
 
     for (const UChar* p = data(); p < last(); ++p) {
-        if (IsSpace(*p)) {
-            // Ignore spaces.
+        if (IsSpace(*p) || (c_style && (*p == ',' || *p == ';' || *p == '[' || *p == ']' || *p == '{' || *p == '}'))) {
+            // Ignore spaces and C-style separators.
+            continue;
+        }
+        else if (c_style && *p == '0' && p + 1 < last() && (p[1] == 'x' || p[1] == 'X')) {
+            // Ignore C-style 0x prefix.
+            ++p;
             continue;
         }
         else if ((nibble = uint8_t(ToDigit(*p, 16, 0xFF))) == 0xFF) {
@@ -1579,6 +1578,12 @@ void ts::UString::appendDump(const void *data,
                              size_type init_offset,
                              size_type inner_indent)
 {
+    // Do nothing in case of invalid or empty data.
+    if (data == nullptr || size == 0) {
+        return;
+    }
+
+    // Work an area of bytes.
     const uint8_t* raw = static_cast<const uint8_t*>(data);
 
     // Make sure we have something to display (default is hexa)
@@ -1762,217 +1767,12 @@ void ts::UString::appendDump(const void *data,
 
 
 //----------------------------------------------------------------------------
-// Convert a DVB string into UTF-16.
-//----------------------------------------------------------------------------
-
-ts::UString ts::UString::FromDVB(const uint8_t* dvb, size_type dvbSize, const DVBCharset* charset)
-{
-    // Null or empty buffer is a valid empty string.
-    if (dvb == nullptr || dvbSize == 0) {
-        return UString();
-    }
-
-    // Get the DVB character set code from the beginning of the string.
-    uint32_t code = 0;
-    size_type codeSize = 0;
-    if (!DVBCharset::GetCharCodeTable(code, codeSize, dvb, dvbSize)) {
-        return UString();
-    }
-
-    // Skip the character code.
-    assert(codeSize <= dvbSize);
-    dvb += codeSize;
-    dvbSize -= codeSize;
-
-    // Get the character set for this DVB string.
-    if (code != 0 || charset == nullptr) {
-        charset = DVBCharset::GetCharset(code);
-    }
-    if (charset == nullptr) {
-        // Unsupported charset. Collect all ANSI characters, replace others by '.'.
-        UString str(dvbSize, FULL_STOP);
-        for (size_type i = 0; i < dvbSize; i++) {
-            if (dvb[i] >= 0x20 && dvb[i] <= 0x7E) {
-                str[i] = UChar(dvb[i]);
-            }
-        }
-        return str;
-    }
-    else {
-        // Convert the DVB string using the character set.
-        UString str;
-        charset->decode(str, dvb, dvbSize);
-        return str;
-    }
-}
-
-
-//----------------------------------------------------------------------------
-// Convert a DVB string (preceded by its one-byte length) into UTF-16.
-//----------------------------------------------------------------------------
-
-ts::UString ts::UString::FromDVBWithByteLength(const uint8_t*& buffer, size_t& size, const DVBCharset* charset)
-{
-    // Null or empty buffer is a valid empty string.
-    if (buffer == nullptr || size == 0) {
-        return UString();
-    }
-
-    // Address and size of the DVB string.
-    const uint8_t* const dvb = buffer + 1;
-    const size_type dvbSize = std::min<size_t>(buffer[0], size - 1);
-
-    // Update the user buffer to point after the DVB string.
-    buffer += dvbSize + 1;
-    size -= dvbSize + 1;
-
-    // Decode the DVB string.
-    return FromDVB(dvb, dvbSize, charset);
-}
-
-
-//----------------------------------------------------------------------------
-// Convert a UTF-16 string into DVB representation.
-//----------------------------------------------------------------------------
-
-ts::UString::size_type ts::UString::toDVB(uint8_t*& buffer, size_t& size, size_type start, size_type count, const DVBCharset* charset) const
-{
-    // Skip degenerated cases where there is nothing to do.
-    if (buffer == nullptr || size == 0 || start >= length()) {
-        return 0;
-    }
-
-    // Try to encode using these charsets in order
-    static const DVBCharset* const dvbEncoders[] = {
-        &ts::DVBCharsetSingleByte::ISO_6937,     // default charset
-        &ts::DVBCharsetSingleByte::ISO_8859_15,  // most european characters and Euro currency sign
-        &ts::DVBCharsetUTF8::UTF_8,              // last chance, used when no other match
-        nullptr                                  // end of list
-    };
-
-    // Look for a character set which can encode the string.
-    if (charset == nullptr || !charset->canEncode(*this, start, count)) {
-        for (size_type i = 0; dvbEncoders[i] != nullptr; ++i) {
-            if (dvbEncoders[i]->canEncode(*this, start, count)) {
-                charset = dvbEncoders[i];
-                break;
-            }
-        }
-    }
-    if (charset == nullptr) {
-        // Should not happen since UTF-8 can encode everything.
-        return 0;
-    }
-
-    // Serialize the table code.
-    const size_t codeSize = charset->encodeTableCode(buffer, size);
-
-    // Encode the string.
-    return codeSize + charset->encode(buffer, size, *this, start, count);
-}
-
-
-//----------------------------------------------------------------------------
-// Convert a UTF-16 string into DVB representation in a byte block.
-//----------------------------------------------------------------------------
-
-ts::ByteBlock ts::UString::toDVB(size_type start, size_type count, const DVBCharset* charset) const
-{
-    if (start >= length()) {
-        return ByteBlock();
-    }
-    else {
-        // The maximum number of DVB bytes per character is 4 (worst case in UTF-8).
-        ByteBlock bb(UTF8_CHAR_MAX_SIZE * std::min(length() - start, count));
-
-        // Convert the string.
-        uint8_t* buffer = bb.data();
-        size_type size = bb.size();
-        toDVB(buffer, size, start, count, charset);
-
-        // Truncate unused bytes.
-        assert(size <= bb.size());
-        bb.resize(bb.size() - size);
-        return bb;
-    }
-}
-
-
-//----------------------------------------------------------------------------
-// Convert a UTF-16 string into DVB (preceded by its one-byte length).
-//----------------------------------------------------------------------------
-
-ts::UString::size_type ts::UString::toDVBWithByteLength(uint8_t*& buffer, size_t& size, size_type start, size_type count, const DVBCharset* charset) const
-{
-    // Skip degenerated cases where there is nothing to do.
-    if (buffer == nullptr || size == 0 || start >= length()) {
-        return 0;
-    }
-
-    // Write the DVB string at second byte, keep the first one for the length.
-    uint8_t* dvbBuffer = buffer + 1;
-
-    // We cannot write more that 255 bytes because the length must fit in one byte.
-    const size_type dvbMaxSize = std::min<size_t>(size - 1, 0xFF);
-    size_type dvbSize = dvbMaxSize;
-
-    // Convert the string.
-    const size_type result = toDVB(dvbBuffer, dvbSize, start, count, charset);
-
-    // Compute the actual DVB size.
-    assert(dvbSize <= dvbMaxSize);
-    dvbSize = dvbMaxSize - dvbSize;
-
-    // Update size at the beginning of the string.
-    assert(dvbSize <= 0xFF);
-    buffer[0] = uint8_t(dvbSize);
-
-    // Update user's buffer characteristics.
-    assert(size >= dvbSize + 1);
-    buffer += dvbSize + 1;
-    size -= dvbSize + 1;
-
-    return result;
-}
-
-
-//----------------------------------------------------------------------------
-// Encode this UTF-16 string into a DVB string (preceded by its one-byte length).
-//----------------------------------------------------------------------------
-
-ts::ByteBlock ts::UString::toDVBWithByteLength(size_type start, size_type count, const DVBCharset* charset) const
-{
-    if (start >= length()) {
-        // Empty string, return one byte containing 0 (the length).
-        return ByteBlock(1, 0);
-    }
-    else {
-        // The maximum number of DVB bytes is 255 so that the size fits in one byte.
-        ByteBlock bb(256);
-
-        // Convert the string.
-        uint8_t* buffer = bb.data() + 1;
-        size_type size = bb.size() - 1;
-        toDVB(buffer, size, start, count, charset);
-
-        // Truncate unused bytes.
-        assert(size < bb.size());
-        bb.resize(bb.size() - size);
-
-        // Update length byte.
-        bb[0] = uint8_t(bb.size() - 1);
-        return bb;
-    }
-}
-
-
-//----------------------------------------------------------------------------
 // Format a string using a template and arguments.
 //----------------------------------------------------------------------------
 
 void ts::UString::format(const UChar* fmt, const std::initializer_list<ArgMixIn>& args)
 {
-    // Pre-reserve some space. We don't really know how much. Just address the most comman cases.
+    // Pre-reserve some space. We don't really know how much. Just address the most common cases.
     reserve(256);
 
     // Process the string.
@@ -2046,6 +1846,7 @@ ts::UString::ArgMixInContext::ArgMixInContext(UString& result, const UChar* fmt,
     ArgMixContext(fmt, true),
     _result(result),
     _arg(args.begin()),
+    _prev(args.end()),
     _end(args.end())
 {
     // Loop into format, stop at each '%' sequence.
@@ -2089,6 +1890,7 @@ void ts::UString::ArgMixInContext::processArg()
     }
 
     // The allowed options, between the '%' and the letter are:
+    //       < : Reuse previous argument value, do not advance in argument list.
     //       - : Left-justified (right-justified by default).
     //       + : Force a '+' sign with decimal integers.
     //       0 : Zero padding for integers.
@@ -2100,11 +1902,16 @@ void ts::UString::ArgMixInContext::processArg()
     bool leftJustified = false;
     bool forceSign = false;
     bool useSeparator = false;
+    bool reusePrevious = false;
     UChar pad = u' ';
     size_t minWidth = 0;
     size_t maxWidth = std::numeric_limits<size_t>::max();
     size_t precision = 6;
 
+    if (*_fmt == u'<') {
+        reusePrevious = true;
+        _fmt++;
+    }
     if (*_fmt == u'-') {
         leftJustified = true;
         _fmt++;
@@ -2157,8 +1964,19 @@ void ts::UString::ArgMixInContext::processArg()
         return;
     }
 
+    // Point to actual parameter value.
+    ArgIterator argit(_arg);
+    if (reusePrevious) {
+        // Reuse previous argument value, do not advance in argument list.
+        argit = _prev;
+    }
+    else {
+        // Absorb the inserted argument.
+        _prev = _arg++;
+    }
+
     // Process missing argument.
-    if (_arg == _end) {
+    if (argit == _end) {
         if (debugActive()) {
             debug(u"missing argument", cmd);
         }
@@ -2166,7 +1984,7 @@ void ts::UString::ArgMixInContext::processArg()
     }
 
     // Now, the command is valid, process it.
-    if (_arg->isAnyString() || (_arg->isBool() && cmd == u's')) {
+    if (argit->isAnyString() || (argit->isBool() && cmd == u's')) {
         // String arguments are always treated as %s, regardless of the % command.
         // Also if a bool is specified as %s, print true or false.
         if (cmd != u's' && debugActive()) {
@@ -2174,14 +1992,14 @@ void ts::UString::ArgMixInContext::processArg()
         }
         // Get the string parameter.
         UString value;
-        if (_arg->isAnyString8()) {
-            value.assignFromUTF8(_arg->toCharPtr());
+        if (argit->isAnyString8()) {
+            value.assignFromUTF8(argit->toCharPtr());
         }
-        else if (_arg->isAnyString16()) {
-            value.assign(_arg->toUCharPtr());
+        else if (argit->isAnyString16()) {
+            value.assign(argit->toUCharPtr());
         }
-        else if (_arg->isBool()) {
-            value.assign(TrueFalse(_arg->toBool()));
+        else if (argit->isBool()) {
+            value.assign(TrueFalse(argit->toBool()));
         }
         else {
             // Not a string, should not get there.
@@ -2204,68 +2022,65 @@ void ts::UString::ArgMixInContext::processArg()
     }
     else if (cmd == u'c') {
         // Use an integer value as an Unicode code point.
-        if (!_arg->isInteger() && debugActive()) {
+        if (!argit->isInteger() && debugActive()) {
             debug(u"type mismatch, not an integer or character", cmd);
         }
         // Get and convert the Unicode code point.
-        _result.append(_arg->toUInt32());
+        _result.append(argit->toUInt32());
     }
     else if (cmd == u'x' || cmd == u'X') {
         // Insert an integer in hexadecimal.
-        if (!_arg->isInteger() && debugActive()) {
+        if (!argit->isInteger() && debugActive()) {
             debug(u"type mismatch, not an integer", cmd);
         }
         // Format the hexa string.
         const bool upper = cmd == u'X';
-        switch (_arg->size()) {
+        switch (argit->size()) {
             case 1:
-                _result.append(HexaMin(_arg->toInteger<uint8_t>(), minWidth, separator, false, upper));
+                _result.append(HexaMin(argit->toInteger<uint8_t>(), minWidth, separator, false, upper));
                 break;
             case 2:
-                _result.append(HexaMin(_arg->toInteger<uint16_t>(), minWidth, separator, false, upper));
+                _result.append(HexaMin(argit->toInteger<uint16_t>(), minWidth, separator, false, upper));
                 break;
             case 4:
-                _result.append(HexaMin(_arg->toInteger<uint32_t>(), minWidth, separator, false, upper));
+                _result.append(HexaMin(argit->toInteger<uint32_t>(), minWidth, separator, false, upper));
                 break;
             default:
-                _result.append(HexaMin(_arg->toInteger<uint64_t>(), minWidth, separator, false, upper));
+                _result.append(HexaMin(argit->toInteger<uint64_t>(), minWidth, separator, false, upper));
                 break;
         }
     }
     else if (cmd == u'f') {
         // Insert a floating point value
-        if (!_arg->isDouble() && debugActive()) {
+        if (!argit->isDouble() && debugActive()) {
             debug(u"type mismatch, not a double", cmd);
         }
-        _result.append(Float(_arg->toDouble(), minWidth, precision, forceSign));
+        _result.append(Float(argit->toDouble(), minWidth, precision, forceSign));
     }
     else {
         // Insert an integer in decimal.
         if (cmd != u'd' && debugActive()) {
             debug(u"type mismatch, got an integer", cmd);
         }
-        if (_arg->size() > 4) {
+        if (argit->size() > 4) {
             // Stored as 64-bit integer.
-            if (_arg->isSigned()) {
-                _result.append(Decimal(_arg->toInt64(), minWidth, !leftJustified, separator, forceSign, pad));
+            if (argit->isSigned()) {
+                _result.append(Decimal(argit->toInt64(), minWidth, !leftJustified, separator, forceSign, pad));
             }
             else {
-                _result.append(Decimal(_arg->toUInt64(), minWidth, !leftJustified, separator, forceSign, pad));
+                _result.append(Decimal(argit->toUInt64(), minWidth, !leftJustified, separator, forceSign, pad));
             }
         }
         else {
             // Stored as 32-bit integer.
-            if (_arg->isSigned()) {
-                _result.append(Decimal(_arg->toInt32(), minWidth, !leftJustified, separator, forceSign, pad));
+            if (argit->isSigned()) {
+                _result.append(Decimal(argit->toInt32(), minWidth, !leftJustified, separator, forceSign, pad));
             }
             else {
-                _result.append(Decimal(_arg->toUInt32(), minWidth, !leftJustified, separator, forceSign, pad));
+                _result.append(Decimal(argit->toUInt32(), minWidth, !leftJustified, separator, forceSign, pad));
             }
         }
     }
-
-    // Finally, absorb the inserted argument.
-    ++_arg;
 }
 
 // Anciliary function to extract a size field from a '%' sequence.

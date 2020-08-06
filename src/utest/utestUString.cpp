@@ -98,7 +98,6 @@ public:
     void testCommonPrefix();
     void testCommonSuffix();
     void testPrecombined();
-    void testDVB();
     void testQuoted();
     void testToQuotedLine();
     void testFromQuotedLine();
@@ -152,7 +151,6 @@ public:
     TSUNIT_TEST(testCommonPrefix);
     TSUNIT_TEST(testCommonSuffix);
     TSUNIT_TEST(testPrecombined);
-    TSUNIT_TEST(testDVB);
     TSUNIT_TEST(testQuoted);
     TSUNIT_TEST(testToQuotedLine);
     TSUNIT_TEST(testFromQuotedLine);
@@ -1087,57 +1085,57 @@ void UStringTest::testToTristate()
 {
     ts::Tristate t;
 
-    t = ts::MAYBE;
+    t = ts::Tristate::MAYBE;
     TSUNIT_ASSERT(ts::UString(u"yes").toTristate(t));
-    TSUNIT_EQUAL(ts::TRUE, t);
+    TSUNIT_EQUAL(ts::Tristate::TRUE, t);
 
-    t = ts::MAYBE;
+    t = ts::Tristate::MAYBE;
     TSUNIT_ASSERT(ts::UString(u"True").toTristate(t));
-    TSUNIT_EQUAL(ts::TRUE, t);
+    TSUNIT_EQUAL(ts::Tristate::TRUE, t);
 
-    t = ts::MAYBE;
+    t = ts::Tristate::MAYBE;
     TSUNIT_ASSERT(ts::UString(u"ON").toTristate(t));
-    TSUNIT_EQUAL(ts::TRUE, t);
+    TSUNIT_EQUAL(ts::Tristate::TRUE, t);
 
-    t = ts::MAYBE;
+    t = ts::Tristate::MAYBE;
     TSUNIT_ASSERT(ts::UString(u"NO").toTristate(t));
-    TSUNIT_EQUAL(ts::FALSE, t);
+    TSUNIT_EQUAL(ts::Tristate::FALSE, t);
 
-    t = ts::MAYBE;
+    t = ts::Tristate::MAYBE;
     TSUNIT_ASSERT(ts::UString(u"FaLsE").toTristate(t));
-    TSUNIT_EQUAL(ts::FALSE, t);
+    TSUNIT_EQUAL(ts::Tristate::FALSE, t);
 
-    t = ts::MAYBE;
+    t = ts::Tristate::MAYBE;
     TSUNIT_ASSERT(ts::UString(u"off").toTristate(t));
-    TSUNIT_EQUAL(ts::FALSE, t);
+    TSUNIT_EQUAL(ts::Tristate::FALSE, t);
 
-    t = ts::TRUE;
+    t = ts::Tristate::TRUE;
     TSUNIT_ASSERT(ts::UString(u"MayBe").toTristate(t));
-    TSUNIT_EQUAL(ts::MAYBE, t);
+    TSUNIT_EQUAL(ts::Tristate::MAYBE, t);
 
-    t = ts::TRUE;
+    t = ts::Tristate::TRUE;
     TSUNIT_ASSERT(ts::UString(u"Unknown").toTristate(t));
-    TSUNIT_EQUAL(ts::MAYBE, t);
+    TSUNIT_EQUAL(ts::Tristate::MAYBE, t);
 
-    t = ts::TRUE;
+    t = ts::Tristate::TRUE;
     TSUNIT_ASSERT(ts::UString(u"0x0000").toTristate(t));
-    TSUNIT_EQUAL(ts::FALSE, t);
+    TSUNIT_EQUAL(ts::Tristate::FALSE, t);
 
-    t = ts::MAYBE;
+    t = ts::Tristate::MAYBE;
     TSUNIT_ASSERT(ts::UString(u"1").toTristate(t));
-    TSUNIT_EQUAL(ts::TRUE, t);
+    TSUNIT_EQUAL(ts::Tristate::TRUE, t);
 
-    t = ts::MAYBE;
+    t = ts::Tristate::MAYBE;
     TSUNIT_ASSERT(ts::UString(u"56469").toTristate(t));
-    TSUNIT_EQUAL(ts::TRUE, t);
+    TSUNIT_EQUAL(ts::Tristate::TRUE, t);
 
-    t = ts::TRUE;
+    t = ts::Tristate::TRUE;
     TSUNIT_ASSERT(ts::UString(u"-1").toTristate(t));
-    TSUNIT_EQUAL(ts::MAYBE, t);
+    TSUNIT_EQUAL(ts::Tristate::MAYBE, t);
 
-    t = ts::TRUE;
+    t = ts::Tristate::TRUE;
     TSUNIT_ASSERT(ts::UString(u"-56").toTristate(t));
-    TSUNIT_EQUAL(ts::MAYBE, t);
+    TSUNIT_EQUAL(ts::Tristate::MAYBE, t);
 
     TSUNIT_ASSERT(!ts::UString(u"abcd").toTristate(t));
     TSUNIT_ASSERT(!ts::UString(u"0df").toTristate(t));
@@ -1160,6 +1158,12 @@ void UStringTest::testHexaDecode()
 
     TSUNIT_ASSERT(!ts::UString(u"X 0 1234 56 - 789 ABC DEF ").hexaDecode(bytes));
     TSUNIT_ASSERT(bytes.empty());
+
+    TSUNIT_ASSERT(!ts::UString(u"01 23 {0x45, 0x67};").hexaDecode(bytes));
+    TSUNIT_ASSERT(bytes == ts::ByteBlock({0x01, 0x23}));
+
+    TSUNIT_ASSERT(ts::UString(u"01 23 {0x45, 0x67};").hexaDecode(bytes, true));
+    TSUNIT_ASSERT(bytes == ts::ByteBlock({0x01, 0x23, 0x45, 0x67}));
 }
 
 void UStringTest::testAppendContainer()
@@ -1789,6 +1793,11 @@ void UStringTest::testFormat()
     TSUNIT_EQUAL(u"2.000000", ts::UString::Format(u"%f", {2}));
     TSUNIT_EQUAL(u"-2.000000", ts::UString::Format(u"%f", {-2}));
     TSUNIT_EQUAL(u" 0.667", ts::UString::Format(u"%6.3f", {2.0 / 3.0}));
+
+    // Repeat previous argument.
+    TSUNIT_EQUAL(u"1 1 2", ts::UString::Format(u"%d %<d %d", {1, 2}));
+    TSUNIT_EQUAL(u" 1 2", ts::UString::Format(u"%<d %d %d", {1, 2}));
+    TSUNIT_EQUAL(u"   1   1 2", ts::UString::Format(u"%*d %<*d %d", {4, 1, 3, 2}));
 }
 
 void UStringTest::testArgMixOut()
@@ -2078,16 +2087,6 @@ void UStringTest::testPrecombined()
     TSUNIT_EQUAL(u"abcdef", ts::UString(u"abcdef").toDecomposedDiacritical());
     TSUNIT_EQUAL(str1, ref1.toDecomposedDiacritical());
     TSUNIT_EQUAL(str2, ref2.toDecomposedDiacritical());
-}
-
-void UStringTest::testDVB()
-{
-    TSUNIT_EQUAL(u"abCD 89#()", ts::UString::FromDVB(std::string("abCD 89#()")));
-
-    static const uint8_t dvb1[] = {0x30, 0xC2, 0x65, 0xC3, 0x75};
-    const ts::UString str1{u'0', ts::LATIN_SMALL_LETTER_E_WITH_ACUTE, ts::LATIN_SMALL_LETTER_U_WITH_CIRCUMFLEX};
-    TSUNIT_EQUAL(str1, ts::UString::FromDVB(dvb1, sizeof(dvb1)));
-    TSUNIT_ASSERT(ts::ByteBlock(dvb1, sizeof(dvb1)) == str1.toDecomposedDiacritical().toDVB());
 }
 
 void UStringTest::testQuoted()

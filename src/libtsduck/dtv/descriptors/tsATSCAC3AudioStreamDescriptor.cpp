@@ -30,21 +30,21 @@
 #include "tsATSCAC3AudioStreamDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
-#include "tsDVBCharsetUTF16.h"
-#include "tsDVBCharsetSingleByte.h"
+#include "tsDVBCharTableUTF16.h"
+#include "tsDVBCharTableSingleByte.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"ATSC_AC3_audio_stream_descriptor"
+#define MY_CLASS ts::ATSCAC3AudioStreamDescriptor
 #define MY_DID ts::DID_ATSC_AC3
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ATSCAC3AudioStreamDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ATSCAC3AudioStreamDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::ATSCAC3AudioStreamDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -68,7 +68,6 @@ ts::ATSCAC3AudioStreamDescriptor::ATSCAC3AudioStreamDescriptor() :
     language_2(),
     additional_info()
 {
-    _is_valid = true;
 }
 
 ts::ATSCAC3AudioStreamDescriptor::ATSCAC3AudioStreamDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -82,7 +81,7 @@ ts::ATSCAC3AudioStreamDescriptor::ATSCAC3AudioStreamDescriptor(DuckContext& duck
 // Clear the content of this object.
 //----------------------------------------------------------------------------
 
-void ts::ATSCAC3AudioStreamDescriptor::clear()
+void ts::ATSCAC3AudioStreamDescriptor::clearContent()
 {
     sample_rate_code = 0;
     bsid = 0;
@@ -124,10 +123,10 @@ void ts::ATSCAC3AudioStreamDescriptor::serialize(DuckContext& duck, Descriptor& 
     }
 
     // Check if text shall be encoded in ISO Latin-1 (ISO 8859-1) or UTF-16.
-    const bool latin1 = DVBCharsetSingleByte::ISO_8859_1.canEncode(text);
+    const bool latin1 = DVBCharTableSingleByte::RAW_ISO_8859_1.canEncode(text);
 
     // Encode the text. The resultant size must fit on 7 bits. The max size is then 127 characters with Latin-1 and 63 with UTF-16.
-    const ByteBlock bb(latin1 ? DVBCharsetSingleByte::ISO_8859_1.encoded(text, 0, 127) : DVBCharsetUTF16::UNICODE.encoded(text, 0, 63));
+    const ByteBlock bb(latin1 ? DVBCharTableSingleByte::RAW_ISO_8859_1.encoded(text, 0, 127) : DVBCharTableUTF16::RAW_UNICODE.encoded(text, 0, 63));
 
     // Serialize the text.
     bbp->appendUInt8(uint8_t((bb.size() << 1) | (latin1 ? 0x01 : 0x00)));
@@ -155,7 +154,7 @@ void ts::ATSCAC3AudioStreamDescriptor::serialize(DuckContext& duck, Descriptor& 
 void ts::ATSCAC3AudioStreamDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
     clear();
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 3;
 
     if (!_is_valid) {
         return;
@@ -221,8 +220,8 @@ void ts::ATSCAC3AudioStreamDescriptor::deserialize(DuckContext& duck, const Desc
         return;
     }
     _is_valid = latin1 ?
-                DVBCharsetSingleByte::ISO_8859_1.decode(text, data, textlen) :
-                DVBCharsetUTF16::UNICODE.decode(text, data, textlen);
+                DVBCharTableSingleByte::RAW_ISO_8859_1.decode(text, data, textlen) :
+                DVBCharTableUTF16::RAW_UNICODE.decode(text, data, textlen);
     data += textlen; size -= textlen;
 
     // End of descriptor allowed here
@@ -263,7 +262,8 @@ void ts::ATSCAC3AudioStreamDescriptor::deserialize(DuckContext& duck, const Desc
 void ts::ATSCAC3AudioStreamDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
     if (size >= 3) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
 
         // Fixed initial size: 3 bytes.
@@ -317,10 +317,10 @@ void ts::ATSCAC3AudioStreamDescriptor::DisplayDescriptor(TablesDisplay& display,
             }
             UString text;
             if (latin1) {
-                DVBCharsetSingleByte::ISO_8859_1.decode(text, data, textlen);
+                DVBCharTableSingleByte::RAW_ISO_8859_1.decode(text, data, textlen);
             }
             else {
-                DVBCharsetUTF16::UNICODE.decode(text, data, textlen);
+                DVBCharTableUTF16::RAW_UNICODE.decode(text, data, textlen);
             }
             data += textlen; size -= textlen;
             strm << margin << "Text: \"" << text << "\"" << std::endl;
@@ -347,9 +347,8 @@ void ts::ATSCAC3AudioStreamDescriptor::DisplayDescriptor(TablesDisplay& display,
         }
 
         // Trailing info.
-        if (ok && size > 0) {
-            strm << margin << "Additional information:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
+        if (ok) {
+            display.displayPrivateData(u"Additional information", data, size, indent);
             data += size; size = 0;
         }
     }
@@ -382,7 +381,7 @@ void ts::ATSCAC3AudioStreamDescriptor::buildXML(DuckContext& duck, xml::Element*
     root->setAttribute(u"language", language, true);
     root->setAttribute(u"language_2", language_2, true);
     if (!additional_info.empty()) {
-        root->addElement(u"additional_info")->addHexaText(additional_info);
+        root->addHexaTextChild(u"additional_info", additional_info);
     }
 }
 
@@ -391,24 +390,20 @@ void ts::ATSCAC3AudioStreamDescriptor::buildXML(DuckContext& duck, xml::Element*
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ATSCAC3AudioStreamDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ATSCAC3AudioStreamDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(sample_rate_code, u"sample_rate_code", true, 0, 0, 0x07) &&
-        element->getIntAttribute<uint8_t>(bsid, u"bsid", true, 0, 0, 0x1F) &&
-        element->getIntAttribute<uint8_t>(bit_rate_code, u"bit_rate_code", true, 0, 0, 0x3F) &&
-        element->getIntAttribute<uint8_t>(surround_mode, u"surround_mode", true, 0, 0, 0x03) &&
-        element->getIntAttribute<uint8_t>(bsmod, u"bsmod", true, 0, 0, 0x07) &&
-        element->getIntAttribute<uint8_t>(num_channels, u"num_channels", true, 0, 0, 0x0F) &&
-        element->getBoolAttribute(full_svc, u"full_svc", true) &&
-        element->getIntAttribute<uint8_t>(mainid, u"mainid", bsmod < 2, 0, 0, 0x07) &&
-        element->getIntAttribute<uint8_t>(priority, u"priority", bsmod < 2, 0, 0, 0x03) &&
-        element->getIntAttribute<uint8_t>(asvcflags, u"asvcflags", bsmod >= 2, 0, 0, 0xFF) &&
-        element->getAttribute(text, u"text") &&
-        element->getAttribute(language, u"language") &&
-        element->getAttribute(language_2, u"language_2") &&
-        element->getHexaTextChild(additional_info, u"additional_info");
+    return element->getIntAttribute<uint8_t>(sample_rate_code, u"sample_rate_code", true, 0, 0, 0x07) &&
+           element->getIntAttribute<uint8_t>(bsid, u"bsid", true, 0, 0, 0x1F) &&
+           element->getIntAttribute<uint8_t>(bit_rate_code, u"bit_rate_code", true, 0, 0, 0x3F) &&
+           element->getIntAttribute<uint8_t>(surround_mode, u"surround_mode", true, 0, 0, 0x03) &&
+           element->getIntAttribute<uint8_t>(bsmod, u"bsmod", true, 0, 0, 0x07) &&
+           element->getIntAttribute<uint8_t>(num_channels, u"num_channels", true, 0, 0, 0x0F) &&
+           element->getBoolAttribute(full_svc, u"full_svc", true) &&
+           element->getIntAttribute<uint8_t>(mainid, u"mainid", bsmod < 2, 0, 0, 0x07) &&
+           element->getIntAttribute<uint8_t>(priority, u"priority", bsmod < 2, 0, 0, 0x03) &&
+           element->getIntAttribute<uint8_t>(asvcflags, u"asvcflags", bsmod >= 2, 0, 0, 0xFF) &&
+           element->getAttribute(text, u"text") &&
+           element->getAttribute(language, u"language") &&
+           element->getAttribute(language_2, u"language_2") &&
+           element->getHexaTextChild(additional_info, u"additional_info");
 }

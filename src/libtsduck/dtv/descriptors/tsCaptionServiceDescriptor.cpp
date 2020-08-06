@@ -30,18 +30,18 @@
 #include "tsCaptionServiceDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"caption_service_descriptor"
+#define MY_CLASS ts::CaptionServiceDescriptor
 #define MY_DID ts::DID_ATSC_CAPTION
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CaptionServiceDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CaptionServiceDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::CaptionServiceDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,11 @@ ts::CaptionServiceDescriptor::CaptionServiceDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
+}
+
+void ts::CaptionServiceDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 ts::CaptionServiceDescriptor::CaptionServiceDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -105,7 +109,7 @@ void ts::CaptionServiceDescriptor::deserialize(DuckContext& duck, const Descript
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         size_t count = data[0] & 0x1F;
@@ -135,7 +139,8 @@ void ts::CaptionServiceDescriptor::deserialize(DuckContext& duck, const Descript
 
 void ts::CaptionServiceDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -187,26 +192,20 @@ void ts::CaptionServiceDescriptor::buildXML(DuckContext& duck, xml::Element* roo
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CaptionServiceDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CaptionServiceDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"service", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"service", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getAttribute(entry.language, u"language", true, UString(), 3, 3) &&
-            children[i]->getBoolAttribute(entry.digital_cc, u"digital_cc", true) &&
-            children[i]->getBoolAttribute(entry.line21_field, u"line21_field", false) &&
-            children[i]->getIntAttribute<uint8_t>(entry.caption_service_number, u"caption_service_number", false, 0, 0, 0x3F) &&
-            children[i]->getBoolAttribute(entry.easy_reader, u"easy_reader", true) &&
-            children[i]->getBoolAttribute(entry.wide_aspect_ratio, u"wide_aspect_ratio", true);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getAttribute(entry.language, u"language", true, UString(), 3, 3) &&
+             children[i]->getBoolAttribute(entry.digital_cc, u"digital_cc", true) &&
+             children[i]->getBoolAttribute(entry.line21_field, u"line21_field", false) &&
+             children[i]->getIntAttribute<uint8_t>(entry.caption_service_number, u"caption_service_number", false, 0, 0, 0x3F) &&
+             children[i]->getBoolAttribute(entry.easy_reader, u"easy_reader", true) &&
+             children[i]->getBoolAttribute(entry.wide_aspect_ratio, u"wide_aspect_ratio", true);
+        entries.push_back(entry);
     }
+    return ok;
 }

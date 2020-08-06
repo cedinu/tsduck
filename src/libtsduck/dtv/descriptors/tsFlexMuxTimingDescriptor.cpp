@@ -30,17 +30,17 @@
 #include "tsFlexMuxTimingDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"flexmux_timing_descriptor"
+#define MY_CLASS ts::FlexMuxTimingDescriptor
 #define MY_DID ts::DID_FLEX_MUX_TIMING
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::FlexMuxTimingDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::FlexMuxTimingDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::FlexMuxTimingDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,7 +54,14 @@ ts::FlexMuxTimingDescriptor::FlexMuxTimingDescriptor() :
     FCRLength(0),
     FmxRateLength(0)
 {
-    _is_valid = true;
+}
+
+void ts::FlexMuxTimingDescriptor::clearContent()
+{
+    FCR_ES_ID = 0;
+    FCRResolution = 0;
+    FCRLength = 0;
+    FmxRateLength = 0;
 }
 
 ts::FlexMuxTimingDescriptor::FlexMuxTimingDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -88,7 +95,7 @@ void ts::FlexMuxTimingDescriptor::deserialize(DuckContext& duck, const Descripto
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 8;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 8;
 
     if (_is_valid) {
         FCR_ES_ID = GetUInt16(data);
@@ -105,7 +112,8 @@ void ts::FlexMuxTimingDescriptor::deserialize(DuckContext& duck, const Descripto
 
 void ts::FlexMuxTimingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 8) {
@@ -141,12 +149,10 @@ void ts::FlexMuxTimingDescriptor::buildXML(DuckContext& duck, xml::Element* root
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::FlexMuxTimingDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::FlexMuxTimingDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(FCR_ES_ID, u"FCR_ES_ID", true) &&
-        element->getIntAttribute<uint32_t>(FCRResolution, u"FCRResolution", true) &&
-        element->getIntAttribute<uint8_t>(FCRLength, u"FCRLength", true) &&
-        element->getIntAttribute<uint8_t>(FmxRateLength, u"FmxRateLength", true);
+    return element->getIntAttribute<uint16_t>(FCR_ES_ID, u"FCR_ES_ID", true) &&
+           element->getIntAttribute<uint32_t>(FCRResolution, u"FCRResolution", true) &&
+           element->getIntAttribute<uint8_t>(FCRLength, u"FCRLength", true) &&
+           element->getIntAttribute<uint8_t>(FmxRateLength, u"FmxRateLength", true);
 }

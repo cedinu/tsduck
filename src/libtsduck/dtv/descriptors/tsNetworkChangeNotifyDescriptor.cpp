@@ -31,20 +31,20 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsBCD.h"
 #include "tsMJD.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"network_change_notify_descriptor"
+#define MY_CLASS ts::NetworkChangeNotifyDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_NETW_CHANGE_NOTIFY
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::NetworkChangeNotifyDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::NetworkChangeNotifyDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::NetworkChangeNotifyDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +55,11 @@ ts::NetworkChangeNotifyDescriptor::NetworkChangeNotifyDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     cells()
 {
-    _is_valid = true;
+}
+
+void ts::NetworkChangeNotifyDescriptor::clearContent()
+{
+    cells.clear();
 }
 
 ts::NetworkChangeNotifyDescriptor::NetworkChangeNotifyDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -132,7 +136,7 @@ void ts::NetworkChangeNotifyDescriptor::deserialize(DuckContext& duck, const Des
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1 && data[0] == MY_EDID;
     data++; size--;
     cells.clear();
 
@@ -183,7 +187,8 @@ void ts::NetworkChangeNotifyDescriptor::DisplayDescriptor(TablesDisplay& display
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
     bool ok = true;
 
@@ -196,7 +201,7 @@ void ts::NetworkChangeNotifyDescriptor::DisplayDescriptor(TablesDisplay& display
             Time start;
             DecodeMJD(data + 2, 5, start);
             strm << margin
-                 << UString::Format(u"  - Network change id: 0x%X, version: 0x%X", {data[0], data[1]}) 
+                 << UString::Format(u"  - Network change id: 0x%X, version: 0x%X", {data[0], data[1]})
                  << std::endl
                  << margin
                  << UString::Format(u"    Start: %s, duration: %02d:%02d:%02d", {start.format(Time::DATE | Time::TIME), DecodeBCD(data[7]), DecodeBCD(data[8]), DecodeBCD(data[9])})
@@ -216,7 +221,7 @@ void ts::NetworkChangeNotifyDescriptor::DisplayDescriptor(TablesDisplay& display
                 ok = len >= 4;
                 if (ok) {
                     strm << margin
-                         << UString::Format(u"    Invariant TS id: 0x%X, orig. net. id: 0x%X", {GetUInt16(data), GetUInt16(data + 2)}) 
+                         << UString::Format(u"    Invariant TS id: 0x%X, orig. net. id: 0x%X", {GetUInt16(data), GetUInt16(data + 2)})
                          << std::endl;
                     data += 4; size -= 4; len -= 4;
                 }
@@ -258,37 +263,30 @@ void ts::NetworkChangeNotifyDescriptor::buildXML(DuckContext& duck, xml::Element
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::NetworkChangeNotifyDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::NetworkChangeNotifyDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    cells.clear();
-
     xml::ElementVector xcells;
-    _is_valid = checkXMLName(element) && element->getChildren(xcells, u"cell");
+    bool ok = element->getChildren(xcells, u"cell");
 
-    for (size_t i1 = 0; _is_valid && i1 < xcells.size(); ++i1) {
+    for (size_t i1 = 0; ok && i1 < xcells.size(); ++i1) {
         Cell cell;
         xml::ElementVector xchanges;
-        _is_valid =
-            xcells[i1]->getIntAttribute<uint16_t>(cell.cell_id, u"cell_id", true) &&
-            xcells[i1]->getChildren(xchanges, u"change");
-        for (size_t i2 = 0; _is_valid && i2 < xchanges.size(); ++i2) {
+        ok = xcells[i1]->getIntAttribute<uint16_t>(cell.cell_id, u"cell_id", true) &&
+             xcells[i1]->getChildren(xchanges, u"change");
+        for (size_t i2 = 0; ok && i2 < xchanges.size(); ++i2) {
             Change ch;
-            _is_valid =
-                xchanges[i2]->getIntAttribute<uint8_t>(ch.network_change_id, u"network_change_id", true) &&
-                xchanges[i2]->getIntAttribute<uint8_t>(ch.network_change_version, u"network_change_version", true) &&
-                xchanges[i2]->getDateTimeAttribute(ch.start_time_of_change, u"start_time_of_change", true) &&
-                xchanges[i2]->getTimeAttribute(ch.change_duration, u"change_duration", true) &&
-                xchanges[i2]->getIntAttribute<uint8_t>(ch.receiver_category, u"receiver_category", true, 0, 0x00, 0x07) &&
-                xchanges[i2]->getIntAttribute<uint8_t>(ch.change_type, u"change_type", true, 0, 0x00, 0x0F) &&
-                xchanges[i2]->getIntAttribute<uint8_t>(ch.message_id, u"message_id", true) &&
-                xchanges[i2]->getOptionalIntAttribute<uint16_t>(ch.invariant_ts_tsid, u"invariant_ts_tsid") &&
-                xchanges[i2]->getOptionalIntAttribute<uint16_t>(ch.invariant_ts_onid, u"invariant_ts_onid");
-            if (_is_valid) {
-                cell.changes.push_back(ch);
-            }
+            ok = xchanges[i2]->getIntAttribute<uint8_t>(ch.network_change_id, u"network_change_id", true) &&
+                 xchanges[i2]->getIntAttribute<uint8_t>(ch.network_change_version, u"network_change_version", true) &&
+                 xchanges[i2]->getDateTimeAttribute(ch.start_time_of_change, u"start_time_of_change", true) &&
+                 xchanges[i2]->getTimeAttribute(ch.change_duration, u"change_duration", true) &&
+                 xchanges[i2]->getIntAttribute<uint8_t>(ch.receiver_category, u"receiver_category", true, 0, 0x00, 0x07) &&
+                 xchanges[i2]->getIntAttribute<uint8_t>(ch.change_type, u"change_type", true, 0, 0x00, 0x0F) &&
+                 xchanges[i2]->getIntAttribute<uint8_t>(ch.message_id, u"message_id", true) &&
+                 xchanges[i2]->getOptionalIntAttribute<uint16_t>(ch.invariant_ts_tsid, u"invariant_ts_tsid") &&
+                 xchanges[i2]->getOptionalIntAttribute<uint16_t>(ch.invariant_ts_onid, u"invariant_ts_onid");
+            cell.changes.push_back(ch);
         }
-        if (_is_valid) {
-            cells.push_back(cell);
-        }
+        cells.push_back(cell);
     }
+    return ok;
 }

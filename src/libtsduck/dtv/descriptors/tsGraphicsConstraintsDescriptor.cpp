@@ -30,18 +30,18 @@
 #include "tsGraphicsConstraintsDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"graphics_constraints_descriptor"
+#define MY_CLASS ts::GraphicsConstraintsDescriptor
 #define MY_DID ts::DID_AIT_GRAPHICS_CONST
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::GraphicsConstraintsDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::GraphicsConstraintsDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::GraphicsConstraintsDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,13 +55,20 @@ ts::GraphicsConstraintsDescriptor::GraphicsConstraintsDescriptor() :
     handles_externally_controlled_video(false),
     graphics_configuration()
 {
-    _is_valid = true;
 }
 
 ts::GraphicsConstraintsDescriptor::GraphicsConstraintsDescriptor(DuckContext& duck, const Descriptor& desc) :
     GraphicsConstraintsDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::GraphicsConstraintsDescriptor::clearContent()
+{
+    can_run_without_visible_ui = false;
+    handles_configuration_changed = false;
+    handles_externally_controlled_video = false;
+    graphics_configuration.clear();
 }
 
 
@@ -91,7 +98,7 @@ void ts::GraphicsConstraintsDescriptor::deserialize(DuckContext& duck, const Des
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         can_run_without_visible_ui = (data[0] & 0x04) != 0;
@@ -108,21 +115,19 @@ void ts::GraphicsConstraintsDescriptor::deserialize(DuckContext& duck, const Des
 
 void ts::GraphicsConstraintsDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
         strm << margin << "Can run without visible UI: " << UString::TrueFalse((data[0] & 0x04) != 0) << std::endl
              << margin << "Handles configuration changed: " << UString::TrueFalse((data[0] & 0x02) != 0) << std::endl
              << margin << "Handles externally controlled video: " << UString::TrueFalse((data[0] & 0x01) != 0) << std::endl;
-        if (size > 1) {
-            strm << margin << "Graphics configuration bytes:" << std::endl
-                 << UString::Dump(data + 1, size -1, UString::HEXA | UString::ASCII, indent + 2);
-        }
-        size = 0;
+        display.displayPrivateData(u"Graphics configuration", data + 1, size - 1, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 
@@ -136,7 +141,7 @@ void ts::GraphicsConstraintsDescriptor::buildXML(DuckContext& duck, xml::Element
     root->setBoolAttribute(u"handles_configuration_changed", handles_configuration_changed);
     root->setBoolAttribute(u"handles_externally_controlled_video", handles_externally_controlled_video);
     if (!graphics_configuration.empty()) {
-        root->addElement(u"graphics_configuration")->addHexaText(graphics_configuration);
+        root->addHexaTextChild(u"graphics_configuration", graphics_configuration);
     }
 }
 
@@ -145,12 +150,10 @@ void ts::GraphicsConstraintsDescriptor::buildXML(DuckContext& duck, xml::Element
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::GraphicsConstraintsDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::GraphicsConstraintsDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(can_run_without_visible_ui, u"can_run_without_visible_ui", true) &&
-        element->getBoolAttribute(handles_configuration_changed, u"handles_configuration_changed", true) &&
-        element->getBoolAttribute(handles_externally_controlled_video, u"handles_externally_controlled_video", true) &&
-        element->getHexaTextChild(graphics_configuration, u"graphics_configuration", false, 0, MAX_DESCRIPTOR_SIZE - 1);
+    return element->getBoolAttribute(can_run_without_visible_ui, u"can_run_without_visible_ui", true) &&
+           element->getBoolAttribute(handles_configuration_changed, u"handles_configuration_changed", true) &&
+           element->getBoolAttribute(handles_externally_controlled_video, u"handles_externally_controlled_video", true) &&
+           element->getHexaTextChild(graphics_configuration, u"graphics_configuration", false, 0, MAX_DESCRIPTOR_SIZE - 1);
 }

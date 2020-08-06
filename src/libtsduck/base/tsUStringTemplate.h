@@ -139,11 +139,10 @@ ts::UString::UString(const std::array<CHARTYPE, SIZE>& arr, const allocator_type
 //----------------------------------------------------------------------------
 
 template <class CONTAINER>
-void ts::UString::split(CONTAINER& container, UChar separator, bool trimSpaces, bool removeEmpty) const
+void ts::UString::splitAppend(CONTAINER& container, UChar separator, bool trimSpaces, bool removeEmpty) const
 {
     const UChar* sep = nullptr;
     const UChar* input = c_str();
-    container.clear();
 
     do {
         // Locate next separator
@@ -168,11 +167,10 @@ void ts::UString::split(CONTAINER& container, UChar separator, bool trimSpaces, 
 //----------------------------------------------------------------------------
 
 template <class CONTAINER>
-void ts::UString::splitShellStyle(CONTAINER& container) const
+void ts::UString::splitShellStyleAppend(CONTAINER& container) const
 {
     const size_t end = this->size();
     size_t pos = 0;
-    container.clear();
 
     // Loop on all arguments.
     while (pos < end) {
@@ -217,11 +215,10 @@ void ts::UString::splitShellStyle(CONTAINER& container) const
 //----------------------------------------------------------------------------
 
 template <class CONTAINER>
-void ts::UString::splitBlocks(CONTAINER& container, UChar startWith, UChar endWith, bool trimSpaces) const
+void ts::UString::splitBlocksAppend(CONTAINER& container, UChar startWith, UChar endWith, bool trimSpaces) const
 {
     const UChar *sep = nullptr;
     const UChar* input = c_str();
-    container.clear();
 
     do {
         int blocksStillOpen = 0;
@@ -263,11 +260,8 @@ void ts::UString::splitBlocks(CONTAINER& container, UChar startWith, UChar endWi
 //----------------------------------------------------------------------------
 
 template <class CONTAINER>
-void ts::UString::splitLines(CONTAINER& lines, size_t maxWidth, const UString& otherSeparators, const UString& nextMargin, bool forceSplit) const
+void ts::UString::splitLinesAppend(CONTAINER& lines, size_t maxWidth, const UString& otherSeparators, const UString& nextMargin, bool forceSplit) const
 {
-    // Cleanup container
-    lines.clear();
-
     // If line smaller than max size or next margin too wide, return one line
     if (length() <= maxWidth || nextMargin.length() >= maxWidth) {
         lines.push_back(*this);
@@ -301,9 +295,16 @@ void ts::UString::splitLines(CONTAINER& lines, size_t maxWidth, const UString& o
         }
         // Perform line cut if necessary.
         if (cut) {
-            lines.push_back((marginLength == 0 ? UString() : nextMargin) + substr(start, eol - start));
-            marginLength = nextMargin.length();
+            // Add current line.
+            UString line;
+            if (marginLength > 0) {
+                line.append(nextMargin);
+            }
+            line.append(substr(start, eol - start));
+            line.trim(false, true); // trim trailing spaces
+            lines.push_back(line);
             // Start new line, skip leading spaces
+            marginLength = nextMargin.length();
             start = eol < length() && at(eol) == LINE_FEED ? eol + 1 : eol;
             while (start < length() && IsSpace(at(start)) && at(start) != LINE_FEED) {
                 start++;

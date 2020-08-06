@@ -33,50 +33,36 @@
 //----------------------------------------------------------------------------
 
 #pragma once
+#include "tstsswitchPluginExecutor.h"
 #include "tsInputSwitcherArgs.h"
-#include "tsPluginThread.h"
+#include "tsInputPlugin.h"
 #include "tsMutex.h"
 #include "tsCondition.h"
+#include "tsMonotonic.h"
 
 namespace ts {
-    //!
-    //! Input switch (tsswitch) namespace.
-    //!
     namespace tsswitch {
-
-        class Core;
-        class Options;
-
         //!
         //! Execution context of a tsswitch input plugin.
         //! @ingroup plugin
         //!
-        class InputExecutor : public PluginThread
+        class InputExecutor : public PluginExecutor
         {
             TS_NOBUILD_NOCOPY(InputExecutor);
         public:
             //!
             //! Constructor.
+            //! @param [in] opt Command line options.
+            //! @param [in] handlers Registry of event handlers.
             //! @param [in] index Input plugin index.
             //! @param [in,out] core Command core instance.
-            //! @param [in] opt Command line options.
             //! @param [in,out] log Log report.
             //!
-            InputExecutor(size_t index, Core& core, const InputSwitcherArgs& opt, Report& log);
-
-            //!
-            //! Destructor.
-            //!
-            virtual ~InputExecutor();
-
-            //!
-            //! Access the shared library API.
-            //! @return Address of the plugin interface.
-            //!
-            InputPlugin* plugin() const
-            {
-                return _input;
-            }
+            InputExecutor(const InputSwitcherArgs& opt,
+                          const PluginEventHandlerRegistry& handlers,
+                          size_t index,
+                          Core& core,
+                          Report& log);
 
             //!
             //! Tell the input executor thread to start an input session.
@@ -89,6 +75,14 @@ namespace ts {
             //! The thread is not terminated. It waits for another session.
             //!
             void stopInput();
+
+            //!
+            //! Abort the input operation currently in progress in the plugin.
+            //! This is a relay to InputPlugin::abortInput().
+            //! @return True when the operation was properly handled. False in case
+            //! of fatal error or if not supported by the plugin.
+            //!
+            bool abortInput();
 
             //!
             //! Notify the input executor thread that it becomes or is no longer the current input plugin.
@@ -121,28 +115,24 @@ namespace ts {
             //!
             void freeOutput(size_t count);
 
-            // Implementation of TSP. We do not use "joint termination" in tsswitch.
-            virtual void useJointTermination(bool) override;
-            virtual void jointTerminate() override;
-            virtual bool useJointTermination() const override;
-            virtual bool thisJointTerminated() const override;
+            // Implementation of TSP.
+            virtual size_t pluginIndex() const override;
 
         private:
-            Core&          _core;             // Application core.
-            const InputSwitcherArgs& _opt;    // Command line options.
-            InputPlugin*   _input;            // Plugin API.
-            const size_t   _pluginIndex;      // Index of this input plugin.
-            TSPacketVector _buffer;           // Packet buffer.
-            TSPacketMetadataVector _metadata; // Packet metadata.
-            Mutex          _mutex;            // Mutex to protect all subsequent fields.
-            Condition      _todo;             // Condition to signal something to do.
-            bool           _isCurrent;        // This plugin is the current input one.
-            bool           _outputInUse;      // The output part of the buffer is currently in use by the output plugin.
-            bool           _startRequest;     // Start input requested.
-            bool           _stopRequest;      // Stop input requested.
-            bool           _terminated;       // Terminate thread.
-            size_t         _outFirst;         // Index of first packet to output in _buffer.
-            size_t         _outCount;         // Number of packets to output, not always contiguous, may wrap up.
+            InputPlugin*             _input;         // Plugin API.
+            const size_t             _pluginIndex;   // Index of this input plugin.
+            TSPacketVector           _buffer;        // Packet buffer.
+            TSPacketMetadataVector   _metadata;      // Packet metadata.
+            Mutex                    _mutex;         // Mutex to protect all subsequent fields.
+            Condition                _todo;          // Condition to signal something to do.
+            bool                     _isCurrent;     // This plugin is the current input one.
+            bool                     _outputInUse;   // The output part of the buffer is currently in use by the output plugin.
+            bool                     _startRequest;  // Start input requested.
+            bool                     _stopRequest;   // Stop input requested.
+            bool                     _terminated;    // Terminate thread.
+            size_t                   _outFirst;      // Index of first packet to output in _buffer.
+            size_t                   _outCount;      // Number of packets to output, not always contiguous, may wrap up.
+            Monotonic                _start_time;    // Creation time in a monotonic clock.
 
             // Implementation of Thread.
             virtual void main() override;

@@ -30,18 +30,17 @@
 #include "tsNIT.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"NIT"
-#define MY_STD ts::STD_DVB
+#define MY_CLASS ts::NIT
+#define MY_PID ts::PID_NIT
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::NIT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::NIT, ts::TID_NIT_ACT, MY_STD);
-TS_ID_TABLE_FACTORY(ts::NIT, ts::TID_NIT_OTH, MY_STD);
-TS_FACTORY_REGISTER(ts::NIT::DisplaySection, ts::TID_NIT_ACT);
-TS_FACTORY_REGISTER(ts::NIT::DisplaySection, ts::TID_NIT_OTH);
+TS_REGISTER_TABLE(MY_CLASS, {ts::TID_NIT_ACT, ts::TID_NIT_OTH}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection, nullptr, {MY_PID});
 
 
 //----------------------------------------------------------------------------
@@ -92,8 +91,10 @@ bool ts::NIT::isValidTableId(TID tid) const
 
 void ts::NIT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -168,16 +169,11 @@ void ts::NIT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::NIT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::NIT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    descs.clear();
-    transports.clear();
-
     xml::ElementVector children;
     bool actual = true;
-
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
         element->getIntAttribute<uint16_t>(network_id, u"network_id", true, 0, 0x0000, 0xFFFF) &&
@@ -186,17 +182,17 @@ void ts::NIT::fromXML(DuckContext& duck, const xml::Element* element)
 
     setActual(actual);
 
-    for (size_t index = 0; _is_valid && index < children.size(); ++index) {
+    for (size_t index = 0; ok && index < children.size(); ++index) {
         TransportStreamId ts;
-        _is_valid =
-            children[index]->getIntAttribute<uint16_t>(ts.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
-            children[index]->getIntAttribute<uint16_t>(ts.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
-            transports[ts].descs.fromXML(duck, children[index]);
-        if (_is_valid && children[index]->hasAttribute(u"preferred_section")) {
-            _is_valid = children[index]->getIntAttribute<int>(transports[ts].preferred_section, u"preferred_section", true, 0, 0, 255);
+        ok = children[index]->getIntAttribute<uint16_t>(ts.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntAttribute<uint16_t>(ts.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
+             transports[ts].descs.fromXML(duck, children[index]);
+        if (ok && children[index]->hasAttribute(u"preferred_section")) {
+            ok = children[index]->getIntAttribute<int>(transports[ts].preferred_section, u"preferred_section", true, 0, 0, 255);
         }
         else {
             transports[ts].preferred_section = -1;
         }
     }
+    return ok;
 }

@@ -26,24 +26,21 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a Conditional Access Table (CAT)
-//
-//----------------------------------------------------------------------------
 
 #include "tsCAT.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"CAT"
+#define MY_CLASS ts::CAT
 #define MY_TID ts::TID_CAT
-#define MY_STD ts::STD_MPEG
+#define MY_PID ts::PID_CAT
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_TABLE_FACTORY(ts::CAT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::CAT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::CAT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection, nullptr, {MY_PID});
 
 
 //----------------------------------------------------------------------------
@@ -67,4 +64,14 @@ ts::CAT::CAT(const ts::CAT& other) :
 
 ts::CAT::~CAT()
 {
+}
+
+
+//----------------------------------------------------------------------------
+// Inherited public methods
+//----------------------------------------------------------------------------
+
+bool ts::CAT::isPrivate() const
+{
+    return false; // MPEG-defined
 }

@@ -30,18 +30,18 @@
 #include "tsApplicationDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"application_descriptor"
+#define MY_CLASS ts::ApplicationDescriptor
 #define MY_DID ts::DID_AIT_APPLICATION
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::ApplicationDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::ApplicationDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::ApplicationDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -56,7 +56,15 @@ ts::ApplicationDescriptor::ApplicationDescriptor() :
     application_priority(0),
     transport_protocol_labels()
 {
-    _is_valid = true;
+}
+
+void ts::ApplicationDescriptor::clearContent()
+{
+    profiles.clear();
+    service_bound = false;
+    visibility = 0;
+    application_priority = 0;
+    transport_protocol_labels.clear();
 }
 
 ts::ApplicationDescriptor::ApplicationDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -107,7 +115,7 @@ void ts::ApplicationDescriptor::deserialize(DuckContext& duck, const Descriptor&
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
     size_t profiles_count = 0;
 
     if (_is_valid) {
@@ -140,7 +148,8 @@ void ts::ApplicationDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::ApplicationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -191,41 +200,36 @@ void ts::ApplicationDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ApplicationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    profiles.clear();
-    transport_protocol_labels.clear();
-
     xml::ElementVector prof;
     xml::ElementVector label;
-
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getBoolAttribute(service_bound, u"service_bound", true) &&
         element->getIntAttribute<uint8_t>(visibility, u"visibility", true, 0, 0, 3) &&
         element->getIntAttribute<uint8_t>(application_priority, u"application_priority", true) &&
         element->getChildren(prof, u"profile") &&
         element->getChildren(label, u"transport_protocol");
 
-    for (size_t i = 0; _is_valid && i < prof.size(); ++i) {
+    for (size_t i = 0; ok && i < prof.size(); ++i) {
         Profile p;
         UString version;
-        _is_valid =
-            prof[i]->getIntAttribute<uint16_t>(p.application_profile, u"application_profile", true) &&
-            prof[i]->getAttribute(version, u"version", true);
-        if (_is_valid && !version.scan(u"%d.%d.%d", {&p.version_major, &p.version_minor, &p.version_micro})) {
-            _is_valid = false;
+        ok = prof[i]->getIntAttribute<uint16_t>(p.application_profile, u"application_profile", true) &&
+             prof[i]->getAttribute(version, u"version", true);
+        if (ok && !version.scan(u"%d.%d.%d", {&p.version_major, &p.version_minor, &p.version_micro})) {
+            ok = false;
             prof[i]->report().error(u"invalid version '%s' in <%s>, line %d, use 'major.minor.micro'", {version, prof[i]->name(), prof[i]->lineNumber()});
         }
-        if (_is_valid) {
+        if (ok) {
             profiles.push_back(p);
         }
     }
-    for (size_t i = 0; _is_valid && i < label.size(); ++i) {
+    for (size_t i = 0; ok && i < label.size(); ++i) {
         uint8_t l;
-        _is_valid = label[i]->getIntAttribute<uint8_t>(l, u"label", true);
-        if (_is_valid) {
+        ok = label[i]->getIntAttribute<uint8_t>(l, u"label", true);
+        if (ok) {
             transport_protocol_labels.push_back(l);
         }
     }
+    return ok;
 }

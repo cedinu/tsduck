@@ -33,17 +33,18 @@
 #include "tsBinaryTable.h"
 #include "tsStreamIdentifierDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"selection_information_table"
+#define MY_CLASS ts::SelectionInformationTable
 #define MY_TID ts::TID_SIT
-#define MY_STD ts::STD_DVB
+#define MY_PID ts::PID_SIT
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::SelectionInformationTable, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::SelectionInformationTable, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::SelectionInformationTable::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection, nullptr, {MY_PID});
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +56,6 @@ ts::SelectionInformationTable::SelectionInformationTable(uint8_t version_, bool 
     descs(this),
     services(this)
 {
-    _is_valid = true;
 }
 
 ts::SelectionInformationTable::SelectionInformationTable(const SelectionInformationTable& other) :
@@ -69,6 +69,27 @@ ts::SelectionInformationTable::SelectionInformationTable(DuckContext& duck, cons
     SelectionInformationTable()
 {
     deserialize(duck, table);
+}
+
+
+//----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::SelectionInformationTable::tableIdExtension() const
+{
+    return 0xFFFF;
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::SelectionInformationTable::clearContent()
+{
+    descs.clear();
+    services.clear();
 }
 
 
@@ -133,7 +154,7 @@ void ts::SelectionInformationTable::serializeContent(DuckContext& duck, BinaryTa
 {
     // Build the section. Note that a Selection Information Table is not allowed
     // to use more than one section, see ETSI EN 300 468, 7.1.2.
-    uint8_t payload[MAX_PSI_LONG_SECTION_PAYLOAD_SIZE];
+    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
     uint8_t* data = payload;
     size_t remain = sizeof(payload);
 
@@ -176,8 +197,10 @@ void ts::SelectionInformationTable::serializeContent(DuckContext& duck, BinaryTa
 
 void ts::SelectionInformationTable::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -238,23 +261,19 @@ void ts::SelectionInformationTable::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SelectionInformationTable::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SelectionInformationTable::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    descs.clear();
-    services.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
         descs.fromXML(duck, children, element, u"service");
 
-    for (size_t index = 0; _is_valid && index < children.size(); ++index) {
+    for (size_t index = 0; ok && index < children.size(); ++index) {
         uint16_t id = 0;
-        _is_valid =
-            children[index]->getIntAttribute<uint16_t>(id, u"service_id", true) &&
-            children[index]->getIntEnumAttribute<uint8_t>(services[id].running_status, RST::RunningStatusNames, u"running_status", true);
-            services[id].descs.fromXML(duck, children[index]);
+        ok = children[index]->getIntAttribute<uint16_t>(id, u"service_id", true) &&
+             children[index]->getIntEnumAttribute<uint8_t>(services[id].running_status, RST::RunningStatusNames, u"running_status", true);
+             services[id].descs.fromXML(duck, children[index]);
     }
+    return ok;
 }

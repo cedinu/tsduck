@@ -30,22 +30,22 @@
 #include "tsApplicationStorageDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"application_storage_descriptor"
+#define MY_CLASS ts::ApplicationStorageDescriptor
 #define MY_DID ts::DID_AIT_APP_STORAGE
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::ApplicationStorageDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::ApplicationStorageDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::ApplicationStorageDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::ApplicationStorageDescriptor::ApplicationStorageDescriptor() :
@@ -57,13 +57,17 @@ ts::ApplicationStorageDescriptor::ApplicationStorageDescriptor() :
     version(0),
     priority(0)
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::ApplicationStorageDescriptor::clearContent()
+{
+    storage_property = 0;
+    not_launchable_from_broadcast = false;
+    launchable_completely_from_cache = false;
+    is_launchable_with_older_version = false;
+    version = 0;
+    priority = 0;
+}
 
 ts::ApplicationStorageDescriptor::ApplicationStorageDescriptor(DuckContext& duck, const Descriptor& desc) :
     ApplicationStorageDescriptor()
@@ -99,7 +103,7 @@ void ts::ApplicationStorageDescriptor::deserialize(DuckContext& duck, const Desc
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 7;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 7;
 
     if (_is_valid) {
         storage_property = data[0];
@@ -118,7 +122,8 @@ void ts::ApplicationStorageDescriptor::deserialize(DuckContext& duck, const Desc
 
 void ts::ApplicationStorageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 7) {
@@ -155,14 +160,12 @@ void ts::ApplicationStorageDescriptor::buildXML(DuckContext& duck, xml::Element*
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationStorageDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ApplicationStorageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(storage_property, u"storage_property", true) &&
-        element->getBoolAttribute(not_launchable_from_broadcast, u"not_launchable_from_broadcast", true) &&
-        element->getBoolAttribute(launchable_completely_from_cache, u"launchable_completely_from_cache", true) &&
-        element->getBoolAttribute(is_launchable_with_older_version, u"is_launchable_with_older_version", true) &&
-        element->getIntAttribute<uint32_t>(version, u"version", true, 0, 0, 0x7FFFFFFF) &&
-        element->getIntAttribute<uint8_t>(priority, u"priority", true);
+    return element->getIntAttribute<uint8_t>(storage_property, u"storage_property", true) &&
+           element->getBoolAttribute(not_launchable_from_broadcast, u"not_launchable_from_broadcast", true) &&
+           element->getBoolAttribute(launchable_completely_from_cache, u"launchable_completely_from_cache", true) &&
+           element->getBoolAttribute(is_launchable_with_older_version, u"is_launchable_with_older_version", true) &&
+           element->getIntAttribute<uint32_t>(version, u"version", true, 0, 0, 0x7FFFFFFF) &&
+           element->getIntAttribute<uint8_t>(priority, u"priority", true);
 }

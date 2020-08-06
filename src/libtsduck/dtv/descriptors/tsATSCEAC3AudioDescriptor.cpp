@@ -30,19 +30,19 @@
 #include "tsATSCEAC3AudioDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"ATSC_EAC3_audio_descriptor"
+#define MY_CLASS ts::ATSCEAC3AudioDescriptor
 #define MY_DID ts::DID_ATSC_ENHANCED_AC3
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ATSCEAC3AudioDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ATSCEAC3AudioDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::ATSCEAC3AudioDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -69,7 +69,6 @@ ts::ATSCEAC3AudioDescriptor::ATSCEAC3AudioDescriptor() :
     substream3_lang(),
     additional_info()
 {
-    _is_valid = true;
 }
 
 ts::ATSCEAC3AudioDescriptor::ATSCEAC3AudioDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -83,19 +82,19 @@ ts::ATSCEAC3AudioDescriptor::ATSCEAC3AudioDescriptor(DuckContext& duck, const De
 // Clear the content of this object.
 //----------------------------------------------------------------------------
 
-void ts::ATSCEAC3AudioDescriptor::clear()
+void ts::ATSCEAC3AudioDescriptor::clearContent()
 {
     mixinfoexists = false;
     full_service = false;
     audio_service_type = 0;
     number_of_channels = 0;
-    bsid.reset();
-    priority.reset();
-    mainid.reset();
-    asvc.reset();
-    substream1.reset();
-    substream2.reset();
-    substream3.reset();
+    bsid.clear();
+    priority.clear();
+    mainid.clear();
+    asvc.clear();
+    substream1.clear();
+    substream2.clear();
+    substream3.clear();
     language.clear();
     language_2.clear();
     substream1_lang.clear();
@@ -172,7 +171,7 @@ void ts::ATSCEAC3AudioDescriptor::serialize(DuckContext& duck, Descriptor& desc)
 void ts::ATSCEAC3AudioDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
     clear();
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 2;
 
     if (!_is_valid) {
         return;
@@ -287,7 +286,8 @@ void ts::ATSCEAC3AudioDescriptor::DisplayDescriptor(TablesDisplay& display, DID 
 {
     if (size >= 2) {
 
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
 
         // Fixed initial size: 2 bytes.
@@ -360,8 +360,7 @@ void ts::ATSCEAC3AudioDescriptor::DisplayDescriptor(TablesDisplay& display, DID 
             data += 3; size -= 3;
         }
         if (size > 0) {
-            strm << margin << "Additional information:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
+            display.displayPrivateData(u"Additional information", data, size, indent);
             data += size; size = 0;
         }
     }
@@ -393,7 +392,7 @@ void ts::ATSCEAC3AudioDescriptor::buildXML(DuckContext& duck, xml::Element* root
     root->setAttribute(u"substream2_lang", substream2_lang, true);
     root->setAttribute(u"substream3_lang", substream3_lang, true);
     if (!additional_info.empty()) {
-        root->addElement(u"additional_info")->addHexaText(additional_info);
+        root->addHexaTextChild(u"additional_info", additional_info);
     }
 }
 
@@ -402,27 +401,23 @@ void ts::ATSCEAC3AudioDescriptor::buildXML(DuckContext& duck, xml::Element* root
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ATSCEAC3AudioDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ATSCEAC3AudioDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(mixinfoexists, u"mixinfoexists", true) &&
-        element->getBoolAttribute(full_service, u"full_service", true) &&
-        element->getIntAttribute<uint8_t>(audio_service_type, u"audio_service_type", true, 0, 0, 0x07) &&
-        element->getIntAttribute<uint8_t>(number_of_channels, u"number_of_channels", true, 0, 0, 0x07) &&
-        element->getOptionalIntAttribute<uint8_t>(bsid, u"bsid", 0, 0x1F) &&
-        element->getOptionalIntAttribute<uint8_t>(priority, u"priority", 0, 0x03) &&
-        element->getOptionalIntAttribute<uint8_t>(mainid, u"mainid", 0, 0x07) &&
-        element->getOptionalIntAttribute<uint8_t>(asvc, u"asvc") &&
-        element->getOptionalIntAttribute<uint8_t>(substream1, u"substream1") &&
-        element->getOptionalIntAttribute<uint8_t>(substream2, u"substream2") &&
-        element->getOptionalIntAttribute<uint8_t>(substream3, u"substream3") &&
-        element->getAttribute(language, u"language", false, UString(), 0, 3) &&
-        element->getAttribute(language_2, u"language_2", false, UString(), 0, 3) &&
-        element->getAttribute(substream1_lang, u"substream1_lang", false, UString(), 0, 3) &&
-        element->getAttribute(substream2_lang, u"substream2_lang", false, UString(), 0, 3) &&
-        element->getAttribute(substream3_lang, u"substream3_lang", false, UString(), 0, 3) &&
-        element->getHexaTextChild(additional_info, u"additional_info");
+    return  element->getBoolAttribute(mixinfoexists, u"mixinfoexists", true) &&
+            element->getBoolAttribute(full_service, u"full_service", true) &&
+            element->getIntAttribute<uint8_t>(audio_service_type, u"audio_service_type", true, 0, 0, 0x07) &&
+            element->getIntAttribute<uint8_t>(number_of_channels, u"number_of_channels", true, 0, 0, 0x07) &&
+            element->getOptionalIntAttribute<uint8_t>(bsid, u"bsid", 0, 0x1F) &&
+            element->getOptionalIntAttribute<uint8_t>(priority, u"priority", 0, 0x03) &&
+            element->getOptionalIntAttribute<uint8_t>(mainid, u"mainid", 0, 0x07) &&
+            element->getOptionalIntAttribute<uint8_t>(asvc, u"asvc") &&
+            element->getOptionalIntAttribute<uint8_t>(substream1, u"substream1") &&
+            element->getOptionalIntAttribute<uint8_t>(substream2, u"substream2") &&
+            element->getOptionalIntAttribute<uint8_t>(substream3, u"substream3") &&
+            element->getAttribute(language, u"language", false, UString(), 0, 3) &&
+            element->getAttribute(language_2, u"language_2", false, UString(), 0, 3) &&
+            element->getAttribute(substream1_lang, u"substream1_lang", false, UString(), 0, 3) &&
+            element->getAttribute(substream2_lang, u"substream2_lang", false, UString(), 0, 3) &&
+            element->getAttribute(substream3_lang, u"substream3_lang", false, UString(), 0, 3) &&
+            element->getHexaTextChild(additional_info, u"additional_info");
 }

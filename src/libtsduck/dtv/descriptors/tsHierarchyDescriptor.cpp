@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"hierarchy_descriptor"
+#define MY_CLASS ts::HierarchyDescriptor
 #define MY_DID ts::DID_HIERARCHY
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::HierarchyDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::HierarchyDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::HierarchyDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -59,7 +59,18 @@ ts::HierarchyDescriptor::HierarchyDescriptor() :
     hierarchy_embedded_layer_index(0),
     hierarchy_channel(0)
 {
-    _is_valid = true;
+}
+
+void ts::HierarchyDescriptor::clearContent()
+{
+    temporal_scalability = false;
+    spatial_scalability = false;
+    quality_scalability = false;
+    hierarchy_type = 0;
+    hierarchy_layer_index = 0;
+    tref_present = false;
+    hierarchy_embedded_layer_index = 0;
+    hierarchy_channel = 0;
 }
 
 ts::HierarchyDescriptor::HierarchyDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -99,7 +110,7 @@ void ts::HierarchyDescriptor::deserialize(DuckContext& duck, const Descriptor& d
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 4;
 
     if (_is_valid) {
         temporal_scalability = (data[0] & 0x40) != 0;
@@ -120,7 +131,8 @@ void ts::HierarchyDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 
 void ts::HierarchyDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
@@ -160,16 +172,14 @@ void ts::HierarchyDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::HierarchyDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::HierarchyDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(temporal_scalability, u"temporal_scalability", true) &&
-        element->getBoolAttribute(spatial_scalability, u"spatial_scalability", true) &&
-        element->getBoolAttribute(quality_scalability, u"quality_scalability", true) &&
-        element->getIntAttribute<uint8_t>(hierarchy_type, u"hierarchy_type", true, 0x00, 0x00, 0x0F) &&
-        element->getIntAttribute<uint8_t>(hierarchy_layer_index, u"hierarchy_layer_index", true, 0x00, 0x00, 0x3F) &&
-        element->getBoolAttribute(tref_present, u"tref_present", true) &&
-        element->getIntAttribute<uint8_t>(hierarchy_embedded_layer_index, u"hierarchy_embedded_layer_index", true, 0x00, 0x00, 0x3F) &&
-        element->getIntAttribute<uint8_t>(hierarchy_channel, u"hierarchy_channel", true, 0x00, 0x00, 0x3F);
+    return element->getBoolAttribute(temporal_scalability, u"temporal_scalability", true) &&
+           element->getBoolAttribute(spatial_scalability, u"spatial_scalability", true) &&
+           element->getBoolAttribute(quality_scalability, u"quality_scalability", true) &&
+           element->getIntAttribute<uint8_t>(hierarchy_type, u"hierarchy_type", true, 0x00, 0x00, 0x0F) &&
+           element->getIntAttribute<uint8_t>(hierarchy_layer_index, u"hierarchy_layer_index", true, 0x00, 0x00, 0x3F) &&
+           element->getBoolAttribute(tref_present, u"tref_present", true) &&
+           element->getIntAttribute<uint8_t>(hierarchy_embedded_layer_index, u"hierarchy_embedded_layer_index", true, 0x00, 0x00, 0x3F) &&
+           element->getIntAttribute<uint8_t>(hierarchy_channel, u"hierarchy_channel", true, 0x00, 0x00, 0x3F);
 }

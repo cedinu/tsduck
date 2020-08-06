@@ -28,8 +28,14 @@
 //----------------------------------------------------------------------------
 
 #include "tshlsInputPlugin.h"
+#include "tsPluginRepository.h"
 #include "tsSysUtils.h"
 TSDUCK_SOURCE;
+
+TS_REGISTER_INPUT_PLUGIN(u"hls", ts::hls::InputPlugin);
+
+// A dummy storage value to force inclusion of this module when using the static library.
+const int ts::hls::InputPlugin::REFERENCE = 0;
 
 #define DEFAULT_MAX_QUEUED_PACKETS  1000    // Default size in packet of the inter-thread queue.
 

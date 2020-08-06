@@ -28,6 +28,8 @@
 //----------------------------------------------------------------------------
 
 #include "tsAbstractSignalization.h"
+#include "tsDuckContext.h"
+#include "tsByteBlock.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
@@ -40,10 +42,11 @@ const ts::UChar* const ts::AbstractSignalization::XML_GENERIC_LONG_TABLE  = u"ge
 // Constructors, assignments and destructors.
 //----------------------------------------------------------------------------
 
-ts::AbstractSignalization::AbstractSignalization(const UChar* xml_name, Standards standards) :
+ts::AbstractSignalization::AbstractSignalization(const UChar* xml_name, Standards standards, const UChar* xml_legacy_name) :
     AbstractDefinedByStandards(),
+    _is_valid(true),
     _xml_name(xml_name),
-    _is_valid(false),
+    _xml_legacy_name(xml_legacy_name),
     _standards(standards)
 {
 }
@@ -87,16 +90,18 @@ ts::UString ts::AbstractSignalization::xmlName() const
 
 
 //----------------------------------------------------------------------------
-// Default helper method to convert this object to XML.
+// This method clears the content of the table or descriptor.
 //----------------------------------------------------------------------------
 
-void ts::AbstractSignalization::buildXML(DuckContext& duck, xml::Element* root) const
+void ts::AbstractSignalization::clear()
 {
+    _is_valid = true;
+    clearContent();
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML serialization and deserialization (default implementations).
 //----------------------------------------------------------------------------
 
 ts::xml::Element* ts::AbstractSignalization::toXML(DuckContext& duck, xml::Element* parent) const
@@ -108,12 +113,27 @@ ts::xml::Element* ts::AbstractSignalization::toXML(DuckContext& duck, xml::Eleme
     return root;
 }
 
+void ts::AbstractSignalization::fromXML(DuckContext& duck, const xml::Element* element)
+{
+    // Make sure the object is cleared before analyzing the XML.
+    clear();
+
+    // The object is valid if the XML node name is correct and the subclass correctly analyzes the XML node.
+    _is_valid = checkXMLName(element) && analyzeXML(duck, element);
+
+    // If the object is invalid, clear it again to avoid letting partial objects being used.
+    if (!_is_valid) {
+        clear();
+        _is_valid = false; // was set to true by clear()
+    }
+}
+
 
 //----------------------------------------------------------------------------
 // Check that an XML element has the right name for this table.
 //----------------------------------------------------------------------------
 
-bool ts::AbstractSignalization::checkXMLName(const xml::Element* element, const UChar* legacy_name) const
+bool ts::AbstractSignalization::checkXMLName(const xml::Element* element) const
 {
     if (element == nullptr) {
         return false;
@@ -121,7 +141,7 @@ bool ts::AbstractSignalization::checkXMLName(const xml::Element* element, const 
     else if (element->name().similar(_xml_name)) {
         return true;
     }
-    else if (legacy_name != nullptr && element->name().similar(legacy_name)) {
+    else if (_xml_legacy_name != nullptr && element->name().similar(_xml_legacy_name)) {
         return true;
     }
     else {
@@ -207,7 +227,7 @@ bool ts::AbstractSignalization::deserializeBool(bool& value, const uint8_t*& dat
 
 bool ts::AbstractSignalization::SerializeFixedLength(DuckContext& duck, ByteBlock& bb, const UString& str, const size_t size)
 {
-    const ByteBlock dvb(duck.toDVB(str));
+    const ByteBlock dvb(duck.encoded(str));
     if (dvb.size() == size) {
         bb.append(dvb);
         return true;

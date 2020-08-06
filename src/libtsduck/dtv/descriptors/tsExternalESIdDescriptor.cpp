@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"external_ES_ID_descriptor"
+#define MY_CLASS ts::ExternalESIdDescriptor
 #define MY_DID ts::DID_EXT_ES_ID
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ExternalESIdDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ExternalESIdDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ExternalESIdDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,11 @@ ts::ExternalESIdDescriptor::ExternalESIdDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     external_ES_ID(0)
 {
-    _is_valid = true;
+}
+
+void ts::ExternalESIdDescriptor::clearContent()
+{
+    external_ES_ID = 0;
 }
 
 ts::ExternalESIdDescriptor::ExternalESIdDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -83,7 +87,7 @@ void ts::ExternalESIdDescriptor::deserialize(DuckContext& duck, const Descriptor
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 2;
 
     if (_is_valid) {
         external_ES_ID = GetUInt16(data);
@@ -97,7 +101,8 @@ void ts::ExternalESIdDescriptor::deserialize(DuckContext& duck, const Descriptor
 
 void ts::ExternalESIdDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 2) {
@@ -111,7 +116,7 @@ void ts::ExternalESIdDescriptor::DisplayDescriptor(TablesDisplay& display, DID d
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::ExternalESIdDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -119,14 +124,7 @@ void ts::ExternalESIdDescriptor::buildXML(DuckContext& duck, xml::Element* root)
     root->setIntAttribute(u"external_ES_ID", external_ES_ID, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::ExternalESIdDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ExternalESIdDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(external_ES_ID, u"external_ES_ID", true);
+    return element->getIntAttribute<uint16_t>(external_ES_ID, u"external_ES_ID", true);
 }

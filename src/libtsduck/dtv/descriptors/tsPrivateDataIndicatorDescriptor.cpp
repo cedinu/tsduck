@@ -30,39 +30,38 @@
 #include "tsPrivateDataIndicatorDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"private_data_indicator_descriptor"
+#define MY_CLASS ts::PrivateDataIndicatorDescriptor
 #define MY_DID ts::DID_PRIV_DATA_IND
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::PrivateDataIndicatorDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::PrivateDataIndicatorDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::PrivateDataIndicatorDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::PrivateDataIndicatorDescriptor::PrivateDataIndicatorDescriptor(uint32_t pdi) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     private_data_indicator(pdi)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::PrivateDataIndicatorDescriptor::PrivateDataIndicatorDescriptor(DuckContext& duck, const Descriptor& desc) :
     PrivateDataIndicatorDescriptor(0)
 {
     deserialize(duck, desc);
+}
+
+void ts::PrivateDataIndicatorDescriptor::clearContent()
+{
+    private_data_indicator = 0;
 }
 
 
@@ -84,7 +83,7 @@ void ts::PrivateDataIndicatorDescriptor::serialize(DuckContext& duck, Descriptor
 
 void ts::PrivateDataIndicatorDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 4;
 
     if (_is_valid) {
         private_data_indicator = GetUInt32(desc.payload());
@@ -98,13 +97,14 @@ void ts::PrivateDataIndicatorDescriptor::deserialize(DuckContext& duck, const De
 
 void ts::PrivateDataIndicatorDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
         // Sometimes, the indicator is made of ASCII characters. Try to display them.
         strm << margin << UString::Format(u"Private data indicator: 0x%X", {GetUInt32(data)});
-        display.duck().displayIfASCII(data, 4, u" (\"", u"\")");
+        duck.displayIfASCII(data, 4, u" (\"", u"\")");
         strm << std::endl;
         data += 4; size -= 4;
     }
@@ -127,9 +127,7 @@ void ts::PrivateDataIndicatorDescriptor::buildXML(DuckContext& duck, xml::Elemen
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::PrivateDataIndicatorDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::PrivateDataIndicatorDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(private_data_indicator, u"private_data_indicator", true);
+    return element->getIntAttribute<uint32_t>(private_data_indicator, u"private_data_indicator", true);
 }

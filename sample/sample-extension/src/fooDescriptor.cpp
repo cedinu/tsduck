@@ -2,36 +2,25 @@
 // Definition of the foo_descriptor
 
 #include "fooDescriptor.h"
-#include "tsDescriptor.h"
-#include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
-#include "tsxmlElement.h"
 
 #define MY_XML_NAME u"foo_descriptor"  // XML name is <foo_descriptor>
+#define MY_CLASS foo::FooDescriptor    // Fully qualified class name
 #define MY_DID foo::DID_FOO            // Descriptor id
-#define MY_STD ts::STD_NONE            // Not defined in any standard.
+#define MY_STD ts::Standards::NONE     // Not defined in any standard.
 
 // This is a non-DVB descriptor with DID >= 0x80 => must set PDS to zero in EDID.
-TS_XML_DESCRIPTOR_FACTORY(foo::FooDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(foo::FooDescriptor, ts::EDID::Private(MY_DID, 0));
-TS_FACTORY_REGISTER(foo::FooDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, 0));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, 0), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 foo::FooDescriptor::FooDescriptor(const ts::UString& name_) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     name(name_)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 foo::FooDescriptor::FooDescriptor(ts::DuckContext& duck, const ts::Descriptor& desc) :
     ts::AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
@@ -42,13 +31,23 @@ foo::FooDescriptor::FooDescriptor(ts::DuckContext& duck, const ts::Descriptor& d
 
 
 //----------------------------------------------------------------------------
+// Clear content, return to initial values
+//----------------------------------------------------------------------------
+
+void foo::FooDescriptor::clearContent()
+{
+    name.clear();
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
 void foo::FooDescriptor::serialize(ts::DuckContext& duck, ts::Descriptor& desc) const
 {
     ts::ByteBlockPtr bbp(serializeStart());
-    bbp->append(duck.toDVB(name));
+    bbp->append(duck.encoded(name));
     serializeEnd(desc, bbp);
 }
 
@@ -59,13 +58,12 @@ void foo::FooDescriptor::serialize(ts::DuckContext& duck, ts::Descriptor& desc) 
 
 void foo::FooDescriptor::deserialize(ts::DuckContext& duck, const ts::Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    clear();
+
+    _is_valid = desc.isValid() && desc.tag() == tag();
 
     if (_is_valid) {
-        name.assign(duck.fromDVB(desc.payload(), desc.payloadSize()));
-    }
-    else {
-        name.clear();
+        duck.decode(name, desc.payload(), desc.payloadSize());
     }
 }
 
@@ -76,9 +74,11 @@ void foo::FooDescriptor::deserialize(ts::DuckContext& duck, const ts::Descriptor
 
 void foo::FooDescriptor::DisplayDescriptor(ts::TablesDisplay& display, ts::DID did, const uint8_t* payload, size_t size, int indent, ts::TID tid, ts::PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    ts::DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
-    strm << margin << "Name: \"" << display.duck().fromDVB(payload, size) << "\"" << std::endl;
+
+    strm << margin << "Name: \"" << duck.decoded(payload, size) << "\"" << std::endl;
 }
 
 
@@ -96,9 +96,7 @@ void foo::FooDescriptor::buildXML(ts::DuckContext& duck, ts::xml::Element* root)
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void foo::FooDescriptor::fromXML(ts::DuckContext& duck, const ts::xml::Element* element)
+bool foo::FooDescriptor::analyzeXML(ts::DuckContext& duck, const ts::xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(name, u"name", true, u"", 0, ts::MAX_DESCRIPTOR_SIZE - 2);
+    return element->getAttribute(name, u"name", true, u"", 0, ts::MAX_DESCRIPTOR_SIZE - 2);
 }

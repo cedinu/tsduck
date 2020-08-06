@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"service_move_descriptor"
+#define MY_CLASS ts::ServiceMoveDescriptor
 #define MY_DID ts::DID_SERVICE_MOVE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ServiceMoveDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ServiceMoveDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ServiceMoveDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,13 +54,19 @@ ts::ServiceMoveDescriptor::ServiceMoveDescriptor() :
     new_transport_stream_id(0),
     new_service_id(0)
 {
-    _is_valid = true;
 }
 
 ts::ServiceMoveDescriptor::ServiceMoveDescriptor(DuckContext& duck, const Descriptor& desc) :
     ServiceMoveDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::ServiceMoveDescriptor::clearContent()
+{
+    new_original_network_id = 0;
+    new_transport_stream_id = 0;
+    new_service_id = 0;
 }
 
 
@@ -84,7 +90,7 @@ void ts::ServiceMoveDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 
 void ts::ServiceMoveDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 6;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 6;
 
     if (_is_valid) {
         const uint8_t* data = desc.payload();
@@ -101,7 +107,8 @@ void ts::ServiceMoveDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::ServiceMoveDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 6) {
@@ -131,11 +138,9 @@ void ts::ServiceMoveDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceMoveDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ServiceMoveDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(new_original_network_id, u"new_original_network_id", true) &&
-        element->getIntAttribute<uint16_t>(new_transport_stream_id, u"new_transport_stream_id", true) &&
-        element->getIntAttribute<uint16_t>(new_service_id, u"new_service_id", true);
+    return element->getIntAttribute<uint16_t>(new_original_network_id, u"new_original_network_id", true) &&
+           element->getIntAttribute<uint16_t>(new_transport_stream_id, u"new_transport_stream_id", true) &&
+           element->getIntAttribute<uint16_t>(new_service_id, u"new_service_id", true);
 }

@@ -26,26 +26,22 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of an extended_event_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsExtendedEventDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"extended_event_descriptor"
+#define MY_CLASS ts::ExtendedEventDescriptor
 #define MY_DID ts::DID_EXTENDED_EVENT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ExtendedEventDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ExtendedEventDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ExtendedEventDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -60,7 +56,6 @@ ts::ExtendedEventDescriptor::ExtendedEventDescriptor() :
     entries(),
     text()
 {
-    _is_valid = true;
 }
 
 ts::ExtendedEventDescriptor::ExtendedEventDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -69,13 +64,22 @@ ts::ExtendedEventDescriptor::ExtendedEventDescriptor(DuckContext& duck, const De
     deserialize(duck, desc);
 }
 
+void ts::ExtendedEventDescriptor::clearContent()
+{
+    descriptor_number = 0;
+    last_descriptor_number = 0;
+    language_code.clear();
+    entries.clear();
+    text.clear();
+}
+
 
 //----------------------------------------------------------------------------
 // Normalize all ExtendedEventDescriptor in a descriptor list.
 // Update all descriptor_number and last_descriptor_number.
 //----------------------------------------------------------------------------
 
-void ts::ExtendedEventDescriptor::NormalizeNumbering(uint8_t* desc_base, size_t desc_size, const DVBCharset* charset)
+void ts::ExtendedEventDescriptor::NormalizeNumbering(DuckContext& duck,uint8_t* desc_base, size_t desc_size)
 {
     typedef std::map<UString, size_t> SizeMap; // key=language_code
     SizeMap desc_last;
@@ -167,8 +171,8 @@ void ts::ExtendedEventDescriptor::splitAndAdd(DuckContext& duck, DescriptorList&
 
         // Insert as many item entries as possible
         while (it != entries.end()) {
-            const ByteBlock desc(duck.toDVBWithByteLength(it->item_description));
-            const ByteBlock item(duck.toDVBWithByteLength(it->item));
+            const ByteBlock desc(duck.encodedWithByteLength(it->item_description));
+            const ByteBlock item(duck.encodedWithByteLength(it->item));
             if (desc.size() + item.size() > remain) {
                 break;
             }
@@ -181,8 +185,8 @@ void ts::ExtendedEventDescriptor::splitAndAdd(DuckContext& duck, DescriptorList&
         if (it != entries.end() && eed.entries.size() == 0) {
             Entry entry(*it);
             uint8_t* addr = buffer;
-            const size_t desc_size = duck.toDVBWithByteLength(entry.item_description, addr, remain);
-            const size_t item_size = duck.toDVBWithByteLength(entry.item, addr, remain);
+            const size_t desc_size = duck.encodeWithByteLength(addr, remain, entry.item_description);
+            const size_t item_size = duck.encodeWithByteLength(addr, remain, entry.item);
             assert(desc_size <= entry.item_description.length());
             assert(item_size <= entry.item.length());
             entry.item_description.resize(desc_size);
@@ -196,7 +200,7 @@ void ts::ExtendedEventDescriptor::splitAndAdd(DuckContext& duck, DescriptorList&
 
         // Insert as much as possible of extended description
         uint8_t* addr = buffer;
-        const size_t text_size = duck.toDVBWithByteLength(text, addr, remain, text_index);
+        const size_t text_size = duck.encodeWithByteLength(addr, remain, text, text_index);
         eed.text = text.substr(text_index, text_size);
         text_index += text_size;
 
@@ -227,15 +231,15 @@ void ts::ExtendedEventDescriptor::serialize(DuckContext& duck, Descriptor& desc)
 
     // Serialize all entries.
     for (EntryList::const_iterator it = entries.begin(); it != entries.end(); ++it) {
-        bbp->append(duck.toDVBWithByteLength(it->item_description));
-        bbp->append(duck.toDVBWithByteLength(it->item));
+        bbp->append(duck.encodedWithByteLength(it->item_description));
+        bbp->append(duck.encodedWithByteLength(it->item));
     }
 
     // Update length_of_items
     (*bbp)[length_index] = uint8_t(bbp->size() - length_index - 1);
 
     // Final text
-    bbp->append(duck.toDVBWithByteLength(text));
+    bbp->append(duck.encodedWithByteLength(text));
     serializeEnd(desc, bbp);
 }
 
@@ -246,7 +250,7 @@ void ts::ExtendedEventDescriptor::serialize(DuckContext& duck, Descriptor& desc)
 
 void ts::ExtendedEventDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 5)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 5)) {
         return;
     }
 
@@ -268,8 +272,8 @@ void ts::ExtendedEventDescriptor::deserialize(DuckContext& duck, const Descripto
     entries.clear();
     while (items_length >= 2) {
         Entry entry;
-        entry.item_description = duck.fromDVBWithByteLength(data, items_length);
-        entry.item = duck.fromDVBWithByteLength(data, items_length);
+        duck.decodeWithByteLength(entry.item_description, data, items_length);
+        duck.decodeWithByteLength(entry.item, data, items_length);
         entries.push_back(entry);
     }
 
@@ -277,7 +281,7 @@ void ts::ExtendedEventDescriptor::deserialize(DuckContext& duck, const Descripto
         return;
     }
 
-    text = duck.fromDVBWithByteLength(data, size);
+    duck.decodeWithByteLength(text, data, size);
     _is_valid = size == 0;
 }
 
@@ -288,7 +292,8 @@ void ts::ExtendedEventDescriptor::deserialize(DuckContext& duck, const Descripto
 
 void ts::ExtendedEventDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 5) {
@@ -304,11 +309,11 @@ void ts::ExtendedEventDescriptor::DisplayDescriptor(TablesDisplay& display, DID 
              << margin << "Language: " << lang << std::endl;
         size -= length;
         while (length > 0) {
-            const UString description(display.duck().fromDVBWithByteLength(data, length));
-            const UString item(display.duck().fromDVBWithByteLength(data, length));
+            const UString description(duck.decodedWithByteLength(data, length));
+            const UString item(duck.decodedWithByteLength(data, length));
             strm << margin << "\"" << description << "\" : \"" << item << "\"" << std::endl;
         }
-        const UString text(display.duck().fromDVBWithByteLength(data, size));
+        const UString text(duck.decodedWithByteLength(data, size));
         strm << margin << "Text: \"" << text << "\"" << std::endl;
         data += length; size -= length;
     }
@@ -340,28 +345,21 @@ void ts::ExtendedEventDescriptor::buildXML(DuckContext& duck, xml::Element* root
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ExtendedEventDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ExtendedEventDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    language_code.clear();
-    text.clear();
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute(descriptor_number, u"descriptor_number", true) &&
         element->getIntAttribute(last_descriptor_number, u"last_descriptor_number", true) &&
         element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
         element->getTextChild(text, u"text") &&
         element->getChildren(children, u"item");
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getTextChild(entry.item_description, u"description") &&
-            children[i]->getTextChild(entry.item, u"name");
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getTextChild(entry.item_description, u"description") &&
+             children[i]->getTextChild(entry.item, u"name");
+        entries.push_back(entry);
     }
+    return ok;
 }

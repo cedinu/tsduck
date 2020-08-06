@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsTimeShiftBuffer.h"
 TSDUCK_SOURCE;
@@ -65,8 +64,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(timeshift, ts::TimeShiftPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"timeshift", ts::TimeShiftPlugin);
 
 
 //----------------------------------------------------------------------------
@@ -214,7 +212,7 @@ ts::ProcessorPlugin::Status ts::TimeShiftPlugin::processPacket(TSPacket& pkt, TS
     else {
         // Check if we are in the initial filling phase.
         const bool init_phase = !_buffer.full();
-        if (!_buffer.shift(pkt, *tsp)) {
+        if (!_buffer.shift(pkt, pkt_data, *tsp)) {
             return TSP_END; // fatal error
         }
         return init_phase && _drop_initial ? TSP_DROP : TSP_OK;

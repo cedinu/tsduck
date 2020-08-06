@@ -70,7 +70,7 @@ namespace ts {
         //! @param [in] mode The packet's data are either shared (ts::SHARE) between the
         //! two instances or duplicated (ts::COPY).
         //!
-        PESPacket(const PESPacket& other, CopyShare mode);
+        PESPacket(const PESPacket& other, ShareMode mode);
 
         //!
         //! Move constructor.
@@ -360,6 +360,12 @@ namespace ts {
         //! @return True if the PES packet contains AVC / H.264 video.
         //!
         bool isAVC() const;
+
+        //!
+        //! Check if the PES packet contains HEVC / H.265 video.
+        //! @return True if the PES packet contains HEVC / H.265 video.
+        //!
+        bool isHEVC() const;
 
         //!
         //! Check if the PES packet contains AC-3 or Enhanced-AC-3 audio.

@@ -28,8 +28,9 @@
 //----------------------------------------------------------------------------
 
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
 #include "tsBinaryTable.h"
+#include "tsPSIBuffer.h"
 #include "tsSection.h"
 #include "tsDescriptor.h"
 #include "tsDescriptorList.h"
@@ -128,14 +129,43 @@ bool ts::TablesDisplay::loadArgs(DuckContext& duck, Args &args)
 // A utility method to dump extraneous bytes after expected data.
 //----------------------------------------------------------------------------
 
+std::ostream& ts::TablesDisplay::displayExtraData(PSIBuffer& buf, int indent)
+{
+    displayExtraData(buf.currentReadAddress(), buf.remainingReadBytes(), indent);
+    buf.skipBytes(buf.remainingReadBytes());
+    return _duck.out();
+}
+
 std::ostream& ts::TablesDisplay::displayExtraData(const void* data, size_t size, int indent)
 {
     std::ostream& strm(_duck.out());
-
     if (size > 0) {
         strm << std::string(indent, ' ') << "Extraneous " << size << " bytes:" << std::endl
              << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
     }
+    return strm;
+}
+
+
+//----------------------------------------------------------------------------
+// A utility method to dump private binary data in a descriptor or section.
+//----------------------------------------------------------------------------
+
+std::ostream& ts::TablesDisplay::displayPrivateData(const UString& title, const void* data, size_t size, int indent, size_t single_line_max)
+{
+    std::ostream& strm(_duck.out());
+    const std::string margin(indent, ' ');
+
+    if (size > single_line_max) {
+        strm << margin << title << " (" << size << " bytes):" << std::endl
+             << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET | UString::BPL, indent + 2, 16);
+    }
+    else if (size > 0) {
+        strm << margin << title << " (" << size << " bytes): "
+             << UString::Dump(data, size, UString::SINGLE_LINE)
+             << std::endl;
+    }
+
     return strm;
 }
 
@@ -173,7 +203,7 @@ std::ostream& ts::TablesDisplay::displayTable(const BinaryTable& table, int inde
     }
 
     // Display common header lines.
-    strm << margin << UString::Format(u"* %s, TID %d (0x%X)", {names::TID(tid, cas), table.tableId(), table.tableId()});
+    strm << margin << UString::Format(u"* %s, TID %d (0x%X)", {names::TID(_duck, tid, cas), table.tableId(), table.tableId()});
     if (table.sourcePID() != PID_NULL) {
         // If PID is the null PID, this means "unknown PID"
         strm << UString::Format(u", PID %d (0x%X)", {table.sourcePID(), table.sourcePID()});
@@ -227,7 +257,7 @@ std::ostream& ts::TablesDisplay::displaySection(const Section& section, int inde
 
     // Display common header lines.
     if (!no_header) {
-        strm << margin << UString::Format(u"* %s, TID %d (0x%X)", {names::TID(tid, cas), tid, tid});
+        strm << margin << UString::Format(u"* %s, TID %d (0x%X)", {names::TID(_duck, tid, cas), tid, tid});
         if (section.sourcePID() != PID_NULL) {
             // If PID is the null PID, this means "unknown PID"
             strm << UString::Format(u", PID %d (0x%X)", {section.sourcePID(), section.sourcePID()});
@@ -263,7 +293,7 @@ std::ostream& ts::TablesDisplay::displaySectionData(const Section& section, int 
     cas = _duck.casId(cas);
 
     // Find the display handler for this table id (and maybe CAS).
-    DisplaySectionFunction handler = TablesFactory::Instance()->getSectionDisplay(section.tableId(), cas);
+    DisplaySectionFunction handler = PSIRepository::Instance()->getSectionDisplay(section.tableId(), _duck.standards(), section.sourcePID(), cas);
 
     if (handler != nullptr) {
         handler(*this, section, indent);
@@ -285,7 +315,7 @@ std::ostream& ts::TablesDisplay::logSectionData(const Section& section, const US
     cas = _duck.casId(cas);
 
     // Find the log handler for this table id (and maybe CAS).
-    LogSectionFunction handler = TablesFactory::Instance()->getSectionLog(section.tableId(), cas);
+    LogSectionFunction handler = PSIRepository::Instance()->getSectionLog(section.tableId(), _duck.standards(), section.sourcePID(), cas);
     if (handler == nullptr) {
         handler = LogUnknownSectionData;
     }
@@ -470,6 +500,28 @@ std::ostream& ts::TablesDisplay::displayDescriptor(const Descriptor& desc, int i
 
 
 //----------------------------------------------------------------------------
+// Display a list of descriptors from a PSI Buffer
+//----------------------------------------------------------------------------
+
+std::ostream& ts::TablesDisplay::displayDescriptorListWithLength(const Section& section, PSIBuffer& buf, int indent, const UString& title, size_t length_bits, uint16_t cas)
+{
+    // Read the length field.
+    const size_t length = buf.getUnalignedLength(length_bits);
+    bool ok = !buf.readError();
+
+    // Read and display descriptors.
+    if (ok && length > 0) {
+        if (!title.empty()) {
+            _duck.out() << std::string(indent, ' ') << title << std::endl;
+        }
+        displayDescriptorList(section, buf.currentReadAddress(), length, indent, cas);
+        buf.skipBytes(length);
+    }
+    return _duck.out();
+}
+
+
+//----------------------------------------------------------------------------
 // Display a list of descriptors from a memory area
 //----------------------------------------------------------------------------
 
@@ -588,7 +640,7 @@ std::ostream& ts::TablesDisplay::displayDescriptorData(DID did, const uint8_t* p
     }
 
     // Locate the display handler for this descriptor payload.
-    DisplayDescriptorFunction handler = TablesFactory::Instance()->getDescriptorDisplay(edid, tid);
+    DisplayDescriptorFunction handler = PSIRepository::Instance()->getDescriptorDisplay(edid, tid);
 
     if (handler != nullptr) {
         handler(*this, did, payload, size, indent, tid, _duck.actualPDS(pds));

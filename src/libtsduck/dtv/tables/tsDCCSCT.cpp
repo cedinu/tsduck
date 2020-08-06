@@ -31,17 +31,17 @@
 #include "tsNames.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DCCSCT"
+#define MY_CLASS ts::DCCSCT
 #define MY_TID ts::TID_DCCSCT
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_TABLE_FACTORY(ts::DCCSCT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::DCCSCT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::DCCSCT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 const ts::Enumeration ts::DCCSCT::UpdateTypeNames({
     {u"new_genre_category", ts::DCCSCT::new_genre_category},
@@ -61,7 +61,6 @@ ts::DCCSCT::DCCSCT(uint8_t version_) :
     updates(this),
     descs(this)
 {
-    _is_valid = true;
 }
 
 ts::DCCSCT::DCCSCT(const DCCSCT& other) :
@@ -94,10 +93,20 @@ ts::DCCSCT::Update::Update(const AbstractTable* table, UpdateType type) :
 
 
 //----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::DCCSCT::tableIdExtension() const
+{
+    return dccsct_type;
+}
+
+
+//----------------------------------------------------------------------------
 // Clear the content of the table.
 //----------------------------------------------------------------------------
 
-void ts::DCCSCT::clear()
+void ts::DCCSCT::clearContent()
 {
     dccsct_type = 0;
     protocol_version = 0;
@@ -312,8 +321,10 @@ void ts::DCCSCT::serializeContent(DuckContext& duck, BinaryTable& table) const
 
 void ts::DCCSCT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -446,24 +457,20 @@ void ts::DCCSCT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DCCSCT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DCCSCT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
         element->getIntAttribute<uint16_t>(dccsct_type, u"dccsct_type", false, 0) &&
         descs.fromXML(duck, children, element, u"update");
 
-    for (size_t index = 0; _is_valid && index < children.size(); ++index) {
+    for (size_t index = 0; ok && index < children.size(); ++index) {
         // Add a new Update at the end of the list.
         Update& upd(updates.newEntry());
         xml::ElementVector unused;
-        _is_valid =
-            children[index]->getIntEnumAttribute(upd.update_type, UpdateTypeNames, u"update_type", true) &&
+        ok = children[index]->getIntEnumAttribute(upd.update_type, UpdateTypeNames, u"update_type", true) &&
             children[index]->getIntAttribute<uint8_t>(upd.genre_category_code, u"genre_category_code", upd.update_type == new_genre_category) &&
             children[index]->getIntAttribute<uint8_t>(upd.dcc_state_location_code, u"dcc_state_location_code", upd.update_type == new_state) &&
             children[index]->getIntAttribute<uint8_t>(upd.state_code, u"state_code", upd.update_type == new_county) &&
@@ -473,4 +480,5 @@ void ts::DCCSCT::fromXML(DuckContext& duck, const xml::Element* element)
             upd.dcc_county_location_code_text.fromXML(duck, children[index], u"dcc_county_location_code_text", upd.update_type == new_county) &&
             upd.descs.fromXML(duck, unused, children[index], u"genre_category_name_text,dcc_state_location_code_text,dcc_county_location_code_text");
     }
+    return ok;
 }

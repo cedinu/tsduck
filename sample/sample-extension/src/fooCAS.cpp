@@ -2,14 +2,25 @@
 // Some display handlers for the FooCAS data.
 
 #include "fooCAS.h"
-#include "tsTablesFactory.h"
 
 // Register the display handlers in TSDuck.
-TS_FACTORY_REGISTER(foo::DisplayFooCASECM, ts::TID_ECM_80, ts::TID_ECM_81, foo::CASID_FOO_MIN, foo::CASID_FOO_MAX);
-TS_FACTORY_REGISTER(foo::DisplayFooCASEMM, ts::TID_EMM_FIRST, ts::TID_EMM_LAST, foo::CASID_FOO_MIN, foo::CASID_FOO_MAX);
-TS_FACTORY_REGISTER(foo::LogFooCASECM, ts::TID_ECM_80, ts::TID_ECM_81, foo::CASID_FOO_MIN, foo::CASID_FOO_MAX);
-TS_FACTORY_REGISTER(foo::LogFooCASEMM, ts::TID_EMM_FIRST, ts::TID_EMM_LAST, foo::CASID_FOO_MIN, foo::CASID_FOO_MAX);
-TS_FACTORY_REGISTER(foo::DisplayFooCASCADescriptor, foo::CASID_FOO_MIN, foo::CASID_FOO_MAX);
+TS_REGISTER_CA_DESCRIPTOR(foo::DisplayFooCASCADescriptor, foo::CASID_FOO_MIN, foo::CASID_FOO_MAX);
+
+TS_REGISTER_SECTION({ts::TID_ECM_80, ts::TID_ECM_81},
+                    foo::STD,
+                    foo::DisplayFooCASECM,
+                    foo::LogFooCASECM,
+                    {}, // no predefined PID
+                    foo::CASID_FOO_MIN,
+                    foo::CASID_FOO_MAX);
+
+TS_REGISTER_SECTION(ts::Range<ts::TID>(ts::TID_EMM_FIRST, ts::TID_EMM_LAST),
+                    foo::STD,
+                    foo::DisplayFooCASEMM,
+                    foo::LogFooCASEMM,
+                    {}, // no predefined PID
+                    foo::CASID_FOO_MIN,
+                    foo::CASID_FOO_MAX);
 
 
 //----------------------------------------------------------------------------
@@ -18,7 +29,9 @@ TS_FACTORY_REGISTER(foo::DisplayFooCASCADescriptor, foo::CASID_FOO_MIN, foo::CAS
 
 void foo::DisplayFooCASECM(ts::TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    ts::DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -36,7 +49,9 @@ void foo::DisplayFooCASECM(ts::TablesDisplay& display, const ts::Section& sectio
 
 void foo::DisplayFooCASEMM(ts::TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    ts::DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -82,7 +97,8 @@ ts::UString foo::LogFooCASEMM(const ts::Section& section, size_t max_bytes)
 
 void foo::DisplayFooCASCADescriptor(ts::TablesDisplay& display, const uint8_t* data, size_t size, int indent, ts::TID tid)
 {
-    std::ostream& strm(display.duck().out());
+    ts::DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
 
     if (size >= 2) {
         // The private part of a FooCAS CA-descriptor starts with a 2-byte foo_id.

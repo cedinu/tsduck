@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"cell_frequency_link_descriptor"
+#define MY_CLASS ts::CellFrequencyLinkDescriptor
 #define MY_DID ts::DID_CELL_FREQ_LINK
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CellFrequencyLinkDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CellFrequencyLinkDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::CellFrequencyLinkDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,13 +52,17 @@ ts::CellFrequencyLinkDescriptor::CellFrequencyLinkDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     cells()
 {
-    _is_valid = true;
 }
 
 ts::CellFrequencyLinkDescriptor::CellFrequencyLinkDescriptor(DuckContext& duck, const Descriptor& desc) :
     CellFrequencyLinkDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::CellFrequencyLinkDescriptor::clearContent()
+{
+    cells.clear();
 }
 
 ts::CellFrequencyLinkDescriptor::Cell::Cell() :
@@ -103,7 +107,7 @@ void ts::CellFrequencyLinkDescriptor::deserialize(DuckContext& duck, const Descr
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
     cells.clear();
 
     while (_is_valid && size >= 7) {
@@ -136,7 +140,8 @@ void ts::CellFrequencyLinkDescriptor::deserialize(DuckContext& duck, const Descr
 
 void ts::CellFrequencyLinkDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 7) {
@@ -180,31 +185,24 @@ void ts::CellFrequencyLinkDescriptor::buildXML(DuckContext& duck, xml::Element* 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CellFrequencyLinkDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CellFrequencyLinkDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    cells.clear();
-
     xml::ElementVector xcells;
-    _is_valid = checkXMLName(element) && element->getChildren(xcells, u"cell");
+    bool ok = element->getChildren(xcells, u"cell");
 
-    for (size_t i1 = 0; _is_valid && i1 < xcells.size(); ++i1) {
+    for (size_t i1 = 0; ok && i1 < xcells.size(); ++i1) {
         Cell cell;
         xml::ElementVector xsubcells;
-        _is_valid =
-            xcells[i1]->getIntAttribute<uint16_t>(cell.cell_id, u"cell_id", true) &&
-            xcells[i1]->getIntAttribute<uint64_t>(cell.frequency, u"frequency", true) &&
-            xcells[i1]->getChildren(xsubcells, u"subcell");
-        for (size_t i2 = 0; _is_valid && i2 < xsubcells.size(); ++i2) {
+        ok = xcells[i1]->getIntAttribute<uint16_t>(cell.cell_id, u"cell_id", true) &&
+             xcells[i1]->getIntAttribute<uint64_t>(cell.frequency, u"frequency", true) &&
+             xcells[i1]->getChildren(xsubcells, u"subcell");
+        for (size_t i2 = 0; ok && i2 < xsubcells.size(); ++i2) {
             Subcell sub;
-            _is_valid =
-                xsubcells[i2]->getIntAttribute<uint8_t>(sub.cell_id_extension, u"cell_id_extension", true) &&
-                xsubcells[i2]->getIntAttribute<uint64_t>(sub.transposer_frequency, u"transposer_frequency", true);
-            if (_is_valid) {
-                cell.subcells.push_back(sub);
-            }
+            ok = xsubcells[i2]->getIntAttribute<uint8_t>(sub.cell_id_extension, u"cell_id_extension", true) &&
+                 xsubcells[i2]->getIntAttribute<uint64_t>(sub.transposer_frequency, u"transposer_frequency", true);
+            cell.subcells.push_back(sub);
         }
-        if (_is_valid) {
-            cells.push_back(cell);
-        }
+        cells.push_back(cell);
     }
+    return ok;
 }

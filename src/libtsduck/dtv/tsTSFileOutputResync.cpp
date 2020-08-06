@@ -53,16 +53,16 @@ ts::TSFileOutputResync::~TSFileOutputResync()
 // Open method
 //----------------------------------------------------------------------------
 
-bool ts::TSFileOutputResync::open(const UString& filename, OpenFlags flags, Report& report)
+bool ts::TSFileOutputResync::open(const UString& filename, OpenFlags flags, Report& report, TSPacketFormat format)
 {
     // Forbid input access.
     if ((flags & READ) != 0) {
-        report.log(getErrorSeverityLevel(), u"read mode not allowed on TSFileOutputResync");
+        report.error(u"read mode not allowed on TSFileOutputResync");
         return false;
     }
 
     // Invoke superclass for actual file opening. Force write mode.
-    const bool ok = TSFile::open(filename, flags | WRITE, report);
+    const bool ok = TSFile::open(filename, flags | WRITE, report, format);
 
     // Reset continuity counters.
     if (ok) {
@@ -74,10 +74,21 @@ bool ts::TSFileOutputResync::open(const UString& filename, OpenFlags flags, Repo
 
 
 //----------------------------------------------------------------------------
+// Write packets: make the read-only inherited writePackets inaccessible.
+//----------------------------------------------------------------------------
+
+bool ts::TSFileOutputResync::writePackets(const TSPacket* buffer, const TSPacketMetadata* metadata, size_t packet_count, Report& report)
+{
+    report.error(u"internal error, read-only TSFileOutputResync::writePackets() invoked, should not get there");
+    return false;
+}
+
+
+//----------------------------------------------------------------------------
 // Write packets, update their continuity counters (packets are modified)
 //----------------------------------------------------------------------------
 
-bool ts::TSFileOutputResync::write(TSPacket* buffer, size_t packet_count, Report& report)
+bool ts::TSFileOutputResync::writePackets(TSPacket* buffer, const TSPacketMetadata* metadata, size_t packet_count, Report& report)
 {
     // Update continuity counters
     for (size_t n = 0; n < packet_count; ++n) {
@@ -85,7 +96,7 @@ bool ts::TSFileOutputResync::write(TSPacket* buffer, size_t packet_count, Report
     }
 
     // Invoke superclass
-    return TSFile::write(buffer, packet_count, report);
+    return TSFile::writePackets(buffer, metadata, packet_count, report);
 }
 
 
@@ -93,10 +104,10 @@ bool ts::TSFileOutputResync::write(TSPacket* buffer, size_t packet_count, Report
 // Write packets, force PID value
 //----------------------------------------------------------------------------
 
-bool ts::TSFileOutputResync::write(TSPacket* buffer, size_t packet_count, PID pid, Report& report)
+bool ts::TSFileOutputResync::writePackets(TSPacket* buffer, const TSPacketMetadata* metadata, size_t packet_count, PID pid, Report& report)
 {
     for (size_t n = 0; n < packet_count; ++n) {
         buffer[n].setPID(pid);
     }
-    return write(buffer, packet_count, report);
+    return writePackets(buffer, metadata, packet_count, report);
 }

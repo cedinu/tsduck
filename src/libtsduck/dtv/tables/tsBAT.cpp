@@ -26,25 +26,22 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a Bouquet Association Table (BAT)
-//
-//----------------------------------------------------------------------------
 
 #include "tsBAT.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"BAT"
+#define MY_CLASS ts::BAT
 #define MY_TID ts::TID_BAT
-#define MY_STD ts::STD_DVB
+#define MY_PID ts::PID_BAT
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::BAT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::BAT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::BAT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection, nullptr, {MY_PID});
 
 
 //----------------------------------------------------------------------------
@@ -85,7 +82,8 @@ ts::BAT& ts::BAT::operator=(const BAT& other)
 
 void ts::BAT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
@@ -159,30 +157,26 @@ void ts::BAT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::BAT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::BAT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    descs.clear();
-    transports.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
         element->getIntAttribute<uint16_t>(bouquet_id, u"bouquet_id", true, 0, 0x0000, 0xFFFF) &&
         descs.fromXML(duck, children, element, u"transport_stream");
 
-    for (size_t index = 0; _is_valid && index < children.size(); ++index) {
+    for (size_t index = 0; ok && index < children.size(); ++index) {
         TransportStreamId ts;
-        _is_valid =
-            children[index]->getIntAttribute<uint16_t>(ts.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
-            children[index]->getIntAttribute<uint16_t>(ts.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
-            transports[ts].descs.fromXML(duck, children[index]);
-        if (_is_valid && children[index]->hasAttribute(u"preferred_section")) {
-            _is_valid = children[index]->getIntAttribute<int>(transports[ts].preferred_section, u"preferred_section", true, 0, 0, 255);
+        ok = children[index]->getIntAttribute<uint16_t>(ts.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntAttribute<uint16_t>(ts.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
+             transports[ts].descs.fromXML(duck, children[index]);
+        if (ok && children[index]->hasAttribute(u"preferred_section")) {
+            ok = children[index]->getIntAttribute<int>(transports[ts].preferred_section, u"preferred_section", true, 0, 0, 255);
         }
         else {
             transports[ts].preferred_section = -1;
         }
     }
+    return ok;
 }

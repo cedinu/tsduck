@@ -30,18 +30,18 @@
 #include "tsTargetIPv6SlashDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"target_IPv6_slash_descriptor"
+#define MY_CLASS ts::TargetIPv6SlashDescriptor
 #define MY_DID ts::DID_INT_IPV6_SLASH
 #define MY_TID ts::TID_INT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::TargetIPv6SlashDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetIPv6SlashDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::TargetIPv6SlashDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,11 @@ ts::TargetIPv6SlashDescriptor::TargetIPv6SlashDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     addresses()
 {
-    _is_valid = true;
+}
+
+void ts::TargetIPv6SlashDescriptor::clearContent()
+{
+    addresses.clear();
 }
 
 ts::TargetIPv6SlashDescriptor::TargetIPv6SlashDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -92,7 +96,7 @@ void ts::TargetIPv6SlashDescriptor::deserialize(DuckContext& duck, const Descrip
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size % 17 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size % 17 == 0;
     addresses.clear();
 
     if (_is_valid) {
@@ -110,7 +114,8 @@ void ts::TargetIPv6SlashDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::TargetIPv6SlashDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 17) {
@@ -140,22 +145,16 @@ void ts::TargetIPv6SlashDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TargetIPv6SlashDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TargetIPv6SlashDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    addresses.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"address", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"address", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Address addr;
-        _is_valid =
-                children[i]->getIPv6Attribute(addr.IPv6_addr, u"IPv6_addr", true) &&
-                children[i]->getIntAttribute(addr.IPv6_slash_mask, u"IPv6_slash_mask", true);
-        if (_is_valid) {
-            addresses.push_back(addr);
-        }
+        ok = children[i]->getIPv6Attribute(addr.IPv6_addr, u"IPv6_addr", true) &&
+             children[i]->getIntAttribute(addr.IPv6_slash_mask, u"IPv6_slash_mask", true);
+        addresses.push_back(addr);
     }
+    return ok;
 }

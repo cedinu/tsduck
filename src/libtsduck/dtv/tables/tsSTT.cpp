@@ -30,17 +30,17 @@
 #include "tsSTT.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"STT"
+#define MY_CLASS ts::STT
 #define MY_TID ts::TID_STT
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_TABLE_FACTORY(ts::STT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::STT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::STT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
@@ -57,7 +57,6 @@ ts::STT::STT() :
     DS_hour(0),
     descs(this)
 {
-    _is_valid = true;
 }
 
 ts::STT::STT(const STT& other) :
@@ -82,6 +81,32 @@ ts::STT::STT(DuckContext& duck, const Section& section) :
     STT()
 {
     deserializeSection(duck, section);
+}
+
+
+//----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::STT::tableIdExtension() const
+{
+    return 0x0000;
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::STT::clearContent()
+{
+    protocol_version = 0;
+    system_time = 0;
+    GPS_UTC_offset = 0;
+    DS_status = 0;
+    DS_day_of_month = 0;
+    DS_hour = 0;
+    descs.clear();
 }
 
 
@@ -162,7 +187,7 @@ void ts::STT::deserializeSection(DuckContext& duck, const Section& section)
 void ts::STT::serializeContent(DuckContext& duck, BinaryTable& table) const
 {
     // Build the section. Note that a STT is not allowed to use more than one section, see A/65, section 6.1.
-    uint8_t payload[MAX_PSI_LONG_SECTION_PAYLOAD_SIZE];
+    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
     uint8_t* data = payload;
     size_t remain = sizeof(payload);
 
@@ -196,8 +221,10 @@ void ts::STT::serializeContent(DuckContext& duck, BinaryTable& table) const
 
 void ts::STT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -245,16 +272,13 @@ void ts::STT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::STT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::STT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    descs.clear();
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
-        element->getIntAttribute<uint32_t>(system_time, u"system_time", true) &&
-        element->getIntAttribute<uint8_t>(GPS_UTC_offset, u"GPS_UTC_offset", true) &&
-        element->getBoolAttribute(DS_status, u"DS_status", true) &&
-        element->getIntAttribute<uint8_t>(DS_day_of_month, u"DS_day_of_month", false, 0, 0, 31) &&
-        element->getIntAttribute<uint8_t>(DS_hour, u"DS_hour", false, 0, 0, 23) &&
-        descs.fromXML(duck, element);
+    return element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
+           element->getIntAttribute<uint32_t>(system_time, u"system_time", true) &&
+           element->getIntAttribute<uint8_t>(GPS_UTC_offset, u"GPS_UTC_offset", true) &&
+           element->getBoolAttribute(DS_status, u"DS_status", true) &&
+           element->getIntAttribute<uint8_t>(DS_day_of_month, u"DS_day_of_month", false, 0, 0, 31) &&
+           element->getIntAttribute<uint8_t>(DS_hour, u"DS_hour", false, 0, 0, 23) &&
+           descs.fromXML(duck, element);
 }

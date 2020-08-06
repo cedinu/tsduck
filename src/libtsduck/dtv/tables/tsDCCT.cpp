@@ -31,17 +31,17 @@
 #include "tsNames.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DCCT"
+#define MY_CLASS ts::DCCT
 #define MY_TID ts::TID_DCCT
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_TABLE_FACTORY(ts::DCCT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::DCCT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::DCCT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 const ts::Enumeration ts::DCCT::DCCContextNames({
     {u"temporary_retune", ts::DCCT::temporary_retune},
@@ -61,7 +61,6 @@ ts::DCCT::DCCT(uint8_t vers, uint8_t id) :
     tests(this),
     descs(this)
 {
-    _is_valid = true;
 }
 
 ts::DCCT::DCCT(const DCCT& other) :
@@ -102,10 +101,20 @@ ts::DCCT::Term::Term(const AbstractTable* table, uint8_t type, uint64_t id) :
 
 
 //----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::DCCT::tableIdExtension() const
+{
+    return  uint16_t((uint16_t(dcc_subtype) << 8) | dcc_id);
+}
+
+
+//----------------------------------------------------------------------------
 // Clear the content of the table.
 //----------------------------------------------------------------------------
 
-void ts::DCCT::clear()
+void ts::DCCT::clearContent()
 {
     dcc_subtype = 0;
     dcc_id = 0;
@@ -275,15 +284,15 @@ void ts::DCCT::serializeContent(DuckContext& duck, BinaryTable& table) const
     }
 
     // Add one single section in the table
-    table.addSection(new Section(MY_TID,           // tid
-                                 true,             // is_private_section
-                                 uint16_t((uint16_t(dcc_subtype) << 8) | dcc_id), // tid_ext
+    table.addSection(new Section(MY_TID,             // tid
+                                 true,               // is_private_section
+                                 tableIdExtension(), // tid_ext
                                  version,
-                                 is_current,       // should be true
-                                 0,                // section_number,
-                                 0,                // last_section_number
+                                 is_current,         // should be true
+                                 0,                  // section_number,
+                                 0,                  // last_section_number
                                  payload,
-                                 data - payload)); // payload_size,
+                                 data - payload));   // payload_size,
 }
 
 
@@ -293,8 +302,10 @@ void ts::DCCT::serializeContent(DuckContext& duck, BinaryTable& table) const
 
 void ts::DCCT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
     bool ok = true;
@@ -434,25 +445,21 @@ void ts::DCCT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DCCT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DCCT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    clear();
-
     xml::ElementVector xtests;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
         element->getIntAttribute<uint8_t>(dcc_subtype, u"dcc_subtype", false, 0) &&
         element->getIntAttribute<uint8_t>(dcc_id, u"dcc_id", false, 0) &&
         descs.fromXML(duck, xtests, element, u"dcc_test");
 
-    for (size_t i1 = 0; _is_valid && i1 < xtests.size(); ++i1) {
+    for (size_t i1 = 0; ok && i1 < xtests.size(); ++i1) {
         const xml::Element* const e1 = xtests[i1];
         xml::ElementVector xterms;
         Test& test(tests.newEntry()); // add a new Test at the end of the list.
-        _is_valid =
-            e1->getIntEnumAttribute(test.dcc_context, DCCContextNames, u"dcc_context", true) &&
+        ok = e1->getIntEnumAttribute(test.dcc_context, DCCContextNames, u"dcc_context", true) &&
             e1->getIntAttribute<uint16_t>(test.dcc_from_major_channel_number, u"dcc_from_major_channel_number", true) &&
             e1->getIntAttribute<uint16_t>(test.dcc_from_minor_channel_number, u"dcc_from_minor_channel_number", true) &&
             e1->getIntAttribute<uint16_t>(test.dcc_to_major_channel_number, u"dcc_to_major_channel_number", true) &&
@@ -461,13 +468,13 @@ void ts::DCCT::fromXML(DuckContext& duck, const xml::Element* element)
             e1->getDateTimeAttribute(test.dcc_end_time, u"dcc_end_time", true) &&
             test.descs.fromXML(duck, xterms, e1, u"dcc_term");
 
-        for (size_t i2 = 0; _is_valid && i2 < xterms.size(); ++i2) {
+        for (size_t i2 = 0; ok && i2 < xterms.size(); ++i2) {
             const xml::Element* const e2 = xterms[i2];
             Term& term(test.terms.newEntry()); // add a new Term at the end of the list.
-            _is_valid =
-                e2->getIntAttribute<uint8_t>(term.dcc_selection_type, u"dcc_selection_type", true) &&
-                e2->getIntAttribute<uint64_t>(term.dcc_selection_id, u"dcc_selection_id", true) &&
-                term.descs.fromXML(duck, e2);
+            ok = e2->getIntAttribute<uint8_t>(term.dcc_selection_type, u"dcc_selection_type", true) &&
+                 e2->getIntAttribute<uint64_t>(term.dcc_selection_id, u"dcc_selection_id", true) &&
+                 term.descs.fromXML(duck, e2);
         }
     }
+    return ok;
 }

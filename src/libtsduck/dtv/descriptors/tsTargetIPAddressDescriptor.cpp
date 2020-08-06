@@ -30,21 +30,19 @@
 #include "tsTargetIPAddressDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"target_IP_address_descriptor"
+#define MY_CLASS ts::TargetIPAddressDescriptor
 #define MY_DID ts::DID_INT_IP_ADDR
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::TargetIPAddressDescriptor, MY_XML_NAME, ts::TID_INT, ts::TID_UNT);
-
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetIPAddressDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_INT));
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetIPAddressDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT));
-
-TS_FACTORY_REGISTER(ts::TargetIPAddressDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_INT));
-TS_FACTORY_REGISTER(ts::TargetIPAddressDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT));
+// Table-specific descriptor which is allowed in two distinct tables.
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, ts::TID_INT), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -56,7 +54,12 @@ ts::TargetIPAddressDescriptor::TargetIPAddressDescriptor() :
     IPv4_addr_mask(),
     IPv4_addr()
 {
-    _is_valid = true;
+}
+
+void ts::TargetIPAddressDescriptor::clearContent()
+{
+    IPv4_addr_mask.clear();
+    IPv4_addr.clear();
 }
 
 ts::TargetIPAddressDescriptor::TargetIPAddressDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -90,7 +93,7 @@ void ts::TargetIPAddressDescriptor::deserialize(DuckContext& duck, const Descrip
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 4 && size % 4 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4 && size % 4 == 0;
     IPv4_addr.clear();
 
     if (_is_valid) {
@@ -110,7 +113,8 @@ void ts::TargetIPAddressDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::TargetIPAddressDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     const char* header = "Address mask: ";
@@ -141,21 +145,17 @@ void ts::TargetIPAddressDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TargetIPAddressDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TargetIPAddressDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    IPv4_addr.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIPAttribute(IPv4_addr_mask, u"IPv4_addr_mask", true) &&
         element->getChildren(children, u"address", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         IPAddress addr;
-        _is_valid = children[i]->getIPAttribute(addr, u"IPv4_addr", true);
-        if (_is_valid) {
-            IPv4_addr.push_back(addr);
-        }
+        ok = children[i]->getIPAttribute(addr, u"IPv4_addr", true);
+        IPv4_addr.push_back(addr);
     }
+    return ok;
 }

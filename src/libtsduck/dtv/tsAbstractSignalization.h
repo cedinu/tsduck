@@ -34,14 +34,23 @@
 
 #pragma once
 #include "tsAbstractDefinedByStandards.h"
-#include "tsDuckContext.h"
-#include "tsByteBlock.h"
 #include "tsxml.h"
 
 namespace ts {
+
+    class DuckContext;
+    class ByteBlock;
+
     //!
     //! Abstract base class for MPEG PSI/SI tables and descriptors.
     //! @ingroup mpeg
+    //!
+    //! Some methods are declared as "virtual final". Since these methods are not
+    //! inherited, this seems useless. This is in fact a compilation check. These
+    //! methods were formerly designed to be overridden by subclasses but the
+    //! implementation has changed. They are now defined in this class only and
+    //! call a new pure virtual method. The "final" attribute is here to detect
+    //! old subclasses which do not yet use the new scheme.
     //!
     class TSDUCKDLL AbstractSignalization : public AbstractDefinedByStandards
     {
@@ -50,19 +59,19 @@ namespace ts {
         //! Check if this object is valid.
         //! @return True if this object is valid.
         //!
-        bool isValid() const
-        {
-            return _is_valid;
-        }
+        bool isValid() const { return _is_valid; }
 
         //!
         //! Invalidate this object.
         //! This object must be rebuilt.
         //!
-        void invalidate()
-        {
-            _is_valid = false;
-        }
+        void invalidate() { _is_valid = false; }
+
+        //!
+        //! This method clears the content of the table or descriptor.
+        //! Upon return, the object is valid and in the same empty state as after a default constructor.
+        //!
+        virtual void clear();
 
         //!
         //! Get the XMl node name representing this table or descriptor.
@@ -73,28 +82,28 @@ namespace ts {
         //!
         //! This method converts this object to XML.
         //!
-        //! When this object is valid, the default implementation of toXML()
-        //! creates a root node with the default XML name and then invoke
-        //! buildXML() to populate the XML node.
-        //!
-        //! Subclasses have the choice to either implement buildXML() or toXML().
-        //! If the object is serialized as one single XML node, it is simpler to
-        //! implement buildXML().
+        //! When this object is valid, this method creates a root node with the default XML
+        //! name and then invokes buildXML() in the subclass to populate the XML node.
         //!
         //! @param [in,out] duck TSDuck execution context.
         //! @param [in,out] parent The parent node for the new XML tree.
         //! @return The new XML element.
         //!
-        virtual xml::Element* toXML(DuckContext& duck, xml::Element* parent) const;
+        virtual xml::Element* toXML(DuckContext& duck, xml::Element* parent) const final;
 
         //!
-        //! This abstract converts an XML structure to a table or descriptor.
+        //! This method converts an XML structure to a table or descriptor in this object.
+        //!
         //! In case of success, this object is replaced with the interpreted content of the XML structure.
         //! In case of error, this object is invalidated.
+        //!
+        //! This method checks the name of the XML node and then invokes analyzeXML() in the subclass.
+        //! Depending on the returned values of analyzeXML(), this object is either validated or invalidated.
+        //!
         //! @param [in,out] duck TSDuck execution context.
         //! @param [in] element XML element to convert.
         //!
-        virtual void fromXML(DuckContext& duck, const xml::Element* element) = 0;
+        virtual void fromXML(DuckContext& duck, const xml::Element* element) final;
 
         // Implementation of AbstractDefinedByStandards
         virtual Standards definingStandards() const override;
@@ -144,10 +153,8 @@ namespace ts {
         static UString DeserializeLanguageCode(const uint8_t* data);
 
     protected:
-        //!
-        //! XML table or descriptor name.
-        //!
-        const UChar* const _xml_name;
+        // Implementation node: Try to make _is_valid private some day.
+        // It should not be used outside legacy serialize() / deserialize() implementations.
 
         //!
         //! It is the responsibility of the subclasses to set the valid flag
@@ -158,8 +165,9 @@ namespace ts {
         //! Protected constructor for subclasses.
         //! @param [in] xml_name Table or descriptor name, as used in XML structures.
         //! @param [in] standards A bit mask of standards which define this structure.
+        //! @param [in] xml_legacy_name Table or descriptor legacy XML name. Ignored if null pointer.
         //!
-        AbstractSignalization(const UChar* xml_name, Standards standards);
+        AbstractSignalization(const UChar* xml_name, Standards standards, const UChar* xml_legacy_name = nullptr);
 
         //!
         //! Copy constructor.
@@ -177,28 +185,39 @@ namespace ts {
         AbstractSignalization& operator=(const AbstractSignalization& other);
 
         //!
+        //! Helper method to clear the content of the table or descriptor.
+        //!
+        //! It is called by clear(). In clearContent(), the subclass shall simply
+        //! revert the value of all fields to their original values in the default
+        //! constructor.
+        //!
+        virtual void clearContent() = 0;
+
+        //!
         //! Helper method to convert this object to XML.
         //!
-        //! When this object is valid, the default implementation of toXML()
-        //! creates a root node with the default XML name and then invoke
-        //! buildXML() to populate the XML node.
-        //!
-        //! The default implementation is to do nothing. Subclasses which
-        //! override toXML() do not need to implement buildXML() since it
-        //! won't be invoked.
+        //! It is called by toXML() only when the object is valid. The @a root element
+        //! is already built with the appropriate XML node name. In buildXML(), the
+        //! subclass shall simply populate the XML node.
         //!
         //! @param [in,out] root The root node for the new XML tree.
         //! @param [in,out] duck TSDuck execution context.
         //!
-        virtual void buildXML(DuckContext& duck, xml::Element* root) const;
+        virtual void buildXML(DuckContext& duck, xml::Element* root) const = 0;
 
         //!
-        //! Check that an XML element has the right name for this table.
-        //! @param [in] element XML element to check.
-        //! @param [in] legacy_name If not null, specifies an alternate legacy name.
-        //! @return True on success, false on error.
+        //! Helper method to convert this object from XML.
         //!
-        bool checkXMLName(const xml::Element* element, const UChar* legacy_name = nullptr) const;
+        //! It is called by fromXML() after checking the validity of the XML
+        //! node name. In analyzeXML(), the subclass shall populate the C++
+        //! object from the content of the XML node. If analyzeXML() returns false,
+        //! this table or descriptor object is then invalidated and cleared.
+        //!
+        //! @param [in,out] duck TSDuck execution context.
+        //! @param [in] element XML element to convert.
+        //! @return True if the analysis is correct, false otherwise.
+        //!
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) = 0;
 
         //!
         //! Deserialize a 3-byte language or country code.
@@ -231,7 +250,12 @@ namespace ts {
         bool deserializeBool(bool& value, const uint8_t*& data, size_t& size, size_t bit = 0);
 
     private:
-        const Standards _standards;  // Defining standards (usually only one).
+        const UChar* const _xml_name;         // XML table or descriptor name.
+        const UChar* const _xml_legacy_name;  // Optional XML table or descriptor legacy name. Ignored if null pointer.
+        const Standards    _standards;        // Defining standards (usually only one).
+
+        // Check that an XML element has the right name for this table or descriptor.
+        bool checkXMLName(const xml::Element* element) const;
 
         // Unreachable constructors and operators.
         AbstractSignalization() = delete;

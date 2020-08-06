@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsEITProcessor.h"
 #include "tsAbstractSignalization.h"
@@ -88,8 +87,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(timeref, ts::TimeRefPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"timeref", ts::TimeRefPlugin);
 
 
 //----------------------------------------------------------------------------
@@ -200,7 +198,7 @@ bool ts::TimeRefPlugin::getOptions()
         // Decode an absolute time string
         if (start == u"system") {
             _startref = Time::CurrentUTC();
-            tsp->verbose(u"current system clock is %s", {ts::UString(_timeref)});
+            tsp->verbose(u"current system clock is %s", {ts::UString(_startref)});
         }
         else if (!_startref.decode(start)) {
             tsp->error(u"invalid --start time value \"%s\" (use \"year/month/day:hour:minute:second\")", {start});

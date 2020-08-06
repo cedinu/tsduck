@@ -26,42 +26,42 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a transport_stream_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsTransportStreamDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"transport_stream_descriptor"
+#define MY_CLASS ts::TransportStreamDescriptor
 #define MY_DID ts::DID_TRANSPORT_STREAM
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::TransportStreamDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::TransportStreamDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::TransportStreamDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::TransportStreamDescriptor::TransportStreamDescriptor(const UString& comp) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     compliance(comp)
 {
-    _is_valid = true;
 }
 
 
 //----------------------------------------------------------------------------
 // Constructor from a binary descriptor
 //----------------------------------------------------------------------------
+
+void ts::TransportStreamDescriptor::clearContent()
+{
+    compliance.clear();
+}
 
 ts::TransportStreamDescriptor::TransportStreamDescriptor(DuckContext& duck, const Descriptor& desc) :
     TransportStreamDescriptor()
@@ -77,7 +77,7 @@ ts::TransportStreamDescriptor::TransportStreamDescriptor(DuckContext& duck, cons
 void ts::TransportStreamDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 {
     ByteBlockPtr bbp(serializeStart());
-    bbp->append(duck.toDVB(compliance));
+    bbp->append(duck.encoded(compliance));
     serializeEnd(desc, bbp);
 }
 
@@ -88,10 +88,10 @@ void ts::TransportStreamDescriptor::serialize(DuckContext& duck, Descriptor& des
 
 void ts::TransportStreamDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
 
     if (_is_valid) {
-        compliance.assign(duck.fromDVB(desc.payload(), desc.payloadSize()));
+        duck.decode(compliance, desc.payload(), desc.payloadSize());
     }
     else {
         compliance.clear();
@@ -105,14 +105,16 @@ void ts::TransportStreamDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::TransportStreamDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* payload, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
-    strm << margin << "Compliance: \"" << display.duck().fromDVB(payload, size) << "\"" << std::endl;
+
+    strm << margin << "Compliance: \"" << duck.decoded(payload, size) << "\"" << std::endl;
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::TransportStreamDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -120,14 +122,7 @@ void ts::TransportStreamDescriptor::buildXML(DuckContext& duck, xml::Element* ro
     root->setAttribute(u"compliance", compliance);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::TransportStreamDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TransportStreamDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(compliance, u"compliance", true, u"", 0, MAX_DESCRIPTOR_SIZE - 2);
+    return element->getAttribute(compliance, u"compliance", true, u"", 0, MAX_DESCRIPTOR_SIZE - 2);
 }

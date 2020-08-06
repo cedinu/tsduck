@@ -30,22 +30,22 @@
 #include "tsDVBHTMLApplicationDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"dvb_html_application_descriptor"
+#define MY_CLASS ts::DVBHTMLApplicationDescriptor
 #define MY_DID ts::DID_AIT_HTML_APP
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::DVBHTMLApplicationDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::DVBHTMLApplicationDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::DVBHTMLApplicationDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::DVBHTMLApplicationDescriptor::DVBHTMLApplicationDescriptor() :
@@ -53,13 +53,13 @@ ts::DVBHTMLApplicationDescriptor::DVBHTMLApplicationDescriptor() :
     application_ids(),
     parameter()
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::DVBHTMLApplicationDescriptor::clearContent()
+{
+    application_ids.clear();
+    parameter.clear();
+}
 
 ts::DVBHTMLApplicationDescriptor::DVBHTMLApplicationDescriptor(DuckContext& duck, const Descriptor& desc) :
     DVBHTMLApplicationDescriptor()
@@ -79,7 +79,7 @@ void ts::DVBHTMLApplicationDescriptor::serialize(DuckContext& duck, Descriptor& 
     for (size_t i = 0; i < application_ids.size(); ++i) {
         bbp->appendUInt16(application_ids[i]);
     }
-    bbp->append(duck.toDVB(parameter));
+    bbp->append(duck.encoded(parameter));
     serializeEnd(desc, bbp);
 }
 
@@ -96,7 +96,7 @@ void ts::DVBHTMLApplicationDescriptor::deserialize(DuckContext& duck, const Desc
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         size_t len = data[0];
@@ -107,7 +107,7 @@ void ts::DVBHTMLApplicationDescriptor::deserialize(DuckContext& duck, const Desc
                 application_ids.push_back(GetUInt16(data));
                 data += 2; size -= 2; len -= 2;
             }
-            parameter = duck.fromDVB(data, size);
+            duck.decode(parameter, data, size);
         }
     }
 }
@@ -119,7 +119,8 @@ void ts::DVBHTMLApplicationDescriptor::deserialize(DuckContext& duck, const Desc
 
 void ts::DVBHTMLApplicationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -131,7 +132,7 @@ void ts::DVBHTMLApplicationDescriptor::DisplayDescriptor(TablesDisplay& display,
                 data += 2; size -= 2; len -= 2;
                 strm << margin << UString::Format(u"Application id: 0x%X (%d)", {id, id}) << std::endl;
             }
-            strm << margin << "Parameter: \"" << display.duck().fromDVB(data, size) << "\"" << std::endl;
+            strm << margin << "Parameter: \"" << duck.decoded(data, size) << "\"" << std::endl;
             size = 0;
         }
     }
@@ -157,22 +158,15 @@ void ts::DVBHTMLApplicationDescriptor::buildXML(DuckContext& duck, xml::Element*
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DVBHTMLApplicationDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DVBHTMLApplicationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    application_ids.clear();
-    parameter.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(parameter, u"parameter", false) &&
-        element->getChildren(children, u"application");
+    bool ok = element->getAttribute(parameter, u"parameter", false) && element->getChildren(children, u"application");
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         uint16_t id;
-        _is_valid = children[i]->getIntAttribute<uint16_t>(id, u"id", true);
-        if (_is_valid) {
-            application_ids.push_back(id);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(id, u"id", true);
+        application_ids.push_back(id);
     }
+    return ok;
 }

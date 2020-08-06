@@ -30,18 +30,18 @@
 #include "tsHEVCTimingAndHRDDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"HEVC_timing_and_HRD_descriptor"
+#define MY_CLASS ts::HEVCTimingAndHRDDescriptor
 #define MY_DID ts::DID_MPEG_EXTENSION
 #define MY_EDID ts::MPEG_EDID_HEVC_TIM_HRD
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::HEVCTimingAndHRDDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::HEVCTimingAndHRDDescriptor, ts::EDID::ExtensionMPEG(MY_EDID));
-TS_FACTORY_REGISTER(ts::HEVCTimingAndHRDDescriptor::DisplayDescriptor, ts::EDID::ExtensionMPEG(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionMPEG(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -56,7 +56,15 @@ ts::HEVCTimingAndHRDDescriptor::HEVCTimingAndHRDDescriptor() :
     K_90khz(),
     num_units_in_tick()
 {
-    _is_valid = true;
+}
+
+void ts::HEVCTimingAndHRDDescriptor::clearContent()
+{
+    hrd_management_valid = false;
+    target_schedule_idx.clear();
+    N_90khz.clear();
+    K_90khz.clear();
+    num_units_in_tick.clear();
 }
 
 ts::HEVCTimingAndHRDDescriptor::HEVCTimingAndHRDDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -100,12 +108,12 @@ void ts::HEVCTimingAndHRDDescriptor::deserialize(DuckContext& duck, const Descri
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 2 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID;
 
-    target_schedule_idx.reset();
-    N_90khz.reset();
-    K_90khz.reset();
-    num_units_in_tick.reset();
+    target_schedule_idx.clear();
+    N_90khz.clear();
+    K_90khz.clear();
+    num_units_in_tick.clear();
 
     if (_is_valid) {
         hrd_management_valid = (data[1] & 0x80) != 0;
@@ -148,7 +156,8 @@ void ts::HEVCTimingAndHRDDescriptor::DisplayDescriptor(TablesDisplay& display, D
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -201,13 +210,11 @@ void ts::HEVCTimingAndHRDDescriptor::buildXML(DuckContext& duck, xml::Element* r
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::HEVCTimingAndHRDDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::HEVCTimingAndHRDDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(hrd_management_valid, u"hrd_management_valid", true) &&
-        element->getOptionalIntAttribute<uint8_t>(target_schedule_idx, u"target_schedule_idx", 0x00, 0x1F) &&
-        element->getOptionalIntAttribute<uint32_t>(N_90khz, u"N_90khz") &&
-        element->getOptionalIntAttribute<uint32_t>(K_90khz, u"K_90khz") &&
-        element->getOptionalIntAttribute<uint32_t>(num_units_in_tick, u"num_units_in_tick");
+    return element->getBoolAttribute(hrd_management_valid, u"hrd_management_valid", true) &&
+           element->getOptionalIntAttribute<uint8_t>(target_schedule_idx, u"target_schedule_idx", 0x00, 0x1F) &&
+           element->getOptionalIntAttribute<uint32_t>(N_90khz, u"N_90khz") &&
+           element->getOptionalIntAttribute<uint32_t>(K_90khz, u"K_90khz") &&
+           element->getOptionalIntAttribute<uint32_t>(num_units_in_tick, u"num_units_in_tick");
 }

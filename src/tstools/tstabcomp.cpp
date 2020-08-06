@@ -32,10 +32,11 @@
 //----------------------------------------------------------------------------
 
 #include "tsMain.h"
+#include "tsDuckContext.h"
 #include "tsSysUtils.h"
 #include "tsBinaryTable.h"
-#include "tsSectionFile.h"
-#include "tsDVBCharset.h"
+#include "tsSectionFileArgs.h"
+#include "tsDVBCharTable.h"
 #include "tsxmlTweaks.h"
 #include "tsReportWithPrefix.h"
 #include "tsInputRedirector.h"
@@ -54,30 +55,26 @@ const ts::StaticReferencesDVB dependenciesForStaticLib;
 //  Command line options
 //----------------------------------------------------------------------------
 
-class Options: public ts::Args
-{
-    TS_NOBUILD_NOCOPY(Options);
-public:
-    Options(int argc, char *argv[]);
-    virtual ~Options();
+namespace {
+    class Options: public ts::Args
+    {
+        TS_NOBUILD_NOCOPY(Options);
+    public:
+        Options(int argc, char *argv[]);
 
-    ts::DuckContext       duck;            // Execution context.
-    ts::UStringVector     infiles;         // Input file names.
-    ts::UString           outfile;         // Output file path.
-    bool                  outdir;          // Output name is a directory.
-    bool                  compile;         // Explicit compilation.
-    bool                  decompile;       // Explicit decompilation.
-    bool                  packAndFlush;    // Pack and flush incomplete tables before exiting.
-    bool                  xmlModel;        // Display XML model instead of compilation.
-    bool                  withExtensions;  // XML model with extensions.
-    ts::xml::Tweaks       xmlTweaks;       // XML formatting options.
-    const ts::DVBCharset* defaultCharset;  // Default DVB character set to interpret strings.
-};
+        ts::DuckContext     duck;            // Execution context.
+        ts::UStringVector   infiles;         // Input file names.
+        ts::UString         outfile;         // Output file path.
+        bool                outdir;          // Output name is a directory.
+        bool                compile;         // Explicit compilation.
+        bool                decompile;       // Explicit decompilation.
+        bool                xmlModel;        // Display XML model instead of compilation.
+        bool                withExtensions;  // XML model with extensions.
+        ts::SectionFileArgs sectionOptions;  // Section file processing options.
+        ts::xml::Tweaks     xmlTweaks;       // XML formatting options.
+    };
+}
 
-// Destructor.
-Options::~Options() {}
-
-// Constructor.
 Options::Options(int argc, char *argv[]) :
     Args(u"PSI/SI tables compiler", u"[options] filename ..."),
     duck(this),
@@ -86,14 +83,14 @@ Options::Options(int argc, char *argv[]) :
     outdir(false),
     compile(false),
     decompile(false),
-    packAndFlush(false),
     xmlModel(false),
     withExtensions(false),
-    xmlTweaks(),
-    defaultCharset(nullptr)
+    sectionOptions(),
+    xmlTweaks()
 {
     duck.defineArgsForStandards(*this);
-    duck.defineArgsForDVBCharset(*this);
+    duck.defineArgsForCharset(*this);
+    sectionOptions.defineArgs(*this);
     xmlTweaks.defineArgs(*this);
 
     option(u"", 0, STRING);
@@ -116,12 +113,6 @@ Options::Options(int argc, char *argv[]) :
     help(u"extensions",
          u"With --xml-model, include the content of the available extensions.");
 
-    option(u"pack-and-flush");
-    help(u"pack-and-flush",
-         u"When loading a binary file for decompilation, pack incomplete tables, "
-         u"ignoring missing sections, and flush them. "
-         u"Use with care because this may create inconsistent tables.");
-
     option(u"output", 'o', STRING);
     help(u"output", u"filepath",
          u"Specify the output file name. By default, the output file has the same "
@@ -140,13 +131,13 @@ Options::Options(int argc, char *argv[]) :
     analyze(argc, argv);
 
     duck.loadArgs(*this);
+    sectionOptions.loadArgs(duck, *this);
     xmlTweaks.loadArgs(duck, *this);
 
     getValues(infiles, u"");
     getValue(outfile, u"output");
     compile = present(u"compile");
     decompile = present(u"decompile");
-    packAndFlush = present(u"pack-and-flush");
     xmlModel = present(u"xml-model");
     withExtensions = present(u"extensions");
     outdir = !outfile.empty() && ts::IsDirectory(outfile);
@@ -159,12 +150,6 @@ Options::Options(int argc, char *argv[]) :
     }
     if (compile && decompile) {
         error(u"specify either --compile or --decompile but not both");
-    }
-
-    // Get default character set.
-    const ts::UString csName(value(u"default-charset"));
-    if (!csName.empty() && (defaultCharset = ts::DVBCharset::GetCharset(csName)) == nullptr) {
-        error(u"invalid character set name '%s", {csName});
     }
 
     exitOnError();
@@ -267,21 +252,16 @@ namespace {
         else if (compile) {
             // Load XML file and save binary sections.
             opt.verbose(u"Compiling %s to %s", {infile, outname});
-            return file.loadXML(infile, report) && file.saveBinary(outname, report);
+            return file.loadXML(infile, report) &&
+                   opt.sectionOptions.processSectionFile(file, report) &&
+                   file.saveBinary(outname, report);
         }
         else {
             // Load binary sections and save XML file.
             opt.verbose(u"Decompiling %s to %s", {infile, outname});
-            if (!file.loadBinary(infile, report)) {
-                return false;
-            }
-            if (opt.packAndFlush) {
-                const size_t packed = file.packOrphanSections();
-                if (packed > 0) {
-                    opt.verbose(u"Packed %d incomplete tables, may be invalid", {packed});
-                }
-            }
-            return file.saveXML(outname, report);
+            return file.loadBinary(infile, report) &&
+                   opt.sectionOptions.processSectionFile(file, report) &&
+                   file.saveXML(outname, report);
         }
     }
 }

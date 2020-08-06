@@ -30,35 +30,34 @@
 #include "tsAncillaryDataDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"ancillary_data_descriptor"
+#define MY_CLASS ts::AncillaryDataDescriptor
 #define MY_DID ts::DID_ANCILLARY_DATA
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::AncillaryDataDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::AncillaryDataDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::AncillaryDataDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::AncillaryDataDescriptor::AncillaryDataDescriptor(uint8_t id) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     ancillary_data_identifier(id)
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::AncillaryDataDescriptor::clearContent()
+{
+    ancillary_data_identifier = 0;
+}
 
 ts::AncillaryDataDescriptor::AncillaryDataDescriptor(DuckContext& duck, const Descriptor& desc) :
     AncillaryDataDescriptor()
@@ -85,7 +84,7 @@ void ts::AncillaryDataDescriptor::serialize(DuckContext& duck, Descriptor& desc)
 
 void ts::AncillaryDataDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 1;
 
     if (_is_valid) {
         ancillary_data_identifier = GetUInt8(desc.payload());
@@ -99,7 +98,8 @@ void ts::AncillaryDataDescriptor::deserialize(DuckContext& duck, const Descripto
 
 void ts::AncillaryDataDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -131,9 +131,7 @@ void ts::AncillaryDataDescriptor::buildXML(DuckContext& duck, xml::Element* root
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AncillaryDataDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AncillaryDataDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(ancillary_data_identifier, u"ancillary_data_identifier", true);
+    return element->getIntAttribute<uint8_t>(ancillary_data_identifier, u"ancillary_data_identifier", true);
 }

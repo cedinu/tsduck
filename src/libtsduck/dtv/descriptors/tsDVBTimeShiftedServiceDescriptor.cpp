@@ -30,19 +30,18 @@
 #include "tsDVBTimeShiftedServiceDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DVB_time_shifted_service_descriptor"
 #define MY_XML_NAME_LEGACY u"time_shifted_service_descriptor"
+#define MY_CLASS ts::DVBTimeShiftedServiceDescriptor
 #define MY_DID ts::DID_TIME_SHIFT_SERVICE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBTimeShiftedServiceDescriptor, MY_XML_NAME);
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBTimeShiftedServiceDescriptor, MY_XML_NAME_LEGACY);
-TS_ID_DESCRIPTOR_FACTORY(ts::DVBTimeShiftedServiceDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::DVBTimeShiftedServiceDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor, MY_XML_NAME_LEGACY);
 
 
 //----------------------------------------------------------------------------
@@ -50,16 +49,20 @@ TS_FACTORY_REGISTER(ts::DVBTimeShiftedServiceDescriptor::DisplayDescriptor, ts::
 //----------------------------------------------------------------------------
 
 ts::DVBTimeShiftedServiceDescriptor::DVBTimeShiftedServiceDescriptor() :
-    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
+    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0, MY_XML_NAME_LEGACY),
     reference_service_id(0)
 {
-    _is_valid = true;
 }
 
 ts::DVBTimeShiftedServiceDescriptor::DVBTimeShiftedServiceDescriptor(DuckContext& duck, const Descriptor& desc) :
     DVBTimeShiftedServiceDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::DVBTimeShiftedServiceDescriptor::clearContent()
+{
+    reference_service_id = 0;
 }
 
 
@@ -81,7 +84,7 @@ void ts::DVBTimeShiftedServiceDescriptor::serialize(DuckContext& duck, Descripto
 
 void ts::DVBTimeShiftedServiceDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 2;
 
     if (_is_valid) {
         const uint8_t* data = desc.payload();
@@ -96,7 +99,8 @@ void ts::DVBTimeShiftedServiceDescriptor::deserialize(DuckContext& duck, const D
 
 void ts::DVBTimeShiftedServiceDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 2) {
@@ -123,9 +127,7 @@ void ts::DVBTimeShiftedServiceDescriptor::buildXML(DuckContext& duck, xml::Eleme
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DVBTimeShiftedServiceDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DVBTimeShiftedServiceDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element, MY_XML_NAME_LEGACY) &&
-        element->getIntAttribute<uint16_t>(reference_service_id, u"reference_service_id", true);
+    return element->getIntAttribute<uint16_t>(reference_service_id, u"reference_service_id", true);
 }

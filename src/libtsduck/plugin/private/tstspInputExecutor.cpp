@@ -42,12 +42,13 @@ TSDUCK_SOURCE;
 //----------------------------------------------------------------------------
 
 ts::tsp::InputExecutor::InputExecutor(const TSProcessorArgs& options,
+                                      const PluginEventHandlerRegistry& handlers,
                                       const PluginOptions& pl_options,
                                       const ThreadAttributes& attributes,
                                       Mutex& global_mutex,
                                       Report* report) :
 
-    PluginExecutor(options, INPUT_PLUGIN, pl_options, attributes, global_mutex, report),
+    PluginExecutor(options, handlers, PluginType::INPUT, pl_options, attributes, global_mutex, report),
     _input(dynamic_cast<InputPlugin*>(PluginThread::plugin())),
     _in_sync_lost(false),
     _instuff_start_remain(options.instuff_start),
@@ -58,7 +59,8 @@ ts::tsp::InputExecutor::InputExecutor(const TSProcessorArgs& options,
     _dts_analyzer(),
     _use_dts_analyzer(false),
     _watchdog(this, options.receive_timeout, 0, *this),
-    _use_watchdog(false)
+    _use_watchdog(false),
+    _start_time(true) // initialized with current system time
 {
     // Configure PTS/DTS analyze
     _dts_analyzer.resetAndUseDTS(MIN_ANALYZE_PID, MIN_ANALYZE_DTS);
@@ -80,8 +82,9 @@ bool ts::tsp::InputExecutor::initAllBuffers(PacketBuffer* buffer, PacketMetadata
     // Pre-declare buffer for input plugin.
     initBuffer(buffer, metadata, 0, buffer->count(), false, false, 0);
 
-    // Pre-load half of the buffer with packets from the input device.
-    const size_t pkt_read = receiveAndStuff(0, buffer->count() / 2);
+    // Pre-load half of the buffer (the default) with packets from the input device.
+    const size_t init_packets = _options.init_input_pkt == 0 ? buffer->count() / 2 : std::min(_options.init_input_pkt, buffer->count());
+    const size_t pkt_read = receiveAndStuff(0, init_packets);
 
     if (pkt_read == 0) {
         return false; // receive error
@@ -152,13 +155,40 @@ ts::BitRate ts::tsp::InputExecutor::getBitrate()
 
 
 //----------------------------------------------------------------------------
+// This method sets the current processor in an abort state.
+//----------------------------------------------------------------------------
+
+void ts::tsp::InputExecutor::setAbort()
+{
+    // Call the superclass to place the executor in an abort state.
+    PluginExecutor::setAbort();
+
+    // Abort current input operation if still blocked.
+    if (_input != nullptr) {
+        _input->abortInput();
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// Implementation of TSP: return the packet index in the chain.
+//----------------------------------------------------------------------------
+
+size_t ts::tsp::InputExecutor::pluginIndex() const
+{
+    // An input plugin is always first.
+    return 0;
+}
+
+
+//----------------------------------------------------------------------------
 // Implementation of WatchDogHandlerInterface
 //----------------------------------------------------------------------------
 
 void ts::tsp::InputExecutor::handleWatchDogTimeout(WatchDog& watchdog)
 {
     debug(u"receive timeout, aborting");
-    if (!_input->abortInput()) {
+    if (_input != nullptr && !_input->abortInput()) {
         warning(u"failed to abort input on receive timeout, maybe not supported by this plugin");
     }
 }
@@ -217,6 +247,15 @@ size_t ts::tsp::InputExecutor::receiveAndValidate(size_t index, size_t max_packe
         _watchdog.suspend();
     }
 
+    // Fill input time stamps with monotonic clock if none was provided by the input plugin.
+    // Only check the first returned packet. Assume that the input plugin generates time stamps for all or none.
+    if (count > 0 && !data[0].hasInputTimeStamp()) {
+        const NanoSecond current = Monotonic(true) - _start_time;
+        for (size_t n = 0; n < count; ++n) {
+            data[n].setInputTimeStamp(current, NanoSecPerSec, TimeSource::TSP);
+        }
+    }
+
     // Validate sync byte (0x47) at beginning of each packet
     for (size_t n = 0; n < count; ++n) {
         if (pkt[n].hasValidSync()) {
@@ -261,6 +300,9 @@ size_t ts::tsp::InputExecutor::receiveAndStuff(size_t index, size_t max_packets)
     size_t pkt_done = 0;              // Number of received packets in buffer
     size_t pkt_remain = max_packets;  // Remaining number of packets to read
     size_t pkt_from_input = 0;        // Number of packets actually read from plugin
+
+    // Check if the remaining initial null packets will fill the buffer.
+    const bool instuff_start_only = _instuff_start_remain >= max_packets;
 
     // If initial stuffing not yet completed, add initial stuffing.
     while (_instuff_start_remain > 0 && pkt_remain > 0) {
@@ -323,8 +365,9 @@ size_t ts::tsp::InputExecutor::receiveAndStuff(size_t index, size_t max_packets)
     }
 
     // Return number of packets which were added into the packet buffer.
-    // In case if end of input, no need to return initial null packets (if any).
-    return pkt_from_input == 0 ? 0 : pkt_done;
+    // In case of end of input (pkt_from_input == 0), no need to return initial null packets (if any).
+    // Except if there are so many initial null packets that they did not yet let space for the actual input.
+    return pkt_from_input == 0 && !instuff_start_only ? 0 : pkt_done;
 }
 
 

@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsTuner.h"
 #include "tsTunerArgs.h"
@@ -46,12 +45,12 @@ TSDUCK_SOURCE;
 //----------------------------------------------------------------------------
 
 namespace ts {
-    class DVBInput: public InputPlugin
+    class DVBInputPlugin: public InputPlugin
     {
-        TS_NOBUILD_NOCOPY(DVBInput);
+        TS_NOBUILD_NOCOPY(DVBInputPlugin);
     public:
         // Implementation of plugin API
-        DVBInput(TSP*);
+        DVBInputPlugin(TSP*);
         virtual bool getOptions() override;
         virtual bool start() override;
         virtual bool stop() override;
@@ -70,15 +69,14 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_INPUT(dvb, ts::DVBInput)
+TS_REGISTER_INPUT_PLUGIN(u"dvb", ts::DVBInputPlugin);
 
 
 //----------------------------------------------------------------------------
 // Constructor
 //----------------------------------------------------------------------------
 
-ts::DVBInput::DVBInput(TSP* tsp_) :
+ts::DVBInputPlugin::DVBInputPlugin(TSP* tsp_) :
     InputPlugin(tsp_, u"DVB receiver device input", u"[options]"),
     _tuner(duck),
     _tuner_args(false, true),
@@ -94,7 +92,7 @@ ts::DVBInput::DVBInput(TSP* tsp_) :
 // Command line options method
 //----------------------------------------------------------------------------
 
-bool ts::DVBInput::getOptions()
+bool ts::DVBInputPlugin::getOptions()
 {
     // Get common tuning options from command line
     duck.loadArgs(*this);
@@ -107,7 +105,7 @@ bool ts::DVBInput::getOptions()
 // Set receive timeout from tsp.
 //----------------------------------------------------------------------------
 
-bool ts::DVBInput::setReceiveTimeout(MilliSecond timeout)
+bool ts::DVBInputPlugin::setReceiveTimeout(MilliSecond timeout)
 {
     if (timeout > 0) {
         _tuner_args.receive_timeout = timeout;
@@ -120,7 +118,7 @@ bool ts::DVBInput::setReceiveTimeout(MilliSecond timeout)
 // Start method
 //----------------------------------------------------------------------------
 
-bool ts::DVBInput::start()
+bool ts::DVBInputPlugin::start()
 {
     // Check if tuner is already open.
     if (_tuner.isOpen()) {
@@ -131,7 +129,7 @@ bool ts::DVBInput::start()
     _previous_bitrate = 0;
 
     // Open DVB tuner
-    if (!_tuner_args.configureTuner(_tuner, *tsp) || !_tuner_args.resolveChannel(_tuner.deliverySystems(), *tsp)) {
+    if (!_tuner_args.configureTuner(_tuner, *tsp)) {
         return false;
     }
     tsp->verbose(u"using %s (%s)", {_tuner.deviceName(), _tuner.deliverySystems().toString()});
@@ -176,7 +174,7 @@ bool ts::DVBInput::start()
 // Stop method
 //----------------------------------------------------------------------------
 
-bool ts::DVBInput::stop()
+bool ts::DVBInputPlugin::stop()
 {
     _tuner.stop(*tsp);
     _tuner.close(*tsp);
@@ -188,7 +186,7 @@ bool ts::DVBInput::stop()
 // Get input bitrate method
 //----------------------------------------------------------------------------
 
-ts::BitRate ts::DVBInput::getBitrate()
+ts::BitRate ts::DVBInputPlugin::getBitrate()
 {
     // The bitrate is entirely based on the transponder characteristics
     // such as symbol rate, number of bits per symbol (modulation),
@@ -219,7 +217,7 @@ ts::BitRate ts::DVBInput::getBitrate()
 // Input method
 //----------------------------------------------------------------------------
 
-size_t ts::DVBInput::receive(TSPacket* buffer, TSPacketMetadata* pkt_data, size_t max_packets)
+size_t ts::DVBInputPlugin::receive(TSPacket* buffer, TSPacketMetadata* pkt_data, size_t max_packets)
 {
     return _tuner.receive(buffer, max_packets, tsp, *tsp);
 }

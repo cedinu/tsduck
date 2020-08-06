@@ -116,6 +116,19 @@ namespace ts {
         UString toXML(Report& report = CERR) const;
 
         //!
+        //! Get the file name from which the channel database was loaded.
+        //! @return The file name. Empty string if no file was loaded.
+        //!
+        UString fileName() const { return _fileName; }
+
+        //!
+        //! Get a description of the file from which the channel database was loaded.
+        //! Typically used in error or debug messages.
+        //! @return The file name or description. Never empty.
+        //!
+        UString fileDescription() const;
+
+        //!
         //! Default XML channel file name.
         //! @return The default file name.
         //!
@@ -214,7 +227,7 @@ namespace ts {
             //! @param [in] replace If true, replace a service with same id if it already exists.
             //! @return True if the service has been added. False if @a replace is false and a service with same id already exists.
             //!
-            bool addService(const ServicePtr& srv, CopyShare copy = SHARE, bool replace = true);
+            bool addService(const ServicePtr& srv, ShareMode copy = ShareMode::SHARE, bool replace = true);
 
             //!
             //! Add a list of services in the transport stream.
@@ -374,7 +387,7 @@ namespace ts {
 
         //!
         //! Get tuner parameters from a service name in any network of a given type of the file.
-        //! @param [out] tune Returned modulation parameters.
+        //! @param [out] tune Returned modulation parameters. Unmodified if the channel is not found.
         //! @param [in] delsys Search only for these delivery systems. If empty, search any network.
         //! @param [in] name Service name.
         //! @param [in] strict If true, search exactly @a name.
@@ -397,7 +410,7 @@ namespace ts {
         bool generateDocument(xml::Document& doc) const;
 
         // Convert modulation parameters to and from XML.
-        bool fromXML(ModulationArgs& mod, const xml::Element* element, TunerType tunerType);
+        bool fromXML(ModulationArgs& mod, const xml::Element* element, TunerType tunerType, uint16_t ts_id);
         xml::Element* toXML(const ModulationArgs& mod, xml::Element* parent) const;
     };
 }

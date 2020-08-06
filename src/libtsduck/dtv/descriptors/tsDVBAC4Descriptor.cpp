@@ -31,40 +31,46 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DVB_AC4_descriptor"
 #define MY_XML_NAME_LEGACY u"AC4_descriptor"
+#define MY_CLASS ts::DVBAC4Descriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_AC4
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBAC4Descriptor, MY_XML_NAME);
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBAC4Descriptor, MY_XML_NAME_LEGACY);
-TS_ID_DESCRIPTOR_FACTORY(ts::DVBAC4Descriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::DVBAC4Descriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor, MY_XML_NAME_LEGACY);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::DVBAC4Descriptor::DVBAC4Descriptor() :
-    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
+    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0, MY_XML_NAME_LEGACY),
     ac4_dialog_enhancement_enabled(),
     ac4_channel_mode(),
     ac4_dsi_toc(),
     additional_info()
 {
-    _is_valid = true;
 }
 
 
 //----------------------------------------------------------------------------
 // Constructor from a binary descriptor
 //----------------------------------------------------------------------------
+
+void ts::DVBAC4Descriptor::clearContent()
+{
+    ac4_dialog_enhancement_enabled.clear();
+    ac4_channel_mode.clear();
+    ac4_dsi_toc.clear();
+    additional_info.clear();
+}
 
 ts::DVBAC4Descriptor::DVBAC4Descriptor(DuckContext& duck, const Descriptor& desc) :
     DVBAC4Descriptor()
@@ -103,10 +109,10 @@ void ts::DVBAC4Descriptor::deserialize(DuckContext& duck, const Descriptor& desc
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 2 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 2 && data[0] == MY_EDID;
 
-    ac4_dialog_enhancement_enabled.reset();
-    ac4_channel_mode.reset();
+    ac4_dialog_enhancement_enabled.clear();
+    ac4_channel_mode.clear();
     ac4_dsi_toc.clear();
     additional_info.clear();
 
@@ -154,7 +160,8 @@ void ts::DVBAC4Descriptor::DisplayDescriptor(TablesDisplay& display, DID did, co
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -170,21 +177,14 @@ void ts::DVBAC4Descriptor::DisplayDescriptor(TablesDisplay& display, DID did, co
         }
         if ((flags & 0x40) != 0 && size >= 1) {
             const size_t toc_size = std::min<size_t>(data[0], size - 1);
-            if (toc_size > 0) {
-                strm << margin << "AC-4 TOC (in DSI):" << std::endl
-                     << UString::Dump(data + 1, toc_size, UString::HEXA | UString::ASCII | UString::OFFSET, indent + 2);
-
-            }
+            display.displayPrivateData(u"AC-4 TOC (in DSI)", data + 1, toc_size, indent);
             data += 1 + toc_size; size -= 1 + toc_size;
         }
-        if (size > 0) {
-            strm << margin << "Additional information:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent + 2);
-            data += size; size = 0;
-        }
+        display.displayPrivateData(u"Additional information", data, size, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 
@@ -197,10 +197,10 @@ void ts::DVBAC4Descriptor::buildXML(DuckContext& duck, xml::Element* root) const
     root->setOptionalBoolAttribute(u"ac4_dialog_enhancement_enabled", ac4_dialog_enhancement_enabled);
     root->setOptionalIntAttribute(u"ac4_channel_mode", ac4_channel_mode);
     if (!ac4_dsi_toc.empty()) {
-        root->addElement(u"ac4_dsi_toc")->addHexaText(ac4_dsi_toc);
+        root->addHexaTextChild(u"ac4_dsi_toc", ac4_dsi_toc);
     }
     if (!additional_info.empty()) {
-        root->addElement(u"additional_info")->addHexaText(additional_info);
+        root->addHexaTextChild(u"additional_info", additional_info);
     }
 }
 
@@ -209,12 +209,10 @@ void ts::DVBAC4Descriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DVBAC4Descriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DVBAC4Descriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element, MY_XML_NAME_LEGACY) &&
-        element->getOptionalBoolAttribute(ac4_dialog_enhancement_enabled, u"ac4_dialog_enhancement_enabled") &&
-        element->getOptionalIntAttribute<uint8_t>(ac4_channel_mode, u"ac4_channel_mode", 0, 3) &&
-        element->getHexaTextChild(ac4_dsi_toc, u"ac4_dsi_toc", false, 0, MAX_DESCRIPTOR_SIZE - 6) &&
-        element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 6 - ac4_dsi_toc.size());
+    return element->getOptionalBoolAttribute(ac4_dialog_enhancement_enabled, u"ac4_dialog_enhancement_enabled") &&
+           element->getOptionalIntAttribute<uint8_t>(ac4_channel_mode, u"ac4_channel_mode", 0, 3) &&
+           element->getHexaTextChild(ac4_dsi_toc, u"ac4_dsi_toc", false, 0, MAX_DESCRIPTOR_SIZE - 6) &&
+           element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 6 - ac4_dsi_toc.size());
 }

@@ -40,7 +40,6 @@ namespace ts {
 
     class ByteBlock;
     class UString;
-    class DVBCharset;
 
     //!
     //! Direction used on string operations.
@@ -86,7 +85,6 @@ namespace ts {
     //!
     //! - Explicit and implicit(*) conversions between UTF-8 and UTF-16.
     //! - Including automatic conversion to UTF-8 when writing to text streams.
-    //! - Conversions with DVB character sets.
     //! - Conversions with HTML encoding.
     //! - Conversions with JSON encoding.
     //! - Management of "display width", that is to say the amount of space which
@@ -120,15 +118,6 @@ namespace ts {
     //! us.assignFromUTF8(s);      // always ok, probably faster
     //! us = s;                    // only if implicit conversions are enabled
     //! @endcode
-    //!
-    //! Unicode strings can be converted to and from DVB strings. Most DVB-defined
-    //! character sets are implemented (see the class DVBCharset) and recognized
-    //! when a string is read from a descriptor.
-    //!
-    //! When a string is serialized into a binary DVB descriptor, the
-    //! most appropriate DVB character set is used. In practice, a few known DVB
-    //! character sets are used and when the string cannot be encoded in any of
-    //! them UTF-8 is used (UTF-8 is a valid DVB character set).
     //!
     //! Warning for maintainers: The standard classes @c std::u16string and @c std::basic_string
     //! do not have virtual destructors. The means that if a UString is destroyed through, for
@@ -461,96 +450,6 @@ namespace ts {
         //! @param [in] outEnd Address after the end of the output UTF-16 buffer to fill.
         //!
         static void ConvertUTF8ToUTF16(const char*& inStart, const char* inEnd, UChar*& outStart, UChar* outEnd);
-
-        //!
-        //! Convert a DVB string into UTF-16.
-        //! @param [in] dvb A string in DVB representation.
-        //! The first bytes of the string indicate the DVB character set to use.
-        //! @param [in] charset If not zero, use this character set if no explicit table
-        //! code is present, instead of the standard default ISO-6937.
-        //! @return The equivalent UTF-16 string. Stop on untranslatable character, if any.
-        //! @see ETSI EN 300 468, Annex A.
-        //!
-        static UString FromDVB(const std::string& dvb, const DVBCharset* charset = nullptr)
-        {
-            return FromDVB(reinterpret_cast<const uint8_t*>(dvb.data()), dvb.size(), charset);
-        }
-
-        //!
-        //! Convert a DVB string into UTF-16.
-        //! @param [in] dvb Address of a string in DVB representation.
-        //! The first bytes of the string indicate the DVB character set to use.
-        //! @param [in] dvbSize Size in bytes of the DVB string.
-        //! @param [in] charset If not zero, use this character set if no explicit table
-        //! code is present, instead of the standard default ISO-6937.
-        //! @return The equivalent UTF-16 string. Stop on untranslatable character, if any.
-        //! @see ETSI EN 300 468, Annex A.
-        //!
-        static UString FromDVB(const uint8_t* dvb, size_type dvbSize, const DVBCharset* charset = nullptr);
-
-        //!
-        //! Convert a DVB string into UTF-16 (preceded by its one-byte length).
-        //! @param [in,out] buffer Address of a buffer containing a DVB string to read.
-        //! The first byte in the buffer is the length in bytes of the string.
-        //! Upon return, @a buffer is updated to point after the end of the string.
-        //! @param [in,out] size Size in bytes of the buffer, which may be larger than
-        //! the DVB string. Upon return, @a size is updated, decremented by the same amount
-        //! @a buffer was incremented.
-        //! @param [in] charset If not zero, use this character set if no explicit table
-        //! code is present, instead of the standard default ISO-6937.
-        //! @return The equivalent UTF-16 string. Stop on untranslatable character, if any.
-        //! @see ETSI EN 300 468, Annex A.
-        //!
-        static UString FromDVBWithByteLength(const uint8_t*& buffer, size_t& size, const DVBCharset* charset = nullptr);
-
-        //!
-        //! Encode this UTF-16 string into a DVB string.
-        //! Stop either when this string is serialized or when the buffer is full, whichever comes first.
-        //! @param [in,out] buffer Address of the buffer where the DVB string is written.
-        //! The address is updated to point after the encoded value.
-        //! @param [in,out] size Size of the buffer. Updated to remaining size.
-        //! @param [in] start Starting offset to convert in this UTF-16 string.
-        //! @param [in] count Maximum number of characters to convert.
-        //! @param [in] charset Preferred character set for DVB encoding. If omitted or if the string cannot
-        //! be represented in the specified character set, an alternative one will be automatically selected.
-        //! @return The number of serialized characters (which is usually not the same as the number of written bytes).
-        //!
-        size_type toDVB(uint8_t*& buffer, size_t& size, size_type start = 0, size_type count = NPOS, const DVBCharset* charset = nullptr) const;
-
-        //!
-        //! Encode this UTF-16 string into a DVB string.
-        //! @param [in] start Starting offset to convert in this UTF-16 string.
-        //! @param [in] count Maximum number of characters to convert.
-        //! @param [in] charset Preferred character set for DVB encoding. If omitted or if the string cannot
-        //! be represented in the specified character set, an alternative one will be automatically selected.
-        //! @return The DVB string.
-        //!
-        ByteBlock toDVB(size_type start = 0, size_type count = NPOS, const DVBCharset* charset = nullptr) const;
-
-        //!
-        //! Encode this UTF-16 string into a DVB string (preceded by its one-byte length).
-        //! Stop either when this string is serialized or when the buffer is full or when 255 bytes are written, whichever comes first.
-        //! @param [in,out] buffer Address of the buffer where the DVB string is written.
-        //! The first byte will receive the size in bytes of the DVB string.
-        //! The address is updated to point after the encoded value.
-        //! @param [in,out] size Size of the buffer. Updated to remaining size.
-        //! @param [in] start Starting offset to convert in this UTF-16 string.
-        //! @param [in] count Maximum number of characters to convert.
-        //! @param [in] charset Preferred character set for DVB encoding. If omitted or if the string cannot
-        //! be represented in the specified character set, an alternative one will be automatically selected.
-        //! @return The number of serialized characters (which is usually not the same as the number of written bytes).
-        //!
-        size_type toDVBWithByteLength(uint8_t*& buffer, size_t& size, size_type start = 0, size_type count = NPOS, const DVBCharset* charset = nullptr) const;
-
-        //!
-        //! Encode this UTF-16 string into a DVB string (preceded by its one-byte length).
-        //! @param [in] start Starting offset to convert in this UTF-16 string.
-        //! @param [in] count Maximum number of characters to convert.
-        //! @param [in] charset Preferred character set for DVB encoding. If omitted or if the string cannot
-        //! be represented in the specified character set, an alternative one will be automatically selected.
-        //! @return The DVB string with the initial length byte.
-        //!
-        ByteBlock toDVBWithByteLength(size_type start = 0, size_type count = NPOS, const DVBCharset* charset = nullptr) const;
 
         //!
         //! Assign from a @c std::vector of 16-bit characters of any type.
@@ -921,7 +820,24 @@ namespace ts {
         //! i.e. all leading and trailing space characters are removed.
         //!
         template <class CONTAINER>
-        void split(CONTAINER& container, UChar separator = COMMA, bool trimSpaces = true, bool removeEmpty = false) const;
+        void split(CONTAINER& container, UChar separator = COMMA, bool trimSpaces = true, bool removeEmpty = false) const
+        {
+            container.clear();
+            splitAppend(container, separator, trimSpaces, removeEmpty);
+        }
+
+        //!
+        //! Split the string into segments based on a separator character (comma by default).
+        //! @tparam CONTAINER A container class of @c UString as defined by the C++ Standard Template Library (STL).
+        //! @param [in,out] container A container of @c UString which receives the segments of the splitted string.
+        //! The strings are appended to the container without erasing previous content.
+        //! @param [in] separator The character which is used to separate the segments.
+        //! @param [in] trimSpaces If true (the default), each segment is trimmed,
+        //! @param [in] removeEmpty If true, empty segments are ignored
+        //! i.e. all leading and trailing space characters are removed.
+        //!
+        template <class CONTAINER>
+        void splitAppend(CONTAINER& container, UChar separator = COMMA, bool trimSpaces = true, bool removeEmpty = false) const;
 
         //!
         //! Split the string into shell-style arguments.
@@ -932,7 +848,23 @@ namespace ts {
         //! @param [out] container A container of @c UString which receives the segments of the splitted string.
         //!
         template <class CONTAINER>
-        void splitShellStyle(CONTAINER& container) const;
+        void splitShellStyle(CONTAINER& container) const
+        {
+            container.clear();
+            splitShellStyleAppend(container);
+        }
+
+        //!
+        //! Split the string into shell-style arguments.
+        //! Spaces are used as argument delimiters.
+        //! Arguments can be quoted using single or double quotes.
+        //! Any character can be escaped using a backslash.
+        //! @tparam CONTAINER A container class of @c UString as defined by the C++ Standard Template Library (STL).
+        //! @param [in,out] container A container of @c UString which receives the segments of the splitted string.
+        //! The strings are appended to the container without erasing previous content.
+        //!
+        template <class CONTAINER>
+        void splitShellStyleAppend(CONTAINER& container) const;
 
         //!
         //! Split a string into segments which are identified by their starting / ending characters (respectively "[" and "]" by default).
@@ -944,7 +876,24 @@ namespace ts {
         //! i.e. all leading and trailing space characters are removed.
         //!
         template <class CONTAINER>
-        void splitBlocks(CONTAINER& container, UChar startWith = UChar('['), UChar endWith = UChar(']'), bool trimSpaces = true) const;
+        void splitBlocks(CONTAINER& container, UChar startWith = UChar('['), UChar endWith = UChar(']'), bool trimSpaces = true) const
+        {
+            container.clear();
+            splitBlocksAppend(container, startWith, endWith, trimSpaces);
+        }
+
+        //!
+        //! Split a string into segments which are identified by their starting / ending characters (respectively "[" and "]" by default).
+        //! @tparam CONTAINER A container class of @c UString as defined by the C++ Standard Template Library (STL).
+        //! @param [in,out] container A container of @c UString which receives the segments of the splitted string.
+        //! The strings are appended to the container without erasing previous content.
+        //! @param [in] startWith The character which is used to identify the start of a segment of @a input.
+        //! @param [in] endWith The character which is used to identify the end of a segment of @a input.
+        //! @param [in] trimSpaces If true (the default), each segment is trimmed,
+        //! i.e. all leading and trailing space characters are removed.
+        //!
+        template <class CONTAINER>
+        void splitBlocksAppend(CONTAINER& container, UChar startWith = UChar('['), UChar endWith = UChar(']'), bool trimSpaces = true) const;
 
         //!
         //! Split a string into multiple lines which are not longer than a specified maximum width.
@@ -965,7 +914,33 @@ namespace ts {
                         size_type maxWidth,
                         const UString& otherSeparators = UString(),
                         const UString& nextMargin = UString(),
-                        bool forceSplit = false) const;
+                        bool forceSplit = false) const
+        {
+            container.clear();
+            splitLinesAppend(container, maxWidth, otherSeparators, nextMargin, forceSplit);
+        }
+
+        //!
+        //! Split a string into multiple lines which are not longer than a specified maximum width.
+        //! The splits occur on spaces or after any character in @a otherSeparators.
+        //! @tparam CONTAINER A container class of @c UString as defined by the C++ Standard Template Library (STL).
+        //! @param [in,out] container A container of @c UString which receives the lines of the splitted string.
+        //! The strings are appended to the container without erasing previous content.
+        //! @param [in] maxWidth Maximum width of each resulting line.
+        //! @param [in] otherSeparators A string containing all characters which
+        //! are acceptable as line break points (in addition to space characters
+        //! which are always potential line break points).
+        //! @param [in] nextMargin A string which is prepended to all lines after the first one.
+        //! @param [in] forceSplit If true, longer lines without separators
+        //! are split at the maximum width (by default, longer lines without
+        //! separators are not split, resulting in lines longer than @a maxWidth).
+        //!
+        template <class CONTAINER>
+        void splitLinesAppend(CONTAINER& container,
+                              size_type maxWidth,
+                              const UString& otherSeparators = UString(),
+                              const UString& nextMargin = UString(),
+                              bool forceSplit = false) const;
 
         //!
         //! Split a string into multiple lines which are not longer than a specified maximum width.
@@ -1633,6 +1608,7 @@ namespace ts {
         //! - @c \%\% : Insert a literal \%.
         //!
         //! The allowed options, between the '\%' and the letter are, in this order:
+        //! - @c < : Reuse previous argument value, do not advance in argument list.
         //! - @c - : Left-justified (right-justified by default).
         //! - @c + : Force a '+' sign with positive decimal integers or floating point values (@c \%d or @c \%f only).
         //! - @c 0 : Zero padding for integers. This is the default with @c \%x and @c \%X.
@@ -1643,8 +1619,8 @@ namespace ts {
         //! - @c ' : For integer conversions, use a separator for groups of thousands.
         //! - @c * : Can be used instead of @e digits. The integer value is taken from the argument list.
         //!
-        //! Since the argument list is typed, it is possible to mix integers and strings of various types
-        //! and sizes. Example:
+        //! Since the argument list is typed, it is possible to mix integers and strings of various types and sizes.
+        //! Example:
         //! @code
         //! int i = -1234;
         //! uint16_t u16 = 128;
@@ -1904,18 +1880,20 @@ namespace ts {
         //!
         //! Interpret this string as a sequence of hexadecimal digits (ignore blanks).
         //! @param [out] result Decoded bytes.
+        //! @param [in] c_style If true, allow "C-style" aggregate (ignore commas, braces and "0x").
         //! @return True on success, false on error (invalid hexa format).
         //! When returning false, the result contains everything that could be decoded before getting the error.
         //!
-        bool hexaDecode(ByteBlock& result) const;
+        bool hexaDecode(ByteBlock& result, bool c_style = false) const;
 
         //!
         //! Interpret this string as a sequence of hexadecimal digits (ignore blanks).
         //! @param [in,out] result The decoded bytes are added at the end of the previous content.
+        //! @param [in] c_style If true, allow "C-style" aggregate (ignore commas, braces and "0x").
         //! @return True on success, false on error (invalid hexa format).
         //! When returning false, the result contains everything that could be decoded before getting the error.
         //!
-        bool hexaDecodeAppend(ByteBlock& result) const;
+        bool hexaDecodeAppend(ByteBlock& result, bool c_style = false) const;
 
         //!
         //! Append an array of C-strings to a container of strings.
@@ -2191,6 +2169,7 @@ namespace ts {
 
             UString&          _result;  //!< Result string.
             ArgIterator       _arg;     //!< Current argument.
+            ArgIterator       _prev;    //!< Previous argument.
             const ArgIterator _end;     //!< After last argument.
 
             //!

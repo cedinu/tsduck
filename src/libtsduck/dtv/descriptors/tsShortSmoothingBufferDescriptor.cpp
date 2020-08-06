@@ -30,18 +30,18 @@
 #include "tsShortSmoothingBufferDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"short_smoothing_buffer_descriptor"
+#define MY_CLASS ts::ShortSmoothingBufferDescriptor
 #define MY_DID ts::DID_SHORT_SMOOTH_BUF
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ShortSmoothingBufferDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ShortSmoothingBufferDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ShortSmoothingBufferDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,13 +54,19 @@ ts::ShortSmoothingBufferDescriptor::ShortSmoothingBufferDescriptor() :
     sb_leak_rate(0),
     DVB_reserved()
 {
-    _is_valid = true;
 }
 
 ts::ShortSmoothingBufferDescriptor::ShortSmoothingBufferDescriptor(DuckContext& duck, const Descriptor& desc) :
     ShortSmoothingBufferDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::ShortSmoothingBufferDescriptor::clearContent()
+{
+    sb_size = 0;
+    sb_leak_rate = 0;
+    DVB_reserved.clear();
 }
 
 
@@ -85,7 +91,7 @@ void ts::ShortSmoothingBufferDescriptor::deserialize(DuckContext& duck, const De
 {
     const uint8_t* data = desc.payload();
     const size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         sb_size = (data[0] >> 6) & 0x03;
@@ -101,16 +107,14 @@ void ts::ShortSmoothingBufferDescriptor::deserialize(DuckContext& duck, const De
 
 void ts::ShortSmoothingBufferDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
         strm << margin << UString::Format(u"Smoothing buffer size: %s", {NameFromSection(u"SmoothingBufferSize", (data[0] >> 6) & 0x03, names::FIRST)}) << std::endl
              << margin << UString::Format(u"Smoothing buffer leak rate: %s", {NameFromSection(u"SmoothingBufferLeakRate", data[0] & 0x3F, names::FIRST)}) << std::endl;
-        if (size > 1) {
-            strm << margin << "DVB-reserved data:" << std::endl
-                 << UString::Dump(data + 1, size - 1, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-        }
+        display.displayPrivateData(u"DVB-reserved data", data + 1, size - 1, indent);
     }
 }
 
@@ -123,9 +127,7 @@ void ts::ShortSmoothingBufferDescriptor::buildXML(DuckContext& duck, xml::Elemen
 {
     root->setIntAttribute(u"sb_size", sb_size);
     root->setIntAttribute(u"sb_leak_rate", sb_leak_rate);
-    if (!DVB_reserved.empty()) {
-        root->addHexaText(DVB_reserved);
-    }
+    root->addHexaText(DVB_reserved, true);
 }
 
 
@@ -133,11 +135,9 @@ void ts::ShortSmoothingBufferDescriptor::buildXML(DuckContext& duck, xml::Elemen
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ShortSmoothingBufferDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ShortSmoothingBufferDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(sb_size, u"sb_size", true, 0, 0, 3) &&
-        element->getIntAttribute<uint8_t>(sb_leak_rate, u"sb_leak_rate", true, 0, 0, 0x3F) &&
-        element->getHexaText(DVB_reserved, 0, MAX_DESCRIPTOR_SIZE - 3);
+    return element->getIntAttribute<uint8_t>(sb_size, u"sb_size", true, 0, 0, 3) &&
+           element->getIntAttribute<uint8_t>(sb_leak_rate, u"sb_leak_rate", true, 0, 0, 0x3F) &&
+           element->getHexaText(DVB_reserved, 0, MAX_DESCRIPTOR_SIZE - 3);
 }

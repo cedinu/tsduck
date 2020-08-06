@@ -31,16 +31,16 @@
 #include "tsDescriptor.h"
 #include "tsVariable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"S2_satellite_delivery_system_descriptor"
+#define MY_CLASS ts::S2SatelliteDeliverySystemDescriptor
 #define MY_DID ts::DID_S2_SAT_DELIVERY
 
-TS_XML_DESCRIPTOR_FACTORY(ts::S2SatelliteDeliverySystemDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::S2SatelliteDeliverySystemDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::S2SatelliteDeliverySystemDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,13 +55,21 @@ ts::S2SatelliteDeliverySystemDescriptor::S2SatelliteDeliverySystemDescriptor() :
     scrambling_sequence_index(0),
     input_stream_identifier(0)
 {
-    _is_valid = true;
 }
 
 ts::S2SatelliteDeliverySystemDescriptor::S2SatelliteDeliverySystemDescriptor(DuckContext& duck, const Descriptor& desc) :
     S2SatelliteDeliverySystemDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::S2SatelliteDeliverySystemDescriptor::clearContent()
+{
+    scrambling_sequence_selector = false;
+    multiple_input_stream_flag = false;
+    backwards_compatibility_indicator = false;
+    scrambling_sequence_index = 0;
+    input_stream_identifier = 0;
 }
 
 
@@ -92,7 +100,7 @@ void ts::S2SatelliteDeliverySystemDescriptor::serialize(DuckContext& duck, Descr
 
 void ts::S2SatelliteDeliverySystemDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 1)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 1)) {
         return;
     }
 
@@ -131,7 +139,8 @@ void ts::S2SatelliteDeliverySystemDescriptor::deserialize(DuckContext& duck, con
 
 void ts::S2SatelliteDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -179,13 +188,12 @@ void ts::S2SatelliteDeliverySystemDescriptor::buildXML(DuckContext& duck, xml::E
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::S2SatelliteDeliverySystemDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::S2SatelliteDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     Variable<uint32_t> scrambling;
     Variable<uint8_t> stream;
 
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getBoolAttribute(backwards_compatibility_indicator, u"backwards_compatibility", true) &&
         element->getOptionalIntAttribute<uint32_t>(scrambling, u"scrambling_sequence_index", 0x00000000, 0x0003FFFF) &&
         element->getOptionalIntAttribute<uint8_t>(stream, u"input_stream_identifier");
@@ -198,4 +206,5 @@ void ts::S2SatelliteDeliverySystemDescriptor::fromXML(DuckContext& duck, const x
         multiple_input_stream_flag = true;
         input_stream_identifier = stream.value();
     }
+    return ok;
 }

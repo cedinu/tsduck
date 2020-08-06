@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"CP_identifier_descriptor"
+#define MY_CLASS ts::CPIdentifierDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_CP_IDENTIFIER
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CPIdentifierDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CPIdentifierDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::CPIdentifierDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,11 @@ ts::CPIdentifierDescriptor::CPIdentifierDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     cpids()
 {
-    _is_valid = true;
+}
+
+void ts::CPIdentifierDescriptor::clearContent()
+{
+    cpids.clear();
 }
 
 ts::CPIdentifierDescriptor::CPIdentifierDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -86,7 +90,7 @@ void ts::CPIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1 && size % 2 == 1 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1 && size % 2 == 1 && data[0] == MY_EDID;
 
     cpids.clear();
     if (_is_valid) {
@@ -115,20 +119,17 @@ void ts::CPIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CPIdentifierDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CPIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    cpids.clear();
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"CP_system_id", 0, (MAX_DESCRIPTOR_SIZE - 3) / 2);
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    bool ok = element->getChildren(children, u"CP_system_id", 0, (MAX_DESCRIPTOR_SIZE - 3) / 2);
+
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         uint16_t id = 0;
-        _is_valid = children[i]->getIntAttribute<uint16_t>(id, u"value", true);
-        if (_is_valid) {
-            cpids.push_back(id);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(id, u"value", true);
+        cpids.push_back(id);
     }
+    return ok;
 }
 
 
@@ -142,7 +143,8 @@ void ts::CPIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID d
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 2) {

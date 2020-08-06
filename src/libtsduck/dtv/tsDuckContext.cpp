@@ -29,10 +29,10 @@
 
 #include "tsDuckContext.h"
 #include "tsDuckConfigFile.h"
-#include "tsDVBCharsetSingleByte.h"
+#include "tsDVBCharTableSingleByte.h"
+#include "tsARIBCharset.h"
 #include "tsHFBand.h"
 #include "tsCerrReport.h"
-#include "tsDVBCharset.h"
 #include "tsArgs.h"
 TSDUCK_SOURCE;
 
@@ -46,12 +46,12 @@ ts::DuckContext::DuckContext(Report* report, std::ostream* output) :
     _initial_out(output != nullptr ? output : &std::cout),
     _out(_initial_out),
     _outFile(),
-    _dvbCharsetIn(nullptr),
-    _dvbCharsetOut(nullptr),
+    _charsetIn(&DVBCharTableSingleByte::DVB_ISO_6937),  // default DVB charset
+    _charsetOut(&DVBCharTableSingleByte::DVB_ISO_6937),
     _casId(CASID_NULL),
     _defaultPDS(0),
-    _cmdStandards(STD_NONE),
-    _accStandards(STD_NONE),
+    _cmdStandards(Standards::NONE),
+    _accStandards(Standards::NONE),
     _hfDefaultRegion(),
     _definedCmdOptions(0),
     _predefined_cas{{CASID_CONAX_MIN,      u"conax"},
@@ -77,10 +77,10 @@ void ts::DuckContext::reset()
     }
 
     _out = _initial_out;
-    _dvbCharsetIn = _dvbCharsetOut = nullptr;
+    _charsetIn = _charsetOut = &DVBCharTableSingleByte::DVB_ISO_6937;
     _casId = CASID_NULL;
     _defaultPDS = 0;
-    _cmdStandards = _accStandards = STD_NONE;
+    _cmdStandards = _accStandards = Standards::NONE;
     _hfDefaultRegion.clear();
 }
 
@@ -96,17 +96,17 @@ void ts::DuckContext::setReport(Report* report)
 
 
 //----------------------------------------------------------------------------
-// Set the DVB character sets.
+// Set the DVB character sets (default DVB character set if null).
 //----------------------------------------------------------------------------
 
-void ts::DuckContext::setDefaultDVBCharsetIn(const DVBCharset* charset)
+void ts::DuckContext::setDefaultCharsetIn(const Charset* charset)
 {
-    _dvbCharsetIn = charset;
+    _charsetIn = charset != nullptr ? charset : &DVBCharTableSingleByte::DVB_ISO_6937;
 }
 
-void ts::DuckContext::setDefaultDVBCharsetOut(const DVBCharset* charset)
+void ts::DuckContext::setDefaultCharsetOut(const Charset* charset)
 {
-    _dvbCharsetOut = charset;
+    _charsetOut = charset != nullptr ? charset : &DVBCharTableSingleByte::DVB_ISO_6937;
 }
 
 
@@ -116,12 +116,19 @@ void ts::DuckContext::setDefaultDVBCharsetOut(const DVBCharset* charset)
 
 void ts::DuckContext::addStandards(Standards mask)
 {
+    if (_report->debug() && (_accStandards | mask) != _accStandards) {
+        _report->debug(u"adding standards %s to %s", {StandardsNames(mask), StandardsNames(_accStandards)});
+    }
     _accStandards |= mask;
 }
 
 void ts::DuckContext::resetStandards(Standards mask)
 {
     _accStandards = _cmdStandards | mask;
+
+    if (_report->debug()) {
+        _report->debug(u"resetting standards to %s", {StandardsNames(_accStandards)});
+    }
 }
 
 
@@ -159,13 +166,13 @@ ts::PDS ts::DuckContext::actualPDS(PDS pds) const
         // A default PDS was specified.
         return _defaultPDS;
     }
-    else if ((_accStandards & STD_ATSC) != 0) {
+    else if ((_accStandards & Standards::ATSC) == Standards::ATSC) {
         // We have previously found ATSC signalization, use the fake PDS for ATSC.
         // This allows interpretation of ATSC descriptors in MPEG-defined tables (eg. PMT).
         return PDS_ATSC;
     }
-    else if ((_accStandards & STD_ISDB) != 0) {
-        // Same principle fir ISDB.
+    else if ((_accStandards & Standards::ISDB) == Standards::ISDB) {
+        // Same principle for ISDB.
         return PDS_ISDB;
     }
     else {
@@ -195,14 +202,19 @@ ts::UString ts::DuckContext::defaultHFRegion() const
     }
 }
 
+const ts::HFBand* ts::DuckContext::hfBand(const UString& name, bool silent_band) const
+{
+    return HFBand::GetBand(defaultHFRegion(), name, *_report, silent_band);
+}
+
 const ts::HFBand* ts::DuckContext::vhfBand() const
 {
-    return HFBand::GetBand(defaultHFRegion(), HFBand::VHF, *_report);
+    return HFBand::GetBand(defaultHFRegion(), u"VHF", *_report);
 }
 
 const ts::HFBand* ts::DuckContext::uhfBand() const
 {
-    return HFBand::GetBand(defaultHFRegion(), HFBand::UHF, *_report);
+    return HFBand::GetBand(defaultHFRegion(), u"UHF", *_report);
 }
 
 
@@ -336,17 +348,14 @@ void ts::DuckContext::defineOptions(Args& args, int cmdOptionsMask)
                   u"The PDS value can be an integer or one of (not case-sensitive) names.");
     }
 
-    // Options relating to default DVB character sets.
-    if (cmdOptionsMask & CMD_DVB_CHARSET) {
+    // Options relating to default character sets.
+    if (cmdOptionsMask & CMD_CHARSET) {
 
         args.option(u"default-charset", 0, Args::STRING);
         args.help(u"default-charset", u"name",
-                  u"Default character set to use when interpreting DVB strings without "
-                  u"explicit character table code. According to DVB standard ETSI EN 300 468, "
-                  u"the default DVB character set is ISO-6937. However, some bogus "
-                  u"signalization may assume that the default character set is different, "
-                  u"typically the usual local character table for the region. This option "
-                  u"forces a non-standard character table. The available table names are " +
+                  u"Default character set to use when interpreting strings from tables and descriptors. "
+                  u"By default, DVB encoding using ISO-6937 as default table is used. "
+                  u"The available table names are " +
                   UString::Join(DVBCharset::GetAllNames()) + u".");
 
         args.option(u"europe", 0);
@@ -359,16 +368,6 @@ void ts::DuckContext::defineOptions(Args& args, int cmdOptionsMask)
                   u"strings, which is not the case with some operators. Using this option, "
                   u"all DVB strings without explicit table code are assumed to use ISO-8859-15 "
                   u"instead of the standard ISO-6937 encoding.");
-    }
-
-    // Options relating to default UHF/VHF region.
-    if (cmdOptionsMask & CMD_HF_REGION) {
-
-        args.option(u"hf-band-region", 'r', Args::STRING);
-        args.help(u"hf-band-region", u"name",
-                  u"Specify the region for UHF/VHF band frequency layout. "
-                  u"The available regions are " +
-                  UString::Join(HFBand::GetAllRegions(*_report)) + u".");
     }
 
     // Options relating to default standards.
@@ -390,6 +389,16 @@ void ts::DuckContext::defineOptions(Args& args, int cmdOptionsMask)
                   u"ISDB-specific table.");
     }
 
+    // Options relating to default UHF/VHF region.
+    if (cmdOptionsMask & CMD_HF_REGION) {
+
+        args.option(u"hf-band-region", 'r', Args::STRING);
+        args.help(u"hf-band-region", u"name",
+            u"Specify the region for UHF/VHF band frequency layout. "
+            u"The available regions are " +
+            UString::Join(HFBand::GetAllRegions(*_report)) + u".");
+    }
+
     // Options relating to default CAS identification.
     if (cmdOptionsMask & CMD_CAS) {
 
@@ -407,6 +416,31 @@ void ts::DuckContext::defineOptions(Args& args, int cmdOptionsMask)
             args.help(cas->second, UString::Format(u"Equivalent to --default-cas-id 0x%04X.", {cas->first}));
         }
     }
+
+    // Option --japan triggers different options in different sets of options.
+    if (cmdOptionsMask & (CMD_CHARSET | CMD_STANDARDS | CMD_HF_REGION)) {
+
+        // Build help text for --japan option. It depends on which set of options is requested.
+        // Use _definedCmdOptions instead of cmdOptionsMask to include previous options.
+        UStringList options;
+        if (_definedCmdOptions & CMD_STANDARDS) {
+            options.push_back(u"--isdb");
+        }
+        if (_definedCmdOptions & CMD_CHARSET) {
+            options.push_back(u"--default-charset ARIB-STD-B24");
+        }
+        if (_definedCmdOptions & CMD_HF_REGION) {
+            options.push_back(u"--hf-band-region japan");
+        }
+        UString japan(u"A synonym for '" + UString::Join(options, u" ") + u"'. ");
+        if (_definedCmdOptions & CMD_STANDARDS) {
+            japan.append(u"This option also activates some specificities for Japan such as the use of JST time instead of UTC. ");
+        }
+        japan.append(u"This is a handy shortcut when working on Japanese transport streams.");
+
+        args.option(u"japan", 0);
+        args.help(u"japan", japan);
+    }
 }
 
 
@@ -417,36 +451,57 @@ void ts::DuckContext::defineOptions(Args& args, int cmdOptionsMask)
 bool ts::DuckContext::loadArgs(Args& args)
 {
     // List of forced standards from the command line.
-    _cmdStandards = STD_NONE;
+    _cmdStandards = Standards::NONE;
 
     // Options relating to default PDS.
     if (_definedCmdOptions & CMD_PDS) {
-        args.getIntValue(_defaultPDS, u"default-pds");
+        // Keep previous value unchanged if unspecified.
+        args.getIntValue(_defaultPDS, u"default-pds", _defaultPDS);
     }
 
     // Options relating to default DVB character sets.
-    if (_definedCmdOptions & CMD_DVB_CHARSET) {
+    if (_definedCmdOptions & CMD_CHARSET) {
         if (args.present(u"europe")) {
-            _dvbCharsetIn = _dvbCharsetOut = &DVBCharsetSingleByte::ISO_8859_15;
+            _charsetIn = _charsetOut = &DVBCharTableSingleByte::DVB_ISO_8859_15;
+        }
+        else if (args.present(u"japan")) {
+            _charsetIn = _charsetOut = &ARIBCharset::B24;
         }
         else {
             const UString name(args.value(u"default-charset"));
-            if (!name.empty() && (_dvbCharsetIn = _dvbCharsetOut = DVBCharset::GetCharset(name)) == nullptr) {
-                args.error(u"invalid character set name '%s", {name});
+            if (!name.empty()) {
+                const Charset* cset = DVBCharTable::GetCharset(name);
+                if (cset == nullptr) {
+                    args.error(u"invalid character set name '%s'", {name});
+                }
+                else {
+                    _charsetIn = _charsetOut = cset;
+                }
             }
         }
     }
 
     // Options relating to default UHF/VHF region.
     if (_definedCmdOptions & CMD_HF_REGION) {
-        args.getValue(_hfDefaultRegion, u"hf-band-region");
+        if (args.present(u"japan")) {
+            _hfDefaultRegion = u"japan";
+        }
+        else if (args.present(u"hf-band-region")) {
+            args.getValue(_hfDefaultRegion, u"hf-band-region");
+        }
     }
 
     // Options relating to default standards.
     if (_definedCmdOptions & CMD_STANDARDS) {
         if (args.present(u"atsc")) {
-            _cmdStandards |= STD_ATSC;
+            _cmdStandards |= Standards::ATSC;
         }
+        if (args.present(u"isdb") || args.present(u"japan")) {
+            _cmdStandards |= Standards::ISDB;
+        }
+    }
+    if ((_definedCmdOptions & (CMD_STANDARDS | CMD_CHARSET)) && args.present(u"japan")) {
+        _cmdStandards |= Standards::JAPAN;
     }
 
     // Options relating to default CAS.
@@ -472,4 +527,55 @@ bool ts::DuckContext::loadArgs(Args& args)
     _accStandards |= _cmdStandards;
 
     return args.valid();
+}
+
+
+//----------------------------------------------------------------------------
+// An opaque class to save all command line options, as loaded by loadArgs().
+//----------------------------------------------------------------------------
+
+ts::DuckContext::SavedArgs::SavedArgs() :
+    _definedCmdOptions(0),
+    _cmdStandards(Standards::NONE),
+    _charsetInName(),
+    _charsetOutName(),
+    _casId(CASID_NULL),
+    _defaultPDS(0),
+    _hfDefaultRegion()
+{
+}
+
+void ts::DuckContext::saveArgs(SavedArgs& args) const
+{
+    args._definedCmdOptions = _definedCmdOptions;
+    args._cmdStandards = _cmdStandards;
+    args._charsetInName = _charsetIn->name();
+    args._charsetOutName = _charsetOut->name();
+    args._casId = _casId;
+    args._defaultPDS = _defaultPDS;
+    args._hfDefaultRegion = _hfDefaultRegion;
+}
+
+void ts::DuckContext::restoreArgs(const SavedArgs& args)
+{
+    if (args._definedCmdOptions & CMD_STANDARDS) {
+        // Reset accumulated standards if a list of standards was saved.
+        _accStandards = _cmdStandards = args._cmdStandards;
+    }
+    if (args._definedCmdOptions & CMD_CHARSET) {
+        const Charset* in = DVBCharTable::GetCharset(args._charsetInName);
+        const Charset* out = DVBCharTable::GetCharset(args._charsetOutName);
+        if (in != nullptr) {
+            _charsetIn = in;
+        }
+        if (out != nullptr) {
+            _charsetOut = out;
+        }
+    }
+    if (_definedCmdOptions & CMD_CAS) {
+        _casId = args._casId;
+    }
+    if (_definedCmdOptions & CMD_HF_REGION) {
+        _hfDefaultRegion = args._hfDefaultRegion;
+    }
 }

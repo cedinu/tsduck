@@ -30,22 +30,22 @@
 #include "tsIPMACStreamLocationDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"IPMAC_stream_location_descriptor"
+#define MY_CLASS ts::IPMACStreamLocationDescriptor
 #define MY_DID ts::DID_INT_STREAM_LOC
 #define MY_TID ts::TID_INT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::IPMACStreamLocationDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::IPMACStreamLocationDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::IPMACStreamLocationDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::IPMACStreamLocationDescriptor::IPMACStreamLocationDescriptor() :
@@ -56,13 +56,16 @@ ts::IPMACStreamLocationDescriptor::IPMACStreamLocationDescriptor() :
     service_id(0),
     component_tag(0)
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::IPMACStreamLocationDescriptor::clearContent()
+{
+    network_id = 0;
+    original_network_id = 0;
+    transport_stream_id = 0;
+    service_id = 0;
+    component_tag = 0;
+}
 
 ts::IPMACStreamLocationDescriptor::IPMACStreamLocationDescriptor(DuckContext& duck, const Descriptor& desc) :
     IPMACStreamLocationDescriptor()
@@ -96,7 +99,7 @@ void ts::IPMACStreamLocationDescriptor::deserialize(DuckContext& duck, const Des
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 9;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 9;
 
     if (_is_valid) {
         network_id = GetUInt16(data);
@@ -114,7 +117,8 @@ void ts::IPMACStreamLocationDescriptor::deserialize(DuckContext& duck, const Des
 
 void ts::IPMACStreamLocationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 9) {
@@ -153,13 +157,11 @@ void ts::IPMACStreamLocationDescriptor::buildXML(DuckContext& duck, xml::Element
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::IPMACStreamLocationDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::IPMACStreamLocationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute(network_id, u"network_id", true) &&
-        element->getIntAttribute(original_network_id, u"original_network_id", true) &&
-        element->getIntAttribute(transport_stream_id, u"transport_stream_id", true) &&
-        element->getIntAttribute(service_id, u"service_id", true) &&
-        element->getIntAttribute(component_tag, u"component_tag", true);
+    return element->getIntAttribute(network_id, u"network_id", true) &&
+           element->getIntAttribute(original_network_id, u"original_network_id", true) &&
+           element->getIntAttribute(transport_stream_id, u"transport_stream_id", true) &&
+           element->getIntAttribute(service_id, u"service_id", true) &&
+           element->getIntAttribute(component_tag, u"component_tag", true);
 }

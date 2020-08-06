@@ -29,6 +29,7 @@
 
 #include "tsPSIMerger.h"
 #include "tsCADescriptor.h"
+#include "tsTSPacket.h"
 TSDUCK_SOURCE;
 
 
@@ -44,11 +45,11 @@ ts::PSIMerger::PSIMerger(DuckContext& duck, Options options, Report& report) :
     _main_eit_demux(_duck, nullptr, this),   // Section handler only, do not accumulate incomplete sections.
     _merge_demux(_duck, this),               // Complete table handler only
     _merge_eit_demux(_duck, nullptr, this),  // Section handler only, do not accumulate incomplete sections.
-    _pat_pzer(),
-    _cat_pzer(),
-    _nit_pzer(),
-    _sdt_bat_pzer(),
-    _eit_pzer(PID_EIT, this),
+    _pat_pzer(duck),
+    _cat_pzer(duck),
+    _nit_pzer(duck),
+    _sdt_bat_pzer(duck),
+    _eit_pzer(duck, PID_EIT, this),
     _main_tsid(),
     _main_pat(),
     _merge_pat(),
@@ -159,7 +160,7 @@ void ts::PSIMerger::reset(Options options)
     _eit_pzer.setPID(PID_EIT);
 
     // Make sure that all input tables are invalid.
-    _main_tsid.reset();
+    _main_tsid.clear();
     _main_pat.invalidate();
     _merge_pat.invalidate();
     _main_cat.invalidate();
@@ -404,7 +405,7 @@ void ts::PSIMerger::handleSection(SectionDemux& demux, const Section& section)
     if (is_eit && (_options & MERGE_EIT) != 0) {
 
         // Create a copy of the section object (shared section data).
-        const SectionPtr sp(new Section(section, SHARE));
+        const SectionPtr sp(new Section(section, ShareMode::SHARE));
         CheckNonNull(sp.pointer());
 
         if (demux.demuxId() != DEMUX_MERGE_EIT || !is_actual) {

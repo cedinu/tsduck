@@ -30,18 +30,18 @@
 #include "tsExternalApplicationAuthorizationDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"external_application_authorization_descriptor"
+#define MY_CLASS ts::ExternalApplicationAuthorizationDescriptor
 #define MY_DID ts::DID_AIT_EXT_APP_AUTH
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::ExternalApplicationAuthorizationDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::ExternalApplicationAuthorizationDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::ExternalApplicationAuthorizationDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,13 +52,17 @@ ts::ExternalApplicationAuthorizationDescriptor::ExternalApplicationAuthorization
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
 }
 
 ts::ExternalApplicationAuthorizationDescriptor::ExternalApplicationAuthorizationDescriptor(DuckContext& duck, const Descriptor& desc) :
     ExternalApplicationAuthorizationDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::ExternalApplicationAuthorizationDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 
@@ -88,7 +92,7 @@ void ts::ExternalApplicationAuthorizationDescriptor::deserialize(DuckContext& du
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size % 7 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size % 7 == 0;
 
     if (_is_valid) {
         while (size >= 7) {
@@ -105,7 +109,8 @@ void ts::ExternalApplicationAuthorizationDescriptor::deserialize(DuckContext& du
 
 void ts::ExternalApplicationAuthorizationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 7) {
@@ -141,23 +146,17 @@ void ts::ExternalApplicationAuthorizationDescriptor::buildXML(DuckContext& duck,
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ExternalApplicationAuthorizationDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ExternalApplicationAuthorizationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"application", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"application", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getIntAttribute<uint32_t>(entry.application_identifier.organization_id, u"organization_id", true) &&
-            children[i]->getIntAttribute<uint16_t>(entry.application_identifier.application_id, u"application_id", true) &&
-            children[i]->getIntAttribute<uint8_t>(entry.application_priority, u"application_priority", true);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getIntAttribute<uint32_t>(entry.application_identifier.organization_id, u"organization_id", true) &&
+             children[i]->getIntAttribute<uint16_t>(entry.application_identifier.application_id, u"application_id", true) &&
+             children[i]->getIntAttribute<uint8_t>(entry.application_priority, u"application_priority", true);
+        entries.push_back(entry);
     }
+    return ok;
 }

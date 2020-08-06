@@ -30,19 +30,19 @@
 #include "tsServiceLocationDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"service_location_descriptor"
+#define MY_CLASS ts::ServiceLocationDescriptor
 #define MY_DID ts::DID_ATSC_SERVICE_LOC
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ServiceLocationDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ServiceLocationDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::ServiceLocationDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,7 +54,12 @@ ts::ServiceLocationDescriptor::ServiceLocationDescriptor() :
     PCR_PID(PID_NULL),
     entries()
 {
-    _is_valid = true;
+}
+
+void ts::ServiceLocationDescriptor::clearContent()
+{
+    PCR_PID = PID_NULL;
+    entries.clear();
 }
 
 ts::ServiceLocationDescriptor::ServiceLocationDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -102,7 +107,7 @@ void ts::ServiceLocationDescriptor::deserialize(DuckContext& duck, const Descrip
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 3 && (size - 3) % 6 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 3 && (size - 3) % 6 == 0;
 
     if (_is_valid) {
         // Fixed part.
@@ -126,7 +131,8 @@ void ts::ServiceLocationDescriptor::deserialize(DuckContext& duck, const Descrip
 void ts::ServiceLocationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
     if (size >= 3) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
 
         PID pid = GetUInt16(data) & 0x1FFF;
@@ -181,24 +187,19 @@ void ts::ServiceLocationDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceLocationDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ServiceLocationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint16_t>(PCR_PID, u"PCR_PID", false, PID_NULL, 0, 0x1FFF) &&
         element->getChildren(children, u"component", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getIntAttribute<uint8_t>(entry.stream_type, u"stream_type", true) &&
-            children[i]->getIntAttribute<uint16_t>(entry.elementary_PID, u"elementary_PID", true, 0, 0, 0x1FFF) &&
-            children[i]->getAttribute(entry.ISO_639_language_code, u"ISO_639_language_code", false, UString(), 0, 3);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getIntAttribute<uint8_t>(entry.stream_type, u"stream_type", true) &&
+             children[i]->getIntAttribute<uint16_t>(entry.elementary_PID, u"elementary_PID", true, 0, 0, 0x1FFF) &&
+             children[i]->getAttribute(entry.ISO_639_language_code, u"ISO_639_language_code", false, UString(), 0, 3);
+        entries.push_back(entry);
     }
+    return ok;
 }

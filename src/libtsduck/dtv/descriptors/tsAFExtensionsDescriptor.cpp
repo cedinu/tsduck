@@ -30,18 +30,18 @@
 #include "tsAFExtensionsDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"af_extensions_descriptor"
+#define MY_CLASS ts::AFExtensionsDescriptor
 #define MY_DID ts::DID_MPEG_EXTENSION
 #define MY_EDID ts::MPEG_EDID_AF_EXT
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::AFExtensionsDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::AFExtensionsDescriptor, ts::EDID::ExtensionMPEG(MY_EDID));
-TS_FACTORY_REGISTER(ts::AFExtensionsDescriptor::DisplayDescriptor, ts::EDID::ExtensionMPEG(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionMPEG(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -51,7 +51,10 @@ TS_FACTORY_REGISTER(ts::AFExtensionsDescriptor::DisplayDescriptor, ts::EDID::Ext
 ts::AFExtensionsDescriptor::AFExtensionsDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0)
 {
-    _is_valid = true;
+}
+
+void ts::AFExtensionsDescriptor::clearContent()
+{
 }
 
 ts::AFExtensionsDescriptor::AFExtensionsDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -79,7 +82,7 @@ void ts::AFExtensionsDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 
 void ts::AFExtensionsDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 1 && desc.payload()[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 1 && desc.payload()[0] == MY_EDID;
 }
 
 
@@ -109,6 +112,7 @@ void ts::AFExtensionsDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AFExtensionsDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AFExtensionsDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
+    return true;
 }

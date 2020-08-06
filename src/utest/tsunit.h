@@ -70,6 +70,7 @@
 #pragma clang diagnostic ignored "-Wglobal-constructors"    // We use many global objects for test registration
 #pragma clang diagnostic ignored "-Wexit-time-destructors"  // Idem
 #pragma clang diagnostic ignored "-Wpadded"                 // Allow padding between class fields
+#pragma clang diagnostic ignored "-Wdocumentation-unknown-command" // Should work but fails with clang 10.0.0 on Linux
 #endif
 
 #include <map>
@@ -492,10 +493,13 @@ namespace tsunit {
     std::string toStringImpl(T value, const char* format);
 
     template<typename T, typename std::enable_if<std::is_signed<typename underlying_type<T>::type>::value>::type* = nullptr>
-    std::string toString(T value) { return toStringImpl<long long>(value, "%lld"); }
+    std::string toString(T value) { return toStringImpl(static_cast<long long>(value), "%lld"); }
 
     template<typename T, typename std::enable_if<std::is_unsigned<typename underlying_type<T>::type>::value>::type* = nullptr>
-    std::string toString(T value) { return toStringImpl<unsigned long long>(value, "%llu"); }
+    std::string toString(T value) { return toStringImpl(static_cast<unsigned long long>(value), "%llu"); }
+
+    template<typename T>
+    std::string toString(const T* value) { return toStringImpl<size_t>(reinterpret_cast<size_t>(value), "0x%zX"); }
 
     // Explicitly convert UTF-16 to UTF-8
     std::string convertFromUTF16(const std::u16string& u16);
@@ -551,7 +555,25 @@ namespace tsunit {
         {
             equalString(std::u16string(expected), std::u16string(actual), sourcefile, linenumber);
         }
+
+        // Assert equal for pointer types.
+        template<typename T>
+        static void equal(const T* expected, const T* actual, const std::string& estring, const std::string& vstring, const char* sourcefile, int linenumber);
     };
+
+    // Specialization for char C-strings.
+    template<>
+    inline void Assertions::equal<char>(const char* expected, const char* actual, const std::string&, const std::string&, const char* sourcefile, int linenumber)
+    {
+        equalString(std::string(expected), std::string(actual), sourcefile, linenumber);
+    }
+
+    // Specialization for char16_t C-strings.
+    template<>
+    inline void Assertions::equal<char16_t>(const char16_t* expected, const char16_t* actual, const std::string&, const std::string&, const char* sourcefile, int linenumber)
+    {
+        equalString(std::u16string(expected), std::u16string(actual), sourcefile, linenumber);
+    }
 }
 
 // Out-of-line implementation of "large" templates.
@@ -601,7 +623,6 @@ void tsunit::TestExceptionWrapper<TEST,EXCEP,T1,T2>::run()
     }
 }
 
-
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-nonliteral"
@@ -634,6 +655,26 @@ void tsunit::Assertions::equal(const ETYPE& expected, const ATYPE& actual, const
         ++_failedAssertionsCount;
         const std::string details1("expected: " + toString(expected) + " (\"" + estr + "\")");
         const std::string details2("actual:   " + toString(actual) + " (\"" + astr + "\")");
+        throw Failure("incorrect value", details1 + "\n" + details2, file, line);
+    }
+}
+
+template<typename T>
+void tsunit::Assertions::equal(const T* expected, const T* actual, const std::string& estr, const std::string& astr, const char* file, int line)
+{
+    if (expected == actual) {
+        ++_passedCount;
+    }
+    else {
+        ++_failedAssertionsCount;
+        const long long addrdiff = static_cast<long long>(reinterpret_cast<const char*>(actual) - reinterpret_cast<const char*>(expected));
+        const long long typediff = static_cast<long long>(actual - expected);
+        const std::string details1("expected: " + toString(expected) + " (\"" + estr + "\")");
+        std::string details2("actual:   " + toString(actual) + toStringImpl(addrdiff, " (%+lld bytes"));
+        if (addrdiff != typediff) {
+            details2.append(toStringImpl(typediff, ", %+'lld elements"));
+        }
+        details2.append(", \"" + astr + "\")");
         throw Failure("incorrect value", details1 + "\n" + details2, file, line);
     }
 }

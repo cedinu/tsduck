@@ -26,31 +26,26 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a generic data_broadcast_id_descriptor.
-//  Specialized classes exist, depending on the data_broadcast_id
-//
-//----------------------------------------------------------------------------
 
 #include "tsDataBroadcastIdDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"data_broadcast_id_descriptor"
+#define MY_CLASS ts::DataBroadcastIdDescriptor
 #define MY_DID ts::DID_DATA_BROADCAST_ID
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DataBroadcastIdDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::DataBroadcastIdDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::DataBroadcastIdDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::DataBroadcastIdDescriptor::DataBroadcastIdDescriptor(uint16_t id) :
@@ -58,13 +53,7 @@ ts::DataBroadcastIdDescriptor::DataBroadcastIdDescriptor(uint16_t id) :
     data_broadcast_id(id),
     private_data()
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::DataBroadcastIdDescriptor::DataBroadcastIdDescriptor(DuckContext& duck, const Descriptor& desc) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
@@ -72,6 +61,12 @@ ts::DataBroadcastIdDescriptor::DataBroadcastIdDescriptor(DuckContext& duck, cons
     private_data()
 {
     deserialize(duck, desc);
+}
+
+void ts::DataBroadcastIdDescriptor::clearContent()
+{
+    data_broadcast_id = 0;
+    private_data.clear();
 }
 
 
@@ -94,7 +89,7 @@ void ts::DataBroadcastIdDescriptor::serialize(DuckContext& duck, Descriptor& des
 
 void ts::DataBroadcastIdDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 2;
 
     if (_is_valid) {
         const uint8_t* data = desc.payload();
@@ -111,7 +106,8 @@ void ts::DataBroadcastIdDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::DataBroadcastIdDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 2) {
@@ -158,11 +154,8 @@ void ts::DataBroadcastIdDescriptor::DisplaySelectorBytes(TablesDisplay& display,
 
 void ts::DataBroadcastIdDescriptor::DisplaySelectorGeneric(TablesDisplay& display, const uint8_t*& data, size_t& size, int indent, uint16_t dbid)
 {
-    if (size > 0) {
-        display.duck().out() << std::string(indent, ' ') << "Data Broadcast selector:" << std::endl
-                      << UString::Dump(data, size, UString::HEXA | UString::ASCII, indent);
-        data += size; size = 0;
-    }
+    display.displayPrivateData(u"Data Broadcast selector", data, size, indent);
+    data += size; size = 0;
 }
 
 
@@ -173,7 +166,8 @@ void ts::DataBroadcastIdDescriptor::DisplaySelectorGeneric(TablesDisplay& displa
 
 void ts::DataBroadcastIdDescriptor::DisplaySelectorSSU(TablesDisplay& display, const uint8_t*& data, size_t& size, int indent, uint16_t dbid)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     // OUI_data_length:
@@ -219,23 +213,18 @@ void ts::DataBroadcastIdDescriptor::DisplaySelectorSSU(TablesDisplay& display, c
             strm << UString::Format(u"%d (0x%02X)", {upd_version, upd_version});
         }
         strm << std::endl;
-        if (slength > 0) {
-            strm << margin << "  Selector data:" << std::endl
-                << UString::Dump(sdata, slength, UString::HEXA | UString::ASCII, indent + 2);
-        }
+        display.displayPrivateData(u"Selector data", sdata, slength, indent + 2);
     }
 
     // Extraneous data in OUI_loop:
     if (dlength > 0) {
-        strm << margin << "Extraneous data in OUI loop:" << std::endl
-             << UString::Dump(data, dlength, UString::HEXA | UString::ASCII, indent);
+        display.displayPrivateData(u"Extraneous data in OUI loop", data, dlength, indent);
         data += dlength; size -= dlength;
     }
 
     // Private data
     if (size > 0) {
-        strm << margin << "Private data:" << std::endl
-             << UString::Dump(data, size, UString::HEXA | UString::ASCII, indent);
+        display.displayPrivateData(u"Private data", data, size, indent);
         data += size; size = 0;
     }
 }
@@ -250,8 +239,10 @@ void ts::DataBroadcastIdDescriptor::DisplaySelectorMPE(TablesDisplay& display, c
 {
     // Fixed length: 2 bytes.
     if (size >= 2) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
+
         strm << margin << UString::Format(u"MAC address range: %d, MAC/IP mapping: %d, alignment: %d bits",
                                           {(data[0] >> 5) & 0x07, (data[0] >> 4) & 0x01, (data[0] & 0x08) == 0 ? 8 : 32})
              << std::endl
@@ -269,7 +260,8 @@ void ts::DataBroadcastIdDescriptor::DisplaySelectorMPE(TablesDisplay& display, c
 
 void ts::DataBroadcastIdDescriptor::DisplaySelectorINT(TablesDisplay& display, const uint8_t*& data, size_t& size, int indent, uint16_t dbid)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     // platform_id_data_length:
@@ -298,17 +290,12 @@ void ts::DataBroadcastIdDescriptor::DisplaySelectorINT(TablesDisplay& display, c
 
     // Extraneous data in Platform id loop:
     if (dlength > 0) {
-        strm << margin << "Extraneous data in platform_id loop:" << std::endl
-             << UString::Dump(data, dlength, UString::HEXA | UString::ASCII, indent);
+        display.displayPrivateData(u"Extraneous data in platform_id loop", data, dlength, indent);
         data += dlength; size -= dlength;
     }
 
     // Private data
-    if (size > 0) {
-        strm << margin << "Private data:" << std::endl
-             << UString::Dump(data, size, UString::HEXA | UString::ASCII, indent);
-        data += size; size = 0;
-    }
+    display.displayPrivateData(u"Private data", data, size, indent);
 }
 
 
@@ -319,9 +306,7 @@ void ts::DataBroadcastIdDescriptor::DisplaySelectorINT(TablesDisplay& display, c
 void ts::DataBroadcastIdDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
     root->setIntAttribute(u"data_broadcast_id", data_broadcast_id, true);
-    if (!private_data.empty()) {
-        root->addElement(u"selector_bytes")->addHexaText(private_data);
-    }
+    root->addHexaTextChild(u"selector_bytes", private_data, true);
 }
 
 
@@ -329,10 +314,8 @@ void ts::DataBroadcastIdDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DataBroadcastIdDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DataBroadcastIdDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(data_broadcast_id, u"data_broadcast_id", true, 0, 0x0000, 0xFFFF) &&
-        element->getHexaTextChild(private_data, u"selector_bytes", false, 0, MAX_DESCRIPTOR_SIZE - 2);
+    return element->getIntAttribute<uint16_t>(data_broadcast_id, u"data_broadcast_id", true, 0, 0x0000, 0xFFFF) &&
+           element->getHexaTextChild(private_data, u"selector_bytes", false, 0, MAX_DESCRIPTOR_SIZE - 2);
 }

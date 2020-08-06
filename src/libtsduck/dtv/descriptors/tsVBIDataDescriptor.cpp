@@ -26,26 +26,22 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a VBI_data_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsVBIDataDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"VBI_data_descriptor"
+#define MY_CLASS ts::VBIDataDescriptor
 #define MY_DID ts::DID_VBI_DATA
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::VBIDataDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::VBIDataDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::VBIDataDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -69,13 +65,17 @@ ts::VBIDataDescriptor::VBIDataDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     services()
 {
-    _is_valid = true;
 }
 
 ts::VBIDataDescriptor::VBIDataDescriptor(DuckContext& duck, const Descriptor& desc) :
     VBIDataDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::VBIDataDescriptor::clearContent()
+{
+    services.clear();
 }
 
 
@@ -105,7 +105,8 @@ bool ts::VBIDataDescriptor::EntryHasReservedBytes(uint8_t data_service_id)
 
 void ts::VBIDataDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 2) {
@@ -124,9 +125,8 @@ void ts::VBIDataDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, c
                 strm << margin << "Field parity: " << int(field_parity) << ", line offset: " << int(line_offset) << std::endl;
             }
         }
-        else if (length > 0) {
-            strm << margin << "Associated data:" << std::endl
-                << UString::Dump(data, length, UString::HEXA | UString::ASCII, indent);
+        else {
+            display.displayPrivateData(u"Associated data", data, length, indent);
             data += length; size -= length;
         }
     }
@@ -169,7 +169,7 @@ void ts::VBIDataDescriptor::deserialize(DuckContext& duck, const Descriptor& des
 {
     services.clear();
 
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag())) {
         return;
     }
 
@@ -210,9 +210,7 @@ void ts::VBIDataDescriptor::buildXML(DuckContext& duck, xml::Element* root) cons
         xml::Element* e = root->addElement(u"service");
         e->setIntAttribute(u"data_service_id", it1->data_service_id);
         if (it1->hasReservedBytes()) {
-            if (!it1->reserved.empty()) {
-                e->addElement(u"reserved")->addHexaText(it1->reserved);
-            }
+            e->addHexaTextChild(u"reserved", it1->reserved, true);
         }
         else {
             for (FieldList::const_iterator it2 = it1->fields.begin(); it2 != it1->fields.end(); ++it2) {
@@ -229,49 +227,40 @@ void ts::VBIDataDescriptor::buildXML(DuckContext& duck, xml::Element* root) cons
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::VBIDataDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::VBIDataDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    services.clear();
-
     xml::ElementVector srv;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(srv, u"service");
+    bool ok = element->getChildren(srv, u"service");
 
-    for (size_t srvIndex = 0; _is_valid && srvIndex < srv.size(); ++srvIndex) {
+    for (size_t srvIndex = 0; ok && srvIndex < srv.size(); ++srvIndex) {
         Service service;
         xml::ElementVector fld;
+        ok = srv[srvIndex]->getIntAttribute<uint8_t>(service.data_service_id, u"data_service_id", true) &&
+             srv[srvIndex]->getChildren(fld, u"field") &&
+             srv[srvIndex]->getHexaTextChild(service.reserved, u"reserved", false);
 
-        _is_valid =
-            srv[srvIndex]->getIntAttribute<uint8_t>(service.data_service_id, u"data_service_id", true) &&
-            srv[srvIndex]->getChildren(fld, u"field") &&
-            srv[srvIndex]->getHexaTextChild(service.reserved, u"reserved", false);
-
-        if (_is_valid) {
+        if (ok) {
             if (service.hasReservedBytes()) {
                 if (!fld.empty()) {
                     element->report().error(u"no <field> allowed in <service>, line %d, when data_service_id='%d'", {srv[srvIndex]->lineNumber(), service.data_service_id});
-                    _is_valid = false;
+                    ok = false;
                 }
             }
             else {
                 if (!service.reserved.empty()) {
                     element->report().error(u"no <reserved> allowed in <service>, line %d, when data_service_id='%d'", {srv[srvIndex]->lineNumber(), service.data_service_id});
-                    _is_valid = false;
+                    ok = false;
                 }
             }
         }
 
-        for (size_t fldIndex = 0; _is_valid && fldIndex < fld.size(); ++fldIndex) {
+        for (size_t fldIndex = 0; ok && fldIndex < fld.size(); ++fldIndex) {
             Field field;
-            _is_valid =
-                fld[fldIndex]->getBoolAttribute(field.field_parity, u"field_parity", false, false) &&
-                fld[fldIndex]->getIntAttribute<uint8_t>(field.line_offset, u"line_offset", false, 0x00, 0x00, 0x1F);
+            ok = fld[fldIndex]->getBoolAttribute(field.field_parity, u"field_parity", false, false) &&
+                 fld[fldIndex]->getIntAttribute<uint8_t>(field.line_offset, u"line_offset", false, 0x00, 0x00, 0x1F);
             service.fields.push_back(field);
         }
-
-        if (_is_valid) {
-            services.push_back(service);
-        }
+        services.push_back(service);
     }
+    return ok;
 }

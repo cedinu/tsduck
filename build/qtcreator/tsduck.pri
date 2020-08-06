@@ -85,15 +85,27 @@ linux {
 mac {
     QMAKE_CXXFLAGS_WARN_ON += -Weverything
     QMAKE_CXXFLAGS += -I/usr/local/include -I/usr/local/opt/pcsc-lite/include/PCSC
-    LIBS += -L/usr/local/lib -L/usr/local/opt/pcsc-lite/lib -lsrt
+    LIBS += -L/usr/local/lib -L/usr/local/opt/pcsc-lite/lib
     QMAKE_EXTENSION_SHLIB = so
     DEFINES += TS_NO_DTAPI=1
+}
+exists(/usr/include/srt/*.h) | exists(/usr/local/include/srt/*.h) {
+    LIBS += -lsrt
+}
+else {
+    DEFINES += TS_NOSRT=1
 }
 tstool {
     # TSDuck tools shall use "CONFIG += tstool"
     CONFIG += libtsduck
     TEMPLATE = app
     SOURCES += $$SRCROOT/tstools/$${TARGET}.cpp
+}
+util {
+    # TSDuck utils shall use "CONFIG += utils"
+    CONFIG += libtsduck
+    TEMPLATE = app
+    SOURCES += $$SRCROOT/utils/$${TARGET}.cpp
 }
 tsplugin {
     # TSP plugins shall use "CONFIG += tsplugin"
@@ -106,8 +118,8 @@ tsplugin {
 libtsduck {
     # Applications using libtsduck shall use "CONFIG += libtsduck".
     linux:QMAKE_LFLAGS += -Wl,--rpath=\'\$\$ORIGIN/../libtsduck\'
-    LIBS += ../libtsduck/tsduck.so
-    PRE_TARGETDEPS += ../libtsduck/tsduck.so
+    LIBS += ../libtsduck/libtsduck.so
+    PRE_TARGETDEPS += ../libtsduck/libtsduck.so
     DEPENDPATH += ../libtsduck
     INCLUDEPATH += $$system("find $$SRCROOT/libtsduck -type d ! -name windows ! -name $$NOSYSDIR ! -name private ! -name release\\* ! -name debug\\*")
     QMAKE_POST_LINK += cp $$TS_CONFIG_FILES . $$escape_expand(\\n\\t)

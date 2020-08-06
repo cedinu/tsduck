@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsPCRAnalyzer.h"
 #include "tsEnumeration.h"
@@ -85,8 +84,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(slice, ts::SlicePlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"slice", ts::SlicePlugin);
 
 
 //----------------------------------------------------------------------------

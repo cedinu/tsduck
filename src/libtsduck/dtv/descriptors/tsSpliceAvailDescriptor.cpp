@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsSCTE35.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"splice_avail_descriptor"
+#define MY_CLASS ts::SpliceAvailDescriptor
 #define MY_DID ts::DID_SPLICE_AVAIL
 #define MY_TID ts::TID_SCTE35_SIT
-#define MY_STD ts::STD_SCTE
+#define MY_STD ts::Standards::SCTE
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::SpliceAvailDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::SpliceAvailDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::SpliceAvailDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,7 +54,12 @@ ts::SpliceAvailDescriptor::SpliceAvailDescriptor() :
     identifier(SPLICE_ID_CUEI),
     provider_avail_id(0)
 {
-    _is_valid = true;
+}
+
+void ts::SpliceAvailDescriptor::clearContent()
+{
+    identifier = SPLICE_ID_CUEI;
+    provider_avail_id = 0;
 }
 
 ts::SpliceAvailDescriptor::SpliceAvailDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -86,7 +91,7 @@ void ts::SpliceAvailDescriptor::deserialize(DuckContext& duck, const Descriptor&
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 8;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 8;
 
     if (_is_valid) {
         identifier = GetUInt32(data);
@@ -101,12 +106,13 @@ void ts::SpliceAvailDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::SpliceAvailDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 8) {
         strm << margin << UString::Format(u"Identifier: 0x%X", {GetUInt32(data)});
-        display.duck().displayIfASCII(data, 4, u" (\"", u"\")");
+        duck.displayIfASCII(data, 4, u" (\"", u"\")");
         strm << std::endl << margin << UString::Format(u"Provider id: 0x%X", {GetUInt32(data + 4)}) << std::endl;
         data += 8; size -= 8;
     }
@@ -130,10 +136,8 @@ void ts::SpliceAvailDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SpliceAvailDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SpliceAvailDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
-        element->getIntAttribute<uint32_t>(provider_avail_id, u"provider_avail_id", true);
+    return element->getIntAttribute<uint32_t>(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
+           element->getIntAttribute<uint32_t>(provider_avail_id, u"provider_avail_id", true);
 }

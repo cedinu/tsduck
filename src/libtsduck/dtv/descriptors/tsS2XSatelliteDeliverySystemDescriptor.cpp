@@ -32,19 +32,19 @@
 #include "tsDescriptor.h"
 #include "tsVariable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 #include "tsBCD.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"S2X_satellite_delivery_system_descriptor"
+#define MY_CLASS ts::S2XSatelliteDeliverySystemDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_S2X_DELIVERY
 
-TS_XML_DESCRIPTOR_FACTORY(ts::S2XSatelliteDeliverySystemDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::S2XSatelliteDeliverySystemDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::S2XSatelliteDeliverySystemDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -65,7 +65,21 @@ ts::S2XSatelliteDeliverySystemDescriptor::S2XSatelliteDeliverySystemDescriptor()
     channel_bond_1(),
     reserved_future_use()
 {
-    _is_valid = true;
+}
+
+void ts::S2XSatelliteDeliverySystemDescriptor::clearContent()
+{
+    receiver_profiles = 0;
+    S2X_mode = 0;
+    TS_GS_S2X_mode = 0;
+    scrambling_sequence_selector = false;
+    scrambling_sequence_index = 0;
+    timeslice_number = 0;
+    master_channel.clear();
+    num_channel_bonds_minus_one = false;
+    channel_bond_0.clear();
+    channel_bond_1.clear();
+    reserved_future_use.clear();
 }
 
 ts::S2XSatelliteDeliverySystemDescriptor::S2XSatelliteDeliverySystemDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -84,6 +98,18 @@ ts::S2XSatelliteDeliverySystemDescriptor::Channel::Channel() :
     multiple_input_stream_flag(false),
     input_stream_identifier(0)
 {
+}
+
+void ts::S2XSatelliteDeliverySystemDescriptor::Channel::clear()
+{
+    frequency = 0;
+    orbital_position = 0;
+    east_not_west = false;
+    polarization = 0;
+    roll_off = 0;
+    symbol_rate = 0;
+    multiple_input_stream_flag = false;
+    input_stream_identifier = 0;
 }
 
 
@@ -126,7 +152,7 @@ void ts::S2XSatelliteDeliverySystemDescriptor::serializeChannel(const Channel& c
                    uint8_t((channel.polarization & 0x03) << 5) |
                    (channel.multiple_input_stream_flag ? 0x10 : 0x00) |
                    (channel.roll_off & 0x07));
-    bb.appendBCD(uint32_t(channel.symbol_rate / 100), 7, false); // unit is 100 sym/s 
+    bb.appendBCD(uint32_t(channel.symbol_rate / 100), 7, false); // unit is 100 sym/s
     if (channel.multiple_input_stream_flag) {
         bb.appendUInt8(channel.input_stream_identifier);
     }
@@ -143,7 +169,7 @@ void ts::S2XSatelliteDeliverySystemDescriptor::deserialize(DuckContext& duck, co
 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 3 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 3 && data[0] == MY_EDID;
 
     if (_is_valid) {
         receiver_profiles = (data[1] >> 3) & 0x1F;
@@ -225,7 +251,8 @@ void ts::S2XSatelliteDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& 
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
     bool ok = true;
 
@@ -278,15 +305,11 @@ void ts::S2XSatelliteDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& 
                     (!num || DisplayChannel(display, u"Channel bond 1", data, size, indent));
             }
         }
-
-        if (size > 0) {
-            strm << margin << "Reserved for future use: " << size << " bytes:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            data += size; size = 0;
-        }
+        display.displayPrivateData(u"Reserved for future use", data, size, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 // Display a channel description.
@@ -296,7 +319,8 @@ bool ts::S2XSatelliteDeliverySystemDescriptor::DisplayChannel(TablesDisplay& dis
         return false;
     }
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     const bool east = (data[6] & 0x80) != 0;
@@ -353,7 +377,7 @@ void ts::S2XSatelliteDeliverySystemDescriptor::buildXML(DuckContext& duck, xml::
         }
     }
     if (!reserved_future_use.empty()) {
-        root->addElement(u"reserved_future_use")->addHexaText(reserved_future_use);
+        root->addHexaTextChild(u"reserved_future_use", reserved_future_use);
     }
 }
 
@@ -377,16 +401,13 @@ void ts::S2XSatelliteDeliverySystemDescriptor::buildChannelXML(const Channel& ch
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::S2XSatelliteDeliverySystemDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::S2XSatelliteDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    reserved_future_use.clear();
-
     Variable<uint32_t> scrambling;
     xml::ElementVector xmaster;
     xml::ElementVector xbond;
 
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(receiver_profiles, u"receiver_profiles", true, 0, 0, 0x1F) &&
         element->getIntAttribute<uint8_t>(S2X_mode, u"S2X_mode", true, 0, 0, 0x03) &&
         element->getIntAttribute<uint8_t>(TS_GS_S2X_mode, u"TS_GS_S2X_mode", true, 0, 0, 0x03) &&
@@ -398,14 +419,15 @@ void ts::S2XSatelliteDeliverySystemDescriptor::fromXML(DuckContext& duck, const 
         getChannelXML(master_channel, duck, xmaster[0]) &&
         (S2X_mode != 3 || getChannelXML(channel_bond_0, duck, xbond[0]));
 
-    if (_is_valid) {
+    if (ok) {
         scrambling_sequence_selector = scrambling.set();
         scrambling_sequence_index = scrambling.value(0);
         num_channel_bonds_minus_one = S2X_mode == 3 && xbond.size() > 1;
         if (num_channel_bonds_minus_one) {
-            _is_valid = getChannelXML(channel_bond_1, duck, xbond[1]);
+            ok = getChannelXML(channel_bond_1, duck, xbond[1]);
         }
     }
+    return ok;
 }
 
 // Analyze an XML element for a channel.
@@ -438,6 +460,5 @@ bool ts::S2XSatelliteDeliverySystemDescriptor::getChannelXML(Channel& channel, D
             element->report().error(u"Invalid value '%s' for attribute 'orbital_position' in <%s> at line %d, use 'nn.n'", {orbit, element->name(), element->lineNumber()});
         }
     }
-
     return ok;
 }

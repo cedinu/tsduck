@@ -31,19 +31,19 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsIntegerUtils.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"video_depth_range_descriptor"
+#define MY_CLASS ts::VideoDepthRangeDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_VIDEO_DEPTH_RANGE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::VideoDepthRangeDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::VideoDepthRangeDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::VideoDepthRangeDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,7 +54,6 @@ ts::VideoDepthRangeDescriptor::VideoDepthRangeDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     ranges()
 {
-    _is_valid = true;
 }
 
 ts::VideoDepthRangeDescriptor::VideoDepthRangeDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -69,6 +68,11 @@ ts::VideoDepthRangeDescriptor::Range::Range() :
     video_min_disparity_hint(0),
     range_selector()
 {
+}
+
+void ts::VideoDepthRangeDescriptor::clearContent()
+{
+    ranges.clear();
 }
 
 
@@ -108,7 +112,7 @@ void ts::VideoDepthRangeDescriptor::deserialize(DuckContext& duck, const Descrip
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1 && data[0] == MY_EDID;
     data++; size--;
     ranges.clear();
 
@@ -160,7 +164,8 @@ void ts::VideoDepthRangeDescriptor::DisplayDescriptor(TablesDisplay& display, DI
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
     bool ok = true;
 
@@ -186,9 +191,8 @@ void ts::VideoDepthRangeDescriptor::DisplayDescriptor(TablesDisplay& display, DI
                 break;
             default:
                 ok = size >= len;
-                if (ok && len > 0) {
-                    strm << margin << "  Range selector bytes:" << std::endl
-                         << UString::Dump(data, len, UString::HEXA | UString::ASCII | UString::OFFSET, indent + 2);
+                if (ok) {
+                    display.displayPrivateData(u"Range selector bytes", data, len, indent + 2);
                     data += len; size -= len;
                 }
                 break;
@@ -212,8 +216,8 @@ void ts::VideoDepthRangeDescriptor::buildXML(DuckContext& duck, xml::Element* ro
             e->setIntAttribute(u"video_max_disparity_hint", it->video_max_disparity_hint);
             e->setIntAttribute(u"video_min_disparity_hint", it->video_min_disparity_hint);
         }
-        else if (it->range_type > 1 && !it->range_selector.empty()) {
-            e->addElement(u"range_selector")->addHexaText(it->range_selector);
+        else if (it->range_type > 1) {
+            e->addHexaTextChild(u"range_selector", it->range_selector, true);
         }
     }
 }
@@ -223,22 +227,18 @@ void ts::VideoDepthRangeDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::VideoDepthRangeDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::VideoDepthRangeDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    ranges.clear();
-
     xml::ElementVector xranges;
-    _is_valid = checkXMLName(element) && element->getChildren(xranges, u"range");
+    bool ok = element->getChildren(xranges, u"range");
 
-    for (size_t i = 0; _is_valid && i < xranges.size(); ++i) {
+    for (size_t i = 0; ok && i < xranges.size(); ++i) {
         Range range;
-        _is_valid =
-            xranges[i]->getIntAttribute<uint8_t>(range.range_type, u"range_type", true) &&
-            xranges[i]->getIntAttribute<int16_t>(range.video_max_disparity_hint, u"video_max_disparity_hint", range.range_type == 0) &&
-            xranges[i]->getIntAttribute<int16_t>(range.video_min_disparity_hint, u"video_min_disparity_hint", range.range_type == 0) &&
-            xranges[i]->getHexaTextChild(range.range_selector, u"range_selector", false, 0, range.range_type < 2 ? 0 : MAX_DESCRIPTOR_SIZE);
-        if (_is_valid) {
-            ranges.push_back(range);
-        }
+        ok = xranges[i]->getIntAttribute<uint8_t>(range.range_type, u"range_type", true) &&
+             xranges[i]->getIntAttribute<int16_t>(range.video_max_disparity_hint, u"video_max_disparity_hint", range.range_type == 0) &&
+             xranges[i]->getIntAttribute<int16_t>(range.video_min_disparity_hint, u"video_min_disparity_hint", range.range_type == 0) &&
+             xranges[i]->getHexaTextChild(range.range_selector, u"range_selector", false, 0, range.range_type < 2 ? 0 : MAX_DESCRIPTOR_SIZE);
+        ranges.push_back(range);
     }
+    return ok;
 }

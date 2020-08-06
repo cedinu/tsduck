@@ -53,7 +53,7 @@ jobs:
     - name: Build TSDuck
       run: make -j5
     - name: Check built version
-      run: source src/tstools/release-x86_64/setenv.sh && tsversion --version=all
+      run: source build/setenv.sh && tsversion --version=all
     - name: Run unitary tests
       run: make test
     - name: Download test suite
@@ -62,11 +62,13 @@ jobs:
         curl -s -L https://github.com/tsduck/tsduck-test/tarball/master | tar xz --strip 1 -C ../tsduck-test
     - name: Run test suite
       run: |
-        make test-suite
-        for f in $(find ../tsduck-test/tmp -name '*.diff'); do
+        make test-suite && status=$? || status=$?
+        cd ../tsduck-test
+        for f in $(find tmp -name '*.diff'); do
             echo "==== $f";
             cat "$f"
         done
+        exit $status
 
   linux-clang:
     name: Linux with clang
@@ -81,7 +83,7 @@ jobs:
     - name: Build TSDuck
       run: make -j5
     - name: Check built version
-      run: source src/tstools/release-x86_64/setenv.sh && tsversion --version=all
+      run: source build/setenv.sh && tsversion --version=all
     - name: Run unitary tests
       run: make test
     - name: Download test suite
@@ -90,11 +92,13 @@ jobs:
         curl -s -L https://github.com/tsduck/tsduck-test/tarball/master | tar xz --strip 1 -C ../tsduck-test
     - name: Run test suite
       run: |
-        make test-suite
-        for f in $(find ../tsduck-test/tmp -name '*.diff'); do
+        make test-suite && status=$? || status=$?
+        cd ../tsduck-test
+        for f in $(find tmp -name '*.diff'); do
             echo "==== $f";
             cat "$f"
         done
+        exit $status
 
   doxygen:
     name: Doxygen documentation
@@ -107,6 +111,9 @@ jobs:
       run: make doxygen
 
   macos-clang:
+    # Warning: It has been noted on GitHub macOS runners that the host name can change
+    # between steps or even the middle of a step. This breaks the naming scheme of the
+    # build directory for binaries. As a consequence, we need to force a fixed name.
     name: macOS with clang
     runs-on: macos-latest
     env:
@@ -116,47 +123,42 @@ jobs:
     - uses: actions/checkout@master
     - name: Install dependencies
       run: build/install-prerequisites.sh
-    - name: Check dependencies
-      run: |
-        gsed --version
-        ggrep --version
-        dos2unix --version
     - name: Build TSDuck
-      run: make -j5
+      run: make -j5 BINDIR=bin
     - name: Check built version
-      run: source src/tstools/release-x86_64/setenv.sh && tsversion --version=all
+      run: bin/tsversion --version=all
     - name: Run unitary tests
-      run: make test
+      run: make BINDIR=bin test
     - name: Download test suite
       run: |
         mkdir -p ../tsduck-test
         curl -s -L https://github.com/tsduck/tsduck-test/tarball/master | tar xz --strip 1 -C ../tsduck-test
     - name: Run test suite
       run: |
-        make test-suite
+        export PATH="$(cd bin; pwd):$PATH"
         cd ../tsduck-test
+        ./run-all-tests.sh && status=$? || status=$?
         for f in $(find tmp -name '*.diff'); do
             echo "==== $f";
             cat "$f"
         done
+        exit $status
 
   windows-64-msvc:
     name: Windows 64-bit with VC++
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@master
-    - name: Install libsrt
-      run: build/install-libsrt.ps1 -GitHubActions -NoPause
-    - name: Install Dektec SDK
-      run: dektec/Download-Install-Dtapi.ps1 -NoPause
+    - name: Install dependencies
+      run: build/install-prerequisites.ps1 -GitHubActions -NoPause
     - name: Build TSDuck
-      run: build/Build.ps1 -Win64 -Release -Parallel 5 -NoLowPriority -NoPause
+      run: build/build.ps1 -Win64 -Release -Parallel 5 -NoLowPriority -NoPause
     - name: Check built version
-      run: build/msvc/Release-x64/tsversion.exe --version=all
+      run: bin/Release-x64/tsversion.exe --version=all
     - name: Run unitary tests
-      run: build/msvc/Release-x64/utests-tsduckdll.exe
+      run: bin/Release-x64/utests-tsduckdll.exe
     - name: Run unitary tests (static)
-      run: build/msvc/Release-x64/utests-tsducklib.exe
+      run: bin/Release-x64/utests-tsducklib.exe
     - name: Download test suite
       run: |
         $ProgressPreference = 'SilentlyContinue'
@@ -167,29 +169,28 @@ jobs:
       shell: bash
       run: |
         cd ../tsduck-test
-        ./run-all-tests.sh --dev
+        ./run-all-tests.sh --dev && status=$? || status=$?
         for f in $(find tmp -name '*.diff'); do
             echo "==== $f";
             cat "$f"
         done
+        exit $status
 
   windows-32-msvc:
     name: Windows 32-bit with VC++
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@master
-    - name: Install libsrt
-      run: build/install-libsrt.ps1 -GitHubActions -NoPause
-    - name: Install Dektec SDK
-      run: dektec/Download-Install-Dtapi.ps1 -NoPause
+    - name: Install dependencies
+      run: build/install-prerequisites.ps1 -GitHubActions -NoPause
     - name: Build TSDuck
-      run: build/Build.ps1 -Win32 -Release -Parallel 5 -NoLowPriority -NoPause
+      run: build/build.ps1 -Win32 -Release -Parallel 5 -NoLowPriority -NoPause
     - name: Check built version
-      run: build/msvc/Release-Win32/tsversion.exe --version=all
+      run: bin/Release-Win32/tsversion.exe --version=all
     - name: Run unitary tests
-      run: build/msvc/Release-Win32/utests-tsduckdll.exe
+      run: bin/Release-Win32/utests-tsduckdll.exe
     - name: Run unitary tests (static)
-      run: build/msvc/Release-Win32/utests-tsducklib.exe
+      run: bin/Release-Win32/utests-tsducklib.exe
     - name: Download test suite
       run: |
         $ProgressPreference = 'SilentlyContinue'
@@ -200,8 +201,9 @@ jobs:
       shell: bash
       run: |
         cd ../tsduck-test
-        ./run-all-tests.sh --dev32
+        ./run-all-tests.sh --dev32 && status=$? || status=$?
         for f in $(find tmp -name '*.diff'); do
             echo "==== $f";
             cat "$f"
         done
+        exit $status

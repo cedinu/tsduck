@@ -30,41 +30,40 @@
 #include "tsIPSignallingDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"ip_signalling_descriptor"
+#define MY_CLASS ts::IPSignallingDescriptor
 #define MY_DID ts::DID_AIT_IP_SIGNALLING
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::IPSignallingDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::IPSignallingDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::IPSignallingDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::IPSignallingDescriptor::IPSignallingDescriptor(uint32_t id) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     platform_id(id)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::IPSignallingDescriptor::IPSignallingDescriptor(DuckContext& duck, const Descriptor& desc) :
     IPSignallingDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::IPSignallingDescriptor::clearContent()
+{
+    platform_id = 0;
 }
 
 
@@ -86,7 +85,7 @@ void ts::IPSignallingDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 
 void ts::IPSignallingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 3;
 
     if (_is_valid) {
         platform_id = GetUInt24(desc.payload());
@@ -100,7 +99,8 @@ void ts::IPSignallingDescriptor::deserialize(DuckContext& duck, const Descriptor
 
 void ts::IPSignallingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 3) {
@@ -126,9 +126,7 @@ void ts::IPSignallingDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::IPSignallingDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::IPSignallingDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(platform_id, u"platform_id", true, 0, 0, 0x00FFFFFF);
+    return element->getIntAttribute<uint32_t>(platform_id, u"platform_id", true, 0, 0, 0x00FFFFFF);
 }

@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"audio_stream_descriptor"
+#define MY_CLASS ts::AudioStreamDescriptor
 #define MY_DID ts::DID_AUDIO
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::AudioStreamDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::AudioStreamDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::AudioStreamDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,13 +55,20 @@ ts::AudioStreamDescriptor::AudioStreamDescriptor() :
     layer(0),
     variable_rate_audio(false)
 {
-    _is_valid = true;
 }
 
 ts::AudioStreamDescriptor::AudioStreamDescriptor(DuckContext& duck, const Descriptor& desc) :
     AudioStreamDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::AudioStreamDescriptor::clearContent()
+{
+    free_format = false;
+    ID = 0;
+    layer = 0;
+    variable_rate_audio = false;
 }
 
 
@@ -90,7 +97,7 @@ void ts::AudioStreamDescriptor::deserialize(DuckContext& duck, const Descriptor&
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 1;
 
     if (_is_valid) {
         free_format = (data[0] & 0x80) != 0;
@@ -107,7 +114,8 @@ void ts::AudioStreamDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::AudioStreamDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -137,12 +145,10 @@ void ts::AudioStreamDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AudioStreamDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AudioStreamDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(free_format, u"free_format", true) &&
-        element->getIntAttribute<uint8_t>(ID, u"ID", true, 0, 0, 1) &&
-        element->getIntAttribute<uint8_t>(layer, u"layer", true, 0, 0, 3) &&
-        element->getBoolAttribute(variable_rate_audio, u"variable_rate_audio", true);
+    return element->getBoolAttribute(free_format, u"free_format", true) &&
+           element->getIntAttribute<uint8_t>(ID, u"ID", true, 0, 0, 1) &&
+           element->getIntAttribute<uint8_t>(layer, u"layer", true, 0, 0, 3) &&
+           element->getBoolAttribute(variable_rate_audio, u"variable_rate_audio", true);
 }

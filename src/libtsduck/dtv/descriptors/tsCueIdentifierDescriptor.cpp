@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"cue_identifier_descriptor"
+#define MY_CLASS ts::CueIdentifierDescriptor
 #define MY_DID ts::DID_CUE_IDENTIFIER
-#define MY_STD ts::STD_SCTE
+#define MY_STD ts::Standards::SCTE
 
 // This is a non-DVB descriptor with DID >= 0x80 => must set PDS to zero in EDID.
-TS_XML_DESCRIPTOR_FACTORY(ts::CueIdentifierDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CueIdentifierDescriptor, ts::EDID::Private(MY_DID, 0));
-TS_FACTORY_REGISTER(ts::CueIdentifierDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, 0));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, 0), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -66,7 +66,11 @@ ts::CueIdentifierDescriptor::CueIdentifierDescriptor(uint8_t type) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     cue_stream_type(type)
 {
-    _is_valid = true;
+}
+
+void ts::CueIdentifierDescriptor::clearContent()
+{
+    cue_stream_type = CUE_ALL_COMMANDS;
 }
 
 ts::CueIdentifierDescriptor::CueIdentifierDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -95,7 +99,7 @@ void ts::CueIdentifierDescriptor::serialize(DuckContext& duck, Descriptor& desc)
 
 void ts::CueIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 1;
 
     if (_is_valid) {
         cue_stream_type = *desc.payload();
@@ -109,7 +113,8 @@ void ts::CueIdentifierDescriptor::deserialize(DuckContext& duck, const Descripto
 
 void ts::CueIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -131,7 +136,7 @@ void ts::CueIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID 
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::CueIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -139,14 +144,7 @@ void ts::CueIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* root
     root->setEnumAttribute(CueStreamTypeNames, u"cue_stream_type", cue_stream_type);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::CueIdentifierDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CueIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntEnumAttribute<uint8_t>(cue_stream_type, CueStreamTypeNames, u"cue_stream_type", true);
+    return element->getIntEnumAttribute<uint8_t>(cue_stream_type, CueStreamTypeNames, u"cue_stream_type", true);
 }

@@ -720,9 +720,9 @@
     TS_POP_WARNING()
 #endif
 
-// Enforce assertions, even in optimized mode.
+// Enforce assertions, even in optimized mode, if TS_KEEP_ASSERTIONS is defined.
 
-#if defined(NDEBUG)
+#if defined(NDEBUG) && defined(TS_KEEP_ASSERTIONS)
     #undef NDEBUG
 #endif
 
@@ -794,6 +794,7 @@ TS_MSC_NOWARNING(4668)
 TS_MSC_NOWARNING(4774)
 TS_MSC_NOWARNING(5026)
 TS_MSC_NOWARNING(5027)
+TS_MSC_NOWARNING(5204)
 
 #if defined(TS_WINDOWS)
 
@@ -1275,12 +1276,33 @@ namespace ts {
     //! Perform a sign extension on 24 bit integers.
     //!
     //! @param [in] x A 32-bit integer containing a signed 24-bit value to extend.
-    //! @return A 32-bit signed integer containing the signed 24-bit value with
-    //! proper sign extension on 32-bits.
+    //! @return A 32-bit signed integer containing the signed 24-bit value with proper sign extension on 32-bits.
     //!
     TSDUCKDLL inline int32_t SignExtend24(int32_t x)
     {
         return (x & 0x00800000) == 0 ? (x & 0x00FFFFFF) : int32_t(uint32_t(x) | 0xFF000000);
+    }
+
+    //!
+    //! Perform a sign extension on 40 bit integers.
+    //!
+    //! @param [in] x A 64-bit integer containing a signed 40-bit value to extend.
+    //! @return A 64-bit signed integer containing the signed 40-bit value with proper sign extension on 64-bits.
+    //!
+    TSDUCKDLL inline int64_t SignExtend40(int64_t x)
+    {
+        return (x & TS_UCONST64(0x0000008000000000)) == 0 ? (x & TS_UCONST64(0x000000FFFFFFFFFF)) : int64_t(uint64_t(x) | TS_UCONST64(0xFFFFFF0000000000));
+    }
+
+    //!
+    //! Perform a sign extension on 48 bit integers.
+    //!
+    //! @param [in] x A 64-bit integer containing a signed 48-bit value to extend.
+    //! @return A 64-bit signed integer containing the signed 48-bit value with proper sign extension on 64-bits.
+    //!
+    TSDUCKDLL inline int64_t SignExtend48(int64_t x)
+    {
+        return (x & TS_UCONST64(0x0000800000000000)) == 0 ? (x & TS_UCONST64(0x0000FFFFFFFFFFFF)) : int64_t(uint64_t(x) | TS_UCONST64(0xFFFF000000000000));
     }
 
     //!
@@ -2020,42 +2042,6 @@ namespace ts {
 
 
 //----------------------------------------------------------------------------
-// Flags operations.
-//----------------------------------------------------------------------------
-
-//!
-//! @hideinitializer
-//! This macro defines all bit-wise operators on an enumeration type.
-//!
-//! These operations are useful for enumeration values which are used as bit-masks.
-//! This macro shall be used outside namespaces.
-//!
-//! Example:
-//! @code
-//! enum E {A = 0x01, B = 0x02, C = 0x04};
-//! TS_FLAGS_OPERATORS(E)
-//!
-//! E e = A | B | C;
-//! e ^= B | C;
-//! @endcode
-//!
-//! @param [in] type The name of an enumeration type.
-//!
-#if defined(DOXYGEN)
-#define TS_FLAGS_OPERATORS(type)
-#else
-#define TS_FLAGS_OPERATORS(type)                                                      \
-    inline constexpr type operator~(type a) { return type(~int(a)); }                 \
-    inline constexpr type operator|(type a, type b) { return type(int(a) | int(b)); } \
-    inline constexpr type operator&(type a, type b) { return type(int(a) & int(b)); } \
-    inline constexpr type operator^(type a, type b) { return type(int(a) ^ int(b)); } \
-    inline type& operator|=(type& a, type b) { return a = a | b; }                    \
-    inline type& operator&=(type& a, type b) { return a = a & b; }                    \
-    inline type& operator^=(type& a, type b) { return a = a ^ b; }
-#endif
-
-
-//----------------------------------------------------------------------------
 // System error codes
 //----------------------------------------------------------------------------
 
@@ -2500,7 +2486,7 @@ namespace ts {
 namespace ts {
     //!
     //! Enumeration type used to indicate if the data referenced by a pointer shall be copied or shared.
-    enum CopyShare {
+    enum class ShareMode {
         COPY,  //!< Data shall be copied.
         SHARE  //!< Data shall be shared.
     };
@@ -2519,7 +2505,7 @@ namespace ts {
     //! - Any positive value means true.
     //! - Any negative value means "maybe" or "dont't know".
     //!
-    enum Tristate {
+    enum class Tristate {
         MAYBE = -1,  //! Undefined value (and more generally all negative values).
         FALSE =  0,  //! Built-in false.
         TRUE  =  1,  //! True value (and more generally all positive values).

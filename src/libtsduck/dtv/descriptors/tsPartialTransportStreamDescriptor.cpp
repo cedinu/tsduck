@@ -31,21 +31,21 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"partial_transport_stream_descriptor"
+#define MY_CLASS ts::PartialTransportStreamDescriptor
 #define MY_DID ts::DID_PARTIAL_TS
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::PartialTransportStreamDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::PartialTransportStreamDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::PartialTransportStreamDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::PartialTransportStreamDescriptor::PartialTransportStreamDescriptor() :
@@ -54,18 +54,19 @@ ts::PartialTransportStreamDescriptor::PartialTransportStreamDescriptor() :
     minimum_overall_smoothing_rate(UNDEFINED_SMOOTHING_RATE),
     maximum_overall_smoothing_buffer(UNDEFINED_SMOOTHING_BUFFER)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::PartialTransportStreamDescriptor::PartialTransportStreamDescriptor(DuckContext& duck, const Descriptor& desc) :
     PartialTransportStreamDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::PartialTransportStreamDescriptor::clearContent()
+{
+    peak_rate = 0;
+    minimum_overall_smoothing_rate = UNDEFINED_SMOOTHING_RATE;
+    maximum_overall_smoothing_buffer = UNDEFINED_SMOOTHING_BUFFER;
 }
 
 
@@ -92,7 +93,7 @@ void ts::PartialTransportStreamDescriptor::deserialize(DuckContext& duck, const 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 8;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 8;
 
     if (_is_valid) {
         peak_rate = GetUInt24(data) & 0x003FFFFF;
@@ -108,7 +109,8 @@ void ts::PartialTransportStreamDescriptor::deserialize(DuckContext& duck, const 
 
 void ts::PartialTransportStreamDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 8) {
@@ -158,11 +160,9 @@ void ts::PartialTransportStreamDescriptor::buildXML(DuckContext& duck, xml::Elem
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::PartialTransportStreamDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::PartialTransportStreamDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(peak_rate, u"peak_rate", true, 0, 0, 0x003FFFFF) &&
-        element->getIntAttribute<uint32_t>(minimum_overall_smoothing_rate, u"minimum_overall_smoothing_rate", false, 0x003FFFFF, 0, 0x003FFFFF) &&
-        element->getIntAttribute<uint16_t>(maximum_overall_smoothing_buffer, u"maximum_overall_smoothing_buffer", false, 0x3FFF, 0, 0x3FFF);
+    return element->getIntAttribute<uint32_t>(peak_rate, u"peak_rate", true, 0, 0, 0x003FFFFF) &&
+           element->getIntAttribute<uint32_t>(minimum_overall_smoothing_rate, u"minimum_overall_smoothing_rate", false, 0x003FFFFF, 0, 0x003FFFFF) &&
+           element->getIntAttribute<uint16_t>(maximum_overall_smoothing_buffer, u"maximum_overall_smoothing_buffer", false, 0x3FFF, 0, 0x3FFF);
 }

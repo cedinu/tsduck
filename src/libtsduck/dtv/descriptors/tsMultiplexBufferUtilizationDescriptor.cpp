@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"multiplex_buffer_utilization_descriptor"
+#define MY_CLASS ts::MultiplexBufferUtilizationDescriptor
 #define MY_DID ts::DID_MUX_BUF_USE
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MultiplexBufferUtilizationDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MultiplexBufferUtilizationDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MultiplexBufferUtilizationDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,13 +53,18 @@ ts::MultiplexBufferUtilizationDescriptor::MultiplexBufferUtilizationDescriptor()
     LTW_offset_lower_bound(),
     LTW_offset_upper_bound()
 {
-    _is_valid = true;
 }
 
 ts::MultiplexBufferUtilizationDescriptor::MultiplexBufferUtilizationDescriptor(DuckContext& duck, const Descriptor& desc) :
     MultiplexBufferUtilizationDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::MultiplexBufferUtilizationDescriptor::clearContent()
+{
+    LTW_offset_lower_bound.clear();
+    LTW_offset_upper_bound.clear();
 }
 
 
@@ -88,13 +93,13 @@ void ts::MultiplexBufferUtilizationDescriptor::serialize(DuckContext& duck, Desc
 
 void ts::MultiplexBufferUtilizationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    LTW_offset_lower_bound.reset();
-    LTW_offset_upper_bound.reset();
+    LTW_offset_lower_bound.clear();
+    LTW_offset_upper_bound.clear();
 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 4;
 
     if (_is_valid && (data[0] & 0x80) != 0) {
         LTW_offset_lower_bound = GetUInt16(data) & 0x7FFF;
@@ -109,7 +114,8 @@ void ts::MultiplexBufferUtilizationDescriptor::deserialize(DuckContext& duck, co
 
 void ts::MultiplexBufferUtilizationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
@@ -142,16 +148,16 @@ void ts::MultiplexBufferUtilizationDescriptor::buildXML(DuckContext& duck, xml::
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MultiplexBufferUtilizationDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MultiplexBufferUtilizationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getOptionalIntAttribute<uint16_t>(LTW_offset_lower_bound, u"LTW_offset_lower_bound", 0x0000, 0x7FFF) &&
         element->getOptionalIntAttribute<uint16_t>(LTW_offset_upper_bound, u"LTW_offset_upper_bound", 0x0000, 0x7FFF);
 
-    if (_is_valid && LTW_offset_lower_bound.set() + LTW_offset_upper_bound.set() == 1) {
-        _is_valid = false;
+    if (ok && LTW_offset_lower_bound.set() + LTW_offset_upper_bound.set() == 1) {
+        ok = false;
         element->report().error(u"attributes LTW_offset_lower_bound and LTW_offset_upper_bound must be both set or both unset in <%s>, line %d",
                                 {element->name(), element->lineNumber()});
     }
+    return ok;
 }

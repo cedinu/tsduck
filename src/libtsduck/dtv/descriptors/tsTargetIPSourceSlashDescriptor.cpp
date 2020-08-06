@@ -30,18 +30,18 @@
 #include "tsTargetIPSourceSlashDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"target_IP_source_slash_descriptor"
+#define MY_CLASS ts::TargetIPSourceSlashDescriptor
 #define MY_DID ts::DID_INT_IP_SRC_SLASH
 #define MY_TID ts::TID_INT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::TargetIPSourceSlashDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetIPSourceSlashDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::TargetIPSourceSlashDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,13 +52,17 @@ ts::TargetIPSourceSlashDescriptor::TargetIPSourceSlashDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     addresses()
 {
-    _is_valid = true;
 }
 
 ts::TargetIPSourceSlashDescriptor::TargetIPSourceSlashDescriptor(DuckContext& duck, const Descriptor& desc) :
     TargetIPSourceSlashDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::TargetIPSourceSlashDescriptor::clearContent()
+{
+    addresses.clear();
 }
 
 ts::TargetIPSourceSlashDescriptor::Address::Address(const IPAddress& addr1, uint8_t mask1, const IPAddress& addr2, uint8_t mask2) :
@@ -96,7 +100,7 @@ void ts::TargetIPSourceSlashDescriptor::deserialize(DuckContext& duck, const Des
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size % 10 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size % 10 == 0;
     addresses.clear();
 
     if (_is_valid) {
@@ -114,7 +118,8 @@ void ts::TargetIPSourceSlashDescriptor::deserialize(DuckContext& duck, const Des
 
 void ts::TargetIPSourceSlashDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 10) {
@@ -147,24 +152,18 @@ void ts::TargetIPSourceSlashDescriptor::buildXML(DuckContext& duck, xml::Element
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TargetIPSourceSlashDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TargetIPSourceSlashDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    addresses.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"address", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"address", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Address addr;
-        _is_valid =
-                children[i]->getIPAttribute(addr.IPv4_source_addr, u"IPv4_source_addr", true) &&
-                children[i]->getIntAttribute(addr.IPv4_source_slash_mask, u"IPv4_source_slash_mask", true) &&
-                children[i]->getIPAttribute(addr.IPv4_dest_addr, u"IPv4_dest_addr", true) &&
-                children[i]->getIntAttribute(addr.IPv4_dest_slash_mask, u"IPv4_dest_slash_mask", true);
-        if (_is_valid) {
-            addresses.push_back(addr);
-        }
+        ok = children[i]->getIPAttribute(addr.IPv4_source_addr, u"IPv4_source_addr", true) &&
+             children[i]->getIntAttribute(addr.IPv4_source_slash_mask, u"IPv4_source_slash_mask", true) &&
+             children[i]->getIPAttribute(addr.IPv4_dest_addr, u"IPv4_dest_addr", true) &&
+             children[i]->getIntAttribute(addr.IPv4_dest_slash_mask, u"IPv4_dest_slash_mask", true);
+        addresses.push_back(addr);
     }
+    return ok;
 }

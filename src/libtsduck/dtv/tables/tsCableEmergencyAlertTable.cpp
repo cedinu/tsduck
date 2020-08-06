@@ -32,16 +32,16 @@
 #include "tsNames.h"
 #include "tsxmlElement.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"cable_emergency_alert_table"
+#define MY_CLASS ts::CableEmergencyAlertTable
 #define MY_TID ts::TID_SCTE18_EAS
-#define MY_STD (ts::STD_SCTE | ts::STD_ATSC)
+#define MY_STD (ts::Standards::SCTE | ts::Standards::ATSC)
 
-TS_XML_TABLE_FACTORY(ts::CableEmergencyAlertTable, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::CableEmergencyAlertTable, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::CableEmergencyAlertTable::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
@@ -68,7 +68,6 @@ ts::CableEmergencyAlertTable::CableEmergencyAlertTable(uint8_t sequence_number) 
     exceptions(),
     descs(this)
 {
-    _is_valid = true;
 }
 
 ts::CableEmergencyAlertTable::CableEmergencyAlertTable(const CableEmergencyAlertTable& other) :
@@ -124,12 +123,28 @@ ts::CableEmergencyAlertTable::Exception::Exception(uint16_t major, uint16_t mino
 
 
 //----------------------------------------------------------------------------
+// Inherited public methods
+//----------------------------------------------------------------------------
+
+bool ts::CableEmergencyAlertTable::isPrivate() const
+{
+    // Although not MPEG-defined, SCTE section are "non private".
+    return false;
+}
+
+uint16_t ts::CableEmergencyAlertTable::tableIdExtension() const
+{
+    // Specified as zero in this table.
+    return 0;
+}
+
+
+//----------------------------------------------------------------------------
 // Clear all fields.
 //----------------------------------------------------------------------------
 
-void ts::CableEmergencyAlertTable::clear()
+void ts::CableEmergencyAlertTable::clearContent()
 {
-    version = 0;
     protocol_version = 0;
     EAS_event_ID = 0;
     EAS_originator_code.clear();
@@ -265,7 +280,7 @@ void ts::CableEmergencyAlertTable::deserializeContent(DuckContext& duck, const B
 void ts::CableEmergencyAlertTable::serializeContent(DuckContext& duck, BinaryTable& table) const
 {
     // Build the section (only one is allowed in an EAS table).
-    uint8_t payload[MAX_PSI_LONG_SECTION_PAYLOAD_SIZE];
+    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
     uint8_t* data = payload;
     size_t remain = sizeof(payload);
 
@@ -420,15 +435,13 @@ void ts::CableEmergencyAlertTable::buildXML(DuckContext& duck, xml::Element* roo
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CableEmergencyAlertTable::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CableEmergencyAlertTable::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    clear();
     xml::ElementVector others;
     xml::ElementVector locs;
     xml::ElementVector exceps;
 
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"sequence_number", true, 0, 0, 31) &&
         element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
         element->getIntAttribute<uint16_t>(EAS_event_ID, u"EAS_event_ID", true) &&
@@ -448,39 +461,39 @@ void ts::CableEmergencyAlertTable::fromXML(DuckContext& duck, const xml::Element
         element->getChildren(exceps, u"exception", 0, 255) &&
         descs.fromXML(duck, others, element, u"location,exception,alert_text,nature_of_activation_text");
 
-    for (size_t i = 0; _is_valid && i < locs.size(); ++i) {
+    for (size_t i = 0; ok && i < locs.size(); ++i) {
         Location loc;
-        _is_valid =
-            locs[i]->getIntAttribute<uint8_t>(loc.state_code, u"state_code", true, 0, 0, 99) &&
-            locs[i]->getIntAttribute<uint8_t>(loc.county_subdivision, u"county_subdivision", true, 0, 0, 9) &&
-            locs[i]->getIntAttribute<uint16_t>(loc.county_code, u"county_code", true, 0, 0, 909);
-        if (_is_valid) {
+        ok = locs[i]->getIntAttribute<uint8_t>(loc.state_code, u"state_code", true, 0, 0, 99) &&
+             locs[i]->getIntAttribute<uint8_t>(loc.county_subdivision, u"county_subdivision", true, 0, 0, 9) &&
+             locs[i]->getIntAttribute<uint16_t>(loc.county_code, u"county_code", true, 0, 0, 909);
+        if (ok) {
             locations.push_back(loc);
         }
     }
 
-    for (size_t i = 0; _is_valid && i < exceps.size(); ++i) {
+    for (size_t i = 0; ok && i < exceps.size(); ++i) {
         Exception exc;
         bool wrong = false;
         exc.in_band = exceps[i]->hasAttribute(u"major_channel_number") && exceps[i]->hasAttribute(u"minor_channel_number");
         if (exc.in_band) {
             wrong = exceps[i]->hasAttribute(u"OOB_source_ID");
-            _is_valid =
+            ok =
                 exceps[i]->getIntAttribute<uint16_t>(exc.major_channel_number, u"major_channel_number", true, 0, 0, 0x03FF) &&
                 exceps[i]->getIntAttribute<uint16_t>(exc.minor_channel_number, u"minor_channel_number", true, 0, 0, 0x03FF);
         }
         else {
             wrong = exceps[i]->hasAttribute(u"major_channel_number") || exceps[i]->hasAttribute(u"minor_channel_number");
-            _is_valid = exceps[i]->getIntAttribute<uint16_t>(exc.OOB_source_ID, u"OOB_source_ID", true);
+            ok = exceps[i]->getIntAttribute<uint16_t>(exc.OOB_source_ID, u"OOB_source_ID", true);
         }
         if (wrong) {
-            _is_valid = false;
+            ok = false;
             exceps[i]->report().error(u"invalid combination of attributes in <%s>, line %d", {exceps[i]->name(), exceps[i]->lineNumber()});
         }
-        if (_is_valid) {
+        if (ok) {
             exceptions.push_back(exc);
         }
     }
+    return ok;
 }
 
 
@@ -490,8 +503,10 @@ void ts::CableEmergencyAlertTable::fromXML(DuckContext& duck, const xml::Element
 
 void ts::CableEmergencyAlertTable::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
     bool ok = size >= 7;

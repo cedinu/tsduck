@@ -30,21 +30,19 @@
 #include "tsTargetSerialNumberDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"target_serial_number_descriptor"
+#define MY_CLASS ts::TargetSerialNumberDescriptor
 #define MY_DID ts::DID_INT_SERIAL_NUM
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::TargetSerialNumberDescriptor, MY_XML_NAME, ts::TID_INT, ts::TID_UNT);
-
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetSerialNumberDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_INT));
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetSerialNumberDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT));
-
-TS_FACTORY_REGISTER(ts::TargetSerialNumberDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_INT));
-TS_FACTORY_REGISTER(ts::TargetSerialNumberDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT));
+// Table-specific descriptor which is allowed in two distinct tables.
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, ts::TID_INT), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +53,11 @@ ts::TargetSerialNumberDescriptor::TargetSerialNumberDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     serial_data()
 {
-    _is_valid = true;
+}
+
+void ts::TargetSerialNumberDescriptor::clearContent()
+{
+    serial_data.clear();
 }
 
 ts::TargetSerialNumberDescriptor::TargetSerialNumberDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -83,7 +85,7 @@ void ts::TargetSerialNumberDescriptor::serialize(DuckContext& duck, Descriptor& 
 
 void ts::TargetSerialNumberDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
 
     if (_is_valid) {
         serial_data.copy(desc.payload(), desc.payloadSize());
@@ -100,33 +102,26 @@ void ts::TargetSerialNumberDescriptor::deserialize(DuckContext& duck, const Desc
 
 void ts::TargetSerialNumberDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    display.duck().out() << margin
-                  << UString::Format(u"%*sSerial number (%d bytes): %s", {indent, u"", size, UString::Dump(data, size, UString::SINGLE_LINE)})
-                  << std::endl;
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
+    const std::string margin(indent, ' ');
+
+    strm << margin
+         << UString::Format(u"Serial number (%d bytes): %s", {size, UString::Dump(data, size, UString::SINGLE_LINE)})
+         << std::endl;
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::TargetSerialNumberDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    if (!serial_data.empty()) {
-        root->addHexaText(serial_data);
-    }
+    root->addHexaText(serial_data, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::TargetSerialNumberDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TargetSerialNumberDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    serial_data.clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getHexaText(serial_data, 0, MAX_DESCRIPTOR_SIZE - 2);
+    return element->getHexaText(serial_data, 0, MAX_DESCRIPTOR_SIZE - 2);
 }

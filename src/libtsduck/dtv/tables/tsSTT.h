@@ -44,7 +44,7 @@ namespace ts {
     //! @ingroup table
     //!
     //! Warning: The ATSC STT violates the common usage rules of MPEG sections,
-    //! as defined in ISO/IEC 13818-1. An STT section is, be essence, unique.
+    //! as defined in ISO/IEC 13818-1. An STT section is, by essence, unique.
     //! Each section carries a different system time. According the MPEG rules,
     //! this should be a short section, just like a TDT or TOT, its DVB counterparts.
     //! However, ATSC defines the STT as a long section with version zero.
@@ -106,14 +106,16 @@ namespace ts {
         Time utcTime() const;
 
         // Inherited methods
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
+        virtual uint16_t tableIdExtension() const override;
         DeclareDisplaySection();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void serializeContent(DuckContext&, BinaryTable&) const override;
         virtual void deserializeContent(DuckContext&, const BinaryTable&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
 
     private:
         // Deserialize one section.

@@ -30,17 +30,17 @@
 #include "tsDSMCCStreamDescriptorsTable.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DSMCC_stream_descriptors_table"
+#define MY_CLASS ts::DSMCCStreamDescriptorsTable
 #define MY_TID ts::TID_DSMCC_SD
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_TABLE_FACTORY(ts::DSMCCStreamDescriptorsTable, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::DSMCCStreamDescriptorsTable, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::DSMCCStreamDescriptorsTable::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
@@ -74,13 +74,28 @@ ts::DSMCCStreamDescriptorsTable& ts::DSMCCStreamDescriptorsTable::operator=(cons
     return *this;
 }
 
+
+//----------------------------------------------------------------------------
+// Inherited public methods
+//----------------------------------------------------------------------------
+
+bool ts::DSMCCStreamDescriptorsTable::isPrivate() const
+{
+    return false; // MPEG-defined
+}
+
+
 //----------------------------------------------------------------------------
 // A static method to display a section.
 //----------------------------------------------------------------------------
 
 void ts::DSMCCStreamDescriptorsTable::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    display.duck().out() << UString::Format(u"%*sTable id extension: 0x%X (%d)", {indent, u"", section.tableIdExtension(), section.tableIdExtension()}) << std::endl;
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
+    const std::string margin(indent, ' ');
+
+    strm << margin << UString::Format(u"Table id extension: 0x%X (%d)", {section.tableIdExtension(), section.tableIdExtension()}) << std::endl;
     AbstractDescriptorsTable::DisplaySection(display, section, indent);
 }
 
@@ -100,8 +115,8 @@ void ts::DSMCCStreamDescriptorsTable::buildXML(DuckContext& duck, xml::Element* 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DSMCCStreamDescriptorsTable::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DSMCCStreamDescriptorsTable::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    AbstractDescriptorsTable::fromXML(duck, element);
-    _is_valid = _is_valid && element->getIntAttribute<uint16_t>(_tid_ext, u"table_id_extension", false, 0xFFFF);
+    return AbstractDescriptorsTable::analyzeXML(duck, element) &&
+           element->getIntAttribute<uint16_t>(_tid_ext, u"table_id_extension", false, 0xFFFF);
 }

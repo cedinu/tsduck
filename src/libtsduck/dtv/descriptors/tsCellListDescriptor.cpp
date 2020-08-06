@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"cell_list_descriptor"
+#define MY_CLASS ts::CellListDescriptor
 #define MY_DID ts::DID_CELL_LIST
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CellListDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CellListDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::CellListDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,11 @@ ts::CellListDescriptor::CellListDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     cells()
 {
-    _is_valid = true;
+}
+
+void ts::CellListDescriptor::clearContent()
+{
+    cells.clear();
 }
 
 ts::CellListDescriptor::CellListDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -113,7 +117,7 @@ void ts::CellListDescriptor::deserialize(DuckContext& duck, const Descriptor& de
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
     cells.clear();
 
     while (_is_valid && size >= 10) {
@@ -154,7 +158,8 @@ void ts::CellListDescriptor::deserialize(DuckContext& duck, const Descriptor& de
 
 void ts::CellListDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 10) {
@@ -183,7 +188,8 @@ void ts::CellListDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, 
 
 void ts::CellListDescriptor::DisplayCoordinates(TablesDisplay& display, const uint8_t* data, size_t size, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     int32_t latitude = GetInt16(data);
@@ -204,7 +210,7 @@ void ts::CellListDescriptor::DisplayCoordinates(TablesDisplay& display, const ui
 
 ts::UString ts::CellListDescriptor::ToDegrees(int32_t value, bool is_latitude)
 {
-    // Convert value as a positive value, in 2^15 degrees. 
+    // Convert value as a positive value, in 2^15 degrees.
     UChar orientation = CHAR_NULL;
     if (is_latitude) {
         if (value >= 0) {
@@ -263,37 +269,30 @@ void ts::CellListDescriptor::buildXML(DuckContext& duck, xml::Element* root) con
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CellListDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CellListDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    cells.clear();
-
     xml::ElementVector xcells;
-    _is_valid = checkXMLName(element) && element->getChildren(xcells, u"cell");
+    bool ok = element->getChildren(xcells, u"cell");
 
-    for (size_t i1 = 0; _is_valid && i1 < xcells.size(); ++i1) {
+    for (size_t i1 = 0; ok && i1 < xcells.size(); ++i1) {
         Cell cell;
         xml::ElementVector xsubcells;
-        _is_valid =
-            xcells[i1]->getIntAttribute<uint16_t>(cell.cell_id, u"cell_id", true) &&
-            xcells[i1]->getIntAttribute<int16_t>(cell.cell_latitude, u"cell_latitude", true) &&
-            xcells[i1]->getIntAttribute<int16_t>(cell.cell_longitude, u"cell_longitude", true) &&
-            xcells[i1]->getIntAttribute<uint16_t>(cell.cell_extent_of_latitude, u"cell_extent_of_latitude", true, 0, 0, 0x0FFF) &&
-            xcells[i1]->getIntAttribute<uint16_t>(cell.cell_extent_of_longitude, u"cell_extent_of_longitude", true, 0, 0, 0x0FFF) &&
-            xcells[i1]->getChildren(xsubcells, u"subcell");
-        for (size_t i2 = 0; _is_valid && i2 < xsubcells.size(); ++i2) {
+        ok = xcells[i1]->getIntAttribute<uint16_t>(cell.cell_id, u"cell_id", true) &&
+             xcells[i1]->getIntAttribute<int16_t>(cell.cell_latitude, u"cell_latitude", true) &&
+             xcells[i1]->getIntAttribute<int16_t>(cell.cell_longitude, u"cell_longitude", true) &&
+             xcells[i1]->getIntAttribute<uint16_t>(cell.cell_extent_of_latitude, u"cell_extent_of_latitude", true, 0, 0, 0x0FFF) &&
+             xcells[i1]->getIntAttribute<uint16_t>(cell.cell_extent_of_longitude, u"cell_extent_of_longitude", true, 0, 0, 0x0FFF) &&
+             xcells[i1]->getChildren(xsubcells, u"subcell");
+        for (size_t i2 = 0; ok && i2 < xsubcells.size(); ++i2) {
             Subcell sub;
-            _is_valid =
-                xsubcells[i2]->getIntAttribute<uint8_t>(sub.cell_id_extension, u"cell_id_extension", true) &&
-                xsubcells[i2]->getIntAttribute<int16_t>(sub.subcell_latitude, u"subcell_latitude", true) &&
-                xsubcells[i2]->getIntAttribute<int16_t>(sub.subcell_longitude, u"subcell_longitude", true) &&
-                xsubcells[i2]->getIntAttribute<uint16_t>(sub.subcell_extent_of_latitude, u"subcell_extent_of_latitude", true, 0, 0, 0x0FFF) &&
-                xsubcells[i2]->getIntAttribute<uint16_t>(sub.subcell_extent_of_longitude, u"subcell_extent_of_longitude", true, 0, 0, 0x0FFF);
-            if (_is_valid) {
-                cell.subcells.push_back(sub);
-            }
+            ok = xsubcells[i2]->getIntAttribute<uint8_t>(sub.cell_id_extension, u"cell_id_extension", true) &&
+                 xsubcells[i2]->getIntAttribute<int16_t>(sub.subcell_latitude, u"subcell_latitude", true) &&
+                 xsubcells[i2]->getIntAttribute<int16_t>(sub.subcell_longitude, u"subcell_longitude", true) &&
+                 xsubcells[i2]->getIntAttribute<uint16_t>(sub.subcell_extent_of_latitude, u"subcell_extent_of_latitude", true, 0, 0, 0x0FFF) &&
+                 xsubcells[i2]->getIntAttribute<uint16_t>(sub.subcell_extent_of_longitude, u"subcell_extent_of_longitude", true, 0, 0, 0x0FFF);
+            cell.subcells.push_back(sub);
         }
-        if (_is_valid) {
-            cells.push_back(cell);
-        }
+        cells.push_back(cell);
     }
+    return ok;
 }

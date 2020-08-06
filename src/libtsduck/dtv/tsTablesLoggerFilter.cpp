@@ -36,7 +36,7 @@
 TSDUCK_SOURCE;
 
 // Register this section filter in the reposity.
-TS_SECTION_FILTER_REGISTER(ts::TablesLoggerFilter);
+TS_REGISTER_SECTION_FILTER(ts::TablesLoggerFilter);
 
 
 //----------------------------------------------------------------------------
@@ -172,7 +172,7 @@ bool ts::TablesLoggerFilter::filterSection(DuckContext& duck, const Section& sec
         }
         // Add the current section in the PAT if it was not already there.
         if (_pat.sectionCount() <= section.sectionNumber() || _pat.sectionAt(section.sectionNumber()).isNull()) {
-            _pat.addSection(SectionPtr(new Section(section, SHARE)), true, true);
+            _pat.addSection(SectionPtr(new Section(section, ShareMode::SHARE)), true, true);
         }
         // If a new PAT is now available, analyze it to grab PSI/SI information.
         if (_pat.isValid() && (!was_valid || _pat.version() != previous_version)) {

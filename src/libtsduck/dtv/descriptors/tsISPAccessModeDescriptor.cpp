@@ -30,18 +30,18 @@
 #include "tsISPAccessModeDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"ISP_access_mode_descriptor"
+#define MY_CLASS ts::ISPAccessModeDescriptor
 #define MY_DID ts::DID_INT_ISP_ACCESS
 #define MY_TID ts::TID_INT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::ISPAccessModeDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::ISPAccessModeDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::ISPAccessModeDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 namespace {
     const ts::Enumeration AccessModeNames({
@@ -58,13 +58,17 @@ ts::ISPAccessModeDescriptor::ISPAccessModeDescriptor(uint8_t mode) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     access_mode(mode)
 {
-    _is_valid = true;
 }
 
 ts::ISPAccessModeDescriptor::ISPAccessModeDescriptor(DuckContext& duck, const Descriptor& desc) :
     ISPAccessModeDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::ISPAccessModeDescriptor::clearContent()
+{
+    access_mode = 0;
 }
 
 
@@ -89,7 +93,7 @@ void ts::ISPAccessModeDescriptor::deserialize(DuckContext& duck, const Descripto
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 1;
 
     if (_is_valid) {
         access_mode = data[0];
@@ -103,7 +107,8 @@ void ts::ISPAccessModeDescriptor::deserialize(DuckContext& duck, const Descripto
 
 void ts::ISPAccessModeDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -129,9 +134,7 @@ void ts::ISPAccessModeDescriptor::buildXML(DuckContext& duck, xml::Element* root
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ISPAccessModeDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ISPAccessModeDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntEnumAttribute(access_mode, AccessModeNames, u"access_mode", true);
+    return element->getIntEnumAttribute(access_mode, AccessModeNames, u"access_mode", true);
 }

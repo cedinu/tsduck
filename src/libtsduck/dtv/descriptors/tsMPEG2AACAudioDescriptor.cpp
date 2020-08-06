@@ -30,17 +30,17 @@
 #include "tsMPEG2AACAudioDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"MPEG2_AAC_audio_descriptor"
+#define MY_CLASS ts::MPEG2AACAudioDescriptor
 #define MY_DID ts::DID_MPEG2_AAC_AUDIO
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MPEG2AACAudioDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MPEG2AACAudioDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MPEG2AACAudioDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,13 +53,19 @@ ts::MPEG2AACAudioDescriptor::MPEG2AACAudioDescriptor() :
     MPEG2_AAC_channel_configuration(0),
     MPEG2_AAC_additional_information(0)
 {
-    _is_valid = true;
 }
 
 ts::MPEG2AACAudioDescriptor::MPEG2AACAudioDescriptor(DuckContext& duck, const Descriptor& desc) :
     MPEG2AACAudioDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::MPEG2AACAudioDescriptor::clearContent()
+{
+    MPEG2_AAC_profile = 0;
+    MPEG2_AAC_channel_configuration = 0;
+    MPEG2_AAC_additional_information = 0;
 }
 
 
@@ -86,7 +92,7 @@ void ts::MPEG2AACAudioDescriptor::deserialize(DuckContext& duck, const Descripto
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 3;
 
     if (_is_valid) {
         MPEG2_AAC_profile = data[0];
@@ -102,7 +108,8 @@ void ts::MPEG2AACAudioDescriptor::deserialize(DuckContext& duck, const Descripto
 
 void ts::MPEG2AACAudioDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 3) {
@@ -132,11 +139,9 @@ void ts::MPEG2AACAudioDescriptor::buildXML(DuckContext& duck, xml::Element* root
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MPEG2AACAudioDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MPEG2AACAudioDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(MPEG2_AAC_profile, u"MPEG2_AAC_profile", true) &&
-        element->getIntAttribute<uint8_t>(MPEG2_AAC_channel_configuration, u"MPEG2_AAC_channel_configuration", true) &&
-        element->getIntAttribute<uint8_t>(MPEG2_AAC_additional_information, u"MPEG2_AAC_additional_information", true);
+    return element->getIntAttribute<uint8_t>(MPEG2_AAC_profile, u"MPEG2_AAC_profile", true) &&
+           element->getIntAttribute<uint8_t>(MPEG2_AAC_channel_configuration, u"MPEG2_AAC_channel_configuration", true) &&
+           element->getIntAttribute<uint8_t>(MPEG2_AAC_additional_information, u"MPEG2_AAC_additional_information", true);
 }

@@ -48,7 +48,7 @@ namespace ts {
         uint16_t FCR_ES_ID;      //!< ES_ID associated with this clock reference stream.
         uint32_t FCRResolution;  //!< Resolution of the object time base in cycles per second.
         uint8_t  FCRLength;      //!< Length of the fmxClockReference field in FlexMux packets with index = 238.
-        uint8_t  FmxRateLength;  //!< Length of the fmxRate field in FlexMux packets with index = 238.   
+        uint8_t  FmxRateLength;  //!< Length of the fmxRate field in FlexMux packets with index = 238.
 
         //!
         //! Default constructor.
@@ -65,11 +65,12 @@ namespace ts {
         // Inherited methods
         virtual void serialize(DuckContext&, Descriptor&) const override;
         virtual void deserialize(DuckContext&, const Descriptor&) override;
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
     };
 }

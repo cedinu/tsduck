@@ -36,14 +36,26 @@ TSDUCK_SOURCE;
 //----------------------------------------------------------------------------
 
 ts::tsp::OutputExecutor::OutputExecutor(const TSProcessorArgs& options,
+                                        const PluginEventHandlerRegistry& handlers,
                                         const PluginOptions& pl_options,
                                         const ThreadAttributes& attributes,
                                         Mutex& global_mutex,
                                         Report* report) :
 
-    PluginExecutor(options, OUTPUT_PLUGIN, pl_options, attributes, global_mutex, report),
+    PluginExecutor(options, handlers, PluginType::OUTPUT, pl_options, attributes, global_mutex, report),
     _output(dynamic_cast<OutputPlugin*>(PluginThread::plugin()))
 {
+}
+
+
+//----------------------------------------------------------------------------
+// Implementation of TSP: return the packet index in the chain.
+//----------------------------------------------------------------------------
+
+size_t ts::tsp::OutputExecutor::pluginIndex() const
+{
+    // An input plugin is always last.
+    return pluginCount() - 1;
 }
 
 

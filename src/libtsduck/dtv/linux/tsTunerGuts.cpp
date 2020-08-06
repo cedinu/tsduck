@@ -40,6 +40,7 @@
 #include "tsNullReport.h"
 #include "tsMemory.h"
 #include "tsDTVProperties.h"
+#include "tsTunerDeviceInfo.h"
 TSDUCK_SOURCE;
 
 // We used to report "bit error rate", "signal/noise ratio", "signal strength",
@@ -105,7 +106,7 @@ public:
     bool tune(DTVProperties&, Report&);
 
     // Setup the dish for satellite tuners.
-    bool dishControl(const ModulationArgs&, Report&);
+    bool dishControl(const ModulationArgs&, const LNB::Transposition&, Report&);
 };
 
 
@@ -230,15 +231,25 @@ bool ts::Tuner::GetAllTuners(DuckContext& duck, TunerPtrVector& tuners, Report& 
 
     // Get list of all DVB adapters
     UStringVector names;
-    ExpandWildcard(names, u"/dev/dvb/adapter*");
+
+    // Flat naming scheme (old kernels < 2.4 and still found on Android).
+    ExpandWildcardAndAppend(names, u"/dev/dvb*.frontend*");
+
+    // Modern Linux DVB folder naming scheme.
+    ExpandWildcardAndAppend(names, u"/dev/dvb/adapter*/frontend*");
 
     // Open all tuners
     tuners.reserve(names.size());
     bool ok = true;
-    for (UStringVector::const_iterator it = names.begin(); it != names.end(); ++it) {
+    for (auto it = names.begin(); it != names.end(); ++it) {
+
+        UString tuner_name(*it);
+        tuner_name.substitute(u".frontend", u":");
+        tuner_name.substitute(u"/frontend", u":");
+
         const size_t index = tuners.size();
         tuners.resize(index + 1);
-        tuners[index] = new Tuner(duck, *it, true, report);
+        tuners[index] = new Tuner(duck, tuner_name, true, report);
         if (!tuners[index]->isOpen()) {
             ok = false;
             tuners[index].clear();
@@ -263,15 +274,34 @@ bool ts::Tuner::open(const UString& device_name, bool info_only, Report& report)
 
     _info_only = info_only;
 
-    // Analyze device name: /dev/dvb/adapterA[:F[:M[:V]]]
+    // Check if this system uses flat or directory DVB naming.
+    const bool dvb_directory = IsDirectory(u"/dev/dvb");
 
+    // Analyze device name: /dev/dvb/adapterA[:F[:M[:V]]]
+    // Alternate old flat format: /dev/dvbA[:F[:M[:V]]]
+    int adapter_nb = 0;
     int frontend_nb = 0;
     int demux_nb = 0;
     int dvr_nb = 0;
     UStringVector fields;
     if (device_name.empty()) {
         // Default tuner is first one
-        fields.push_back(u"/dev/dvb/adapter0");
+        fields.push_back(dvb_directory ? u"/dev/dvb/adapter0" : u"/dev/dvb0");
+    }
+    else if (!device_name.startWith(u"/dev/dvb")) {
+        // If the name does not start with /dev/dvb, check if this is a known device full description.
+        TunerPtrVector all_tuners;
+        GetAllTuners(_duck, all_tuners, report);
+        for (auto it = all_tuners.begin(); it != all_tuners.end(); ++it) {
+            if (device_name.similar((*it)->deviceInfo())) {
+                fields.push_back((*it)->deviceName());
+                break;
+            }
+        }
+        if (fields.empty()) {
+            report.error(u"unknown tuner \"%s\"", {device_name});
+            return false;
+        }
     }
     else {
         device_name.split(fields, u':', false);
@@ -286,6 +316,23 @@ bool ts::Tuner::open(const UString& device_name, bool info_only, Report& report)
         return false;
     }
 
+    // The adapter number is the integer value at end of first field.
+    const size_t n = fields[0].find_last_not_of(u"0123456789");
+    if (n < fields[0].size()) {
+        fields[0].substr(n + 1).toInteger(adapter_nb);
+    }
+
+    // If not specified, use frontend index for demux
+    if (fcount < 3) {
+        demux_nb = frontend_nb;
+    }
+
+    // If not specified, use frontend index for dvr
+    if (fcount < 4) {
+        dvr_nb = frontend_nb;
+    }
+
+    // Rebuild full TSDuck device name.
     _device_name = fields[0];
     if (dvr_nb != 0) {
         _device_name += UString::Format(u":%d:%d:%d", {frontend_nb, demux_nb, dvr_nb});
@@ -296,21 +343,25 @@ bool ts::Tuner::open(const UString& device_name, bool info_only, Report& report)
     else if (frontend_nb != 0) {
         _device_name += UString::Format(u":%d", {frontend_nb});
     }
-    _guts->frontend_name = fields[0] + UString::Format(u"/frontend%d", {frontend_nb});
-    _guts->demux_name = fields[0] + UString::Format(u"/demux%d", {demux_nb});
-    _guts->dvr_name = fields[0] + UString::Format(u"/dvr%d", {dvr_nb});
+
+    // Rebuild device names for frontend, demux and dvr.
+    const UChar sep = dvb_directory ? u'/' : u'.';
+    _guts->frontend_name.format(u"%s%cfrontend%d", {fields[0], sep, frontend_nb});
+    _guts->demux_name.format(u"%s%cdemux%d", {fields[0], sep, demux_nb});
+    _guts->dvr_name.format(u"%s%cdvr%d", {fields[0], sep, dvr_nb});
+
+    // Use the frontend device as "device path" for the tuner.
+    _device_path = _guts->frontend_name;
 
     // Open DVB adapter frontend. The frontend device is opened in non-blocking mode.
     // All configuration and setup operations are non-blocking anyway.
     // Reading events, however, is a blocking operation.
-
     if ((_guts->frontend_fd = ::open(_guts->frontend_name.toUTF8().c_str(), (info_only ? O_RDONLY : O_RDWR) | O_NONBLOCK)) < 0) {
         report.error(u"error opening %s: %s", {_guts->frontend_name, ErrorCodeMessage()});
         return false;
     }
 
     // Get characteristics of the frontend
-
     if (::ioctl(_guts->frontend_fd, ioctl_request_t(FE_GET_INFO), &_guts->fe_info) < 0) {
         report.error(u"error getting info on %s: %s", {_guts->frontend_name, ErrorCodeMessage()});
         return close(report) || false;
@@ -318,10 +369,19 @@ bool ts::Tuner::open(const UString& device_name, bool info_only, Report& report)
     _guts->fe_info.name[sizeof(_guts->fe_info.name) - 1] = 0;
     _device_info = UString::FromUTF8(_guts->fe_info.name);
 
+    // Get tuner device information (if available).
+    const TunerDeviceInfo devinfo(adapter_nb, frontend_nb, report);
+    const UString devname(devinfo.fullName());
+    if (!devname.empty()) {
+        if (!_device_info.empty()) {
+            _device_info.append(u", ");
+        }
+        _device_info.append(devname);
+    }
+
     // Get the set of delivery systems for this frontend. Use DTV_ENUM_DELSYS to list all delivery systems.
     // If this failed, probably due to an obsolete driver, use the tuner type from FE_GET_INFO. This gives
     // only one tuner type but this is better than nothing.
-
     _delivery_systems.clear();
     DTVProperties props;
 #if defined(DTV_ENUM_DELSYS)
@@ -369,7 +429,6 @@ bool ts::Tuner::open(const UString& device_name, bool info_only, Report& report)
     }
 
     // Open DVB adapter DVR (tap for TS packets) and adapter demux
-
     if (_info_only) {
         _guts->dvr_fd = _guts->demux_fd = -1;
     }
@@ -535,7 +594,7 @@ bool ts::Tuner::Guts::getCurrentTuning(ModulationArgs& params, bool reset_unknow
                 params.frequency = 0;
                 params.polarity = ModulationArgs::DEFAULT_POLARITY;
                 params.satellite_number = ModulationArgs::DEFAULT_SATELLITE_NUMBER;
-                params.lnb = ModulationArgs::DEFAULT_LNB;
+                params.lnb.clear();
             }
 
             props.clear();
@@ -658,13 +717,14 @@ bool ts::Tuner::Guts::getCurrentTuning(ModulationArgs& params, bool reset_unknow
                 params.frequency = 0;
                 params.polarity = ModulationArgs::DEFAULT_POLARITY;
                 params.satellite_number = ModulationArgs::DEFAULT_SATELLITE_NUMBER;
-                params.lnb = ModulationArgs::DEFAULT_LNB;
+                params.lnb.clear();
             }
 
             props.clear();
             props.add(DTV_INVERSION);
             props.add(DTV_SYMBOL_RATE);
             props.add(DTV_INNER_FEC);
+            props.add(DTV_STREAM_ID);
 
             if (::ioctl(frontend_fd, ioctl_request_t(FE_GET_PROPERTY), props.getIoctlParam()) < 0) {
                 const ErrorCode err = LastErrorCode();
@@ -672,9 +732,16 @@ bool ts::Tuner::Guts::getCurrentTuning(ModulationArgs& params, bool reset_unknow
                 return false;
             }
 
+            uint32_t val = 0;
             params.inversion = SpectralInversion(props.getByCommand(DTV_INVERSION));
             params.symbol_rate = props.getByCommand(DTV_SYMBOL_RATE);
             params.inner_fec = InnerFEC(props.getByCommand(DTV_INNER_FEC));
+            params.stream_id.clear();
+            if ((val = props.getByCommand(DTV_STREAM_ID)) != DTVProperties::UNKNOWN) {
+                // Warning: stream id may be incorrect when returned from the driver.
+                // We should update it when possible with the actual transport stream id from the inner stream.
+                params.stream_id = val;
+            }
             return true;
         }
         case DS_ISDB_T: {
@@ -715,27 +782,27 @@ bool ts::Tuner::Guts::getCurrentTuning(ModulationArgs& params, bool reset_unknow
             params.bandwidth = BandWidthCodeFromHz(props.getByCommand(DTV_BANDWIDTH_HZ));
             params.transmission_mode = TransmissionMode(props.getByCommand(DTV_TRANSMISSION_MODE));
             params.guard_interval = GuardInterval(props.getByCommand(DTV_GUARD_INTERVAL));
-            params.sound_broadcasting.reset();
+            params.sound_broadcasting.clear();
             if ((val = props.getByCommand(DTV_ISDBT_SOUND_BROADCASTING)) != DTVProperties::UNKNOWN) {
                 params.sound_broadcasting = val != 0;
             }
-            params.sb_subchannel_id.reset();
+            params.sb_subchannel_id.clear();
             if ((val = props.getByCommand(DTV_ISDBT_SB_SUBCHANNEL_ID)) != DTVProperties::UNKNOWN) {
                 params.sb_subchannel_id = int(val);
             }
-            params.sb_segment_count.reset();
+            params.sb_segment_count.clear();
             if ((val = props.getByCommand(DTV_ISDBT_SB_SEGMENT_COUNT)) != DTVProperties::UNKNOWN) {
                 params.sb_segment_count = int(val);
             }
-            params.sb_segment_index.reset();
+            params.sb_segment_index.clear();
             if ((val = props.getByCommand(DTV_ISDBT_SB_SEGMENT_IDX)) != DTVProperties::UNKNOWN) {
                 params.sb_segment_index = int(val);
             }
-            params.isdbt_partial_reception.reset();
+            params.isdbt_partial_reception.clear();
             if ((val = props.getByCommand(DTV_ISDBT_PARTIAL_RECEPTION)) != DTVProperties::UNKNOWN) {
                 params.isdbt_partial_reception = val != 0;
             }
-            params.isdbt_layers.reset();
+            params.isdbt_layers.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYER_ENABLED)) != DTVProperties::UNKNOWN) {
                 params.isdbt_layers = UString();
                 if ((val & 0x01) != 0) {
@@ -748,51 +815,51 @@ bool ts::Tuner::Guts::getCurrentTuning(ModulationArgs& params, bool reset_unknow
                     params.isdbt_layers.value().append(1, u'C');
                 }
             }
-            params.layer_a_fec.reset();
+            params.layer_a_fec.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERA_FEC)) != DTVProperties::UNKNOWN) {
                 params.layer_a_fec = InnerFEC(val);
             }
-            params.layer_a_modulation.reset();
+            params.layer_a_modulation.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERA_MODULATION)) != DTVProperties::UNKNOWN) {
                 params.layer_a_modulation = Modulation(val);
             }
-            params.layer_a_segment_count.reset();
+            params.layer_a_segment_count.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERA_SEGMENT_COUNT)) != DTVProperties::UNKNOWN) {
                 params.layer_a_segment_count = int(val);
             }
-            params.layer_a_time_interleaving.reset();
+            params.layer_a_time_interleaving.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERA_TIME_INTERLEAVING)) != DTVProperties::UNKNOWN) {
                 params.layer_a_time_interleaving = int(val);
             }
-            params.layer_b_fec.reset();
+            params.layer_b_fec.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERB_FEC)) != DTVProperties::UNKNOWN) {
                 params.layer_b_fec = InnerFEC(val);
             }
-            params.layer_b_modulation.reset();
+            params.layer_b_modulation.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERB_MODULATION)) != DTVProperties::UNKNOWN) {
                 params.layer_b_modulation = Modulation(val);
             }
-            params.layer_b_segment_count.reset();
+            params.layer_b_segment_count.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERB_SEGMENT_COUNT)) != DTVProperties::UNKNOWN) {
                 params.layer_b_segment_count = int(val);
             }
-            params.layer_b_time_interleaving.reset();
+            params.layer_b_time_interleaving.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERB_TIME_INTERLEAVING)) != DTVProperties::UNKNOWN) {
                 params.layer_b_time_interleaving = int(val);
             }
-            params.layer_c_fec.reset();
+            params.layer_c_fec.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERC_FEC)) != DTVProperties::UNKNOWN) {
                 params.layer_c_fec = InnerFEC(val);
             }
-            params.layer_c_modulation.reset();
+            params.layer_c_modulation.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERC_MODULATION)) != DTVProperties::UNKNOWN) {
                 params.layer_c_modulation = Modulation(val);
             }
-            params.layer_c_segment_count.reset();
+            params.layer_c_segment_count.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERC_SEGMENT_COUNT)) != DTVProperties::UNKNOWN) {
                 params.layer_c_segment_count = int(val);
             }
-            params.layer_c_time_interleaving.reset();
+            params.layer_c_time_interleaving.clear();
             if ((val = props.getByCommand(DTV_ISDBT_LAYERC_TIME_INTERLEAVING)) != DTVProperties::UNKNOWN) {
                 params.layer_c_time_interleaving = int(val);
             }
@@ -878,7 +945,7 @@ bool ts::Tuner::Guts::dtvClear(Report& report)
 // Setup the dish for satellite tuners.
 //-----------------------------------------------------------------------------
 
-bool ts::Tuner::Guts::dishControl(const ModulationArgs& params, Report& report)
+bool ts::Tuner::Guts::dishControl(const ModulationArgs& params, const LNB::Transposition& trans, Report& report)
 {
     // Extracted from DVB/doc/HOWTO-use-the-frontend-api:
     //
@@ -941,7 +1008,7 @@ bool ts::Tuner::Guts::dishControl(const ModulationArgs& params, Report& report)
     ::nanosleep(&delay, nullptr);
 
     // Send DiSEqC commands. See DiSEqC spec ...
-    const bool high_band = params.lnb.value().useHighBand(params.frequency.value());
+    const bool high_band = trans.band_index > 0;
     ::dvb_diseqc_master_cmd cmd;
     cmd.msg_len = 4;    // Message size (meaningful bytes in msg)
     cmd.msg[0] = 0xE0;  // Command from master, no reply expected, first transmission
@@ -992,15 +1059,23 @@ bool ts::Tuner::tune(ModulationArgs& params, Report& report)
     uint32_t freq = uint32_t(params.frequency.value());
 
     // In case of satellite delivery, we need to control the dish.
-    if (IsSatelliteDelivery(params.delivery_system.value())) {
-        // For satellite, Linux DVB API uses an intermediate frequency in kHz
-        freq = uint32_t(params.lnb.value().intermediateFrequency(params.frequency.value()) / 1000);
-        // Setup the dish (polarity, band).
-        if (!_guts->dishControl(params, report)) {
+    if (IsSatelliteDelivery(params.delivery_system.value()) && params.lnb.set()) {
+        // Compute transposition information from the LNB.
+        LNB::Transposition trans;
+        if (!params.lnb.value().transpose(trans, params.frequency.value(), params.polarity.value(POL_NONE), report)) {
             return false;
         }
-        // Clear tuner state again.
-        _guts->discardFrontendEvents(report);
+        // For satellite, Linux DVB API uses an intermediate frequency in kHz
+        freq = uint32_t(trans.intermediate_frequency / 1000);
+        // We need to control the dish only if this is not a "stacked" transposition.
+        if (!trans.stacked) {
+            // Setup the dish (polarity, band).
+            if (!_guts->dishControl(params, trans, report)) {
+                return false;
+            }
+            // Clear tuner state again.
+            _guts->discardFrontendEvents(report);
+        }
     }
 
     // The bandwidth, when set, is in Hz.
@@ -1072,6 +1147,7 @@ bool ts::Tuner::tune(ModulationArgs& params, Report& report)
             props.addVar(DTV_SYMBOL_RATE, params.symbol_rate);
             props.addVar(DTV_INNER_FEC, params.inner_fec);
             props.addVar(DTV_INVERSION, params.inversion);
+            props.addVar(DTV_STREAM_ID, params.stream_id);
             break;
         }
         case DS_ISDB_T: {

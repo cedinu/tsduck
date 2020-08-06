@@ -30,18 +30,18 @@
 #include "tsExtendedChannelNameDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"extended_channel_name_descriptor"
+#define MY_CLASS ts::ExtendedChannelNameDescriptor
 #define MY_DID ts::DID_ATSC_EXT_CHAN_NAME
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ExtendedChannelNameDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ExtendedChannelNameDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::ExtendedChannelNameDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,11 @@ ts::ExtendedChannelNameDescriptor::ExtendedChannelNameDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     long_channel_name_text()
 {
-    _is_valid = true;
+}
+
+void ts::ExtendedChannelNameDescriptor::clearContent()
+{
+    long_channel_name_text.clear();
 }
 
 ts::ExtendedChannelNameDescriptor::ExtendedChannelNameDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -83,7 +87,7 @@ void ts::ExtendedChannelNameDescriptor::deserialize(DuckContext& duck, const Des
     long_channel_name_text.clear();
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && long_channel_name_text.deserialize(duck, data, size);
+    _is_valid = desc.isValid() && desc.tag() == tag() && long_channel_name_text.deserialize(duck, data, size);
 }
 
 
@@ -99,7 +103,7 @@ void ts::ExtendedChannelNameDescriptor::DisplayDescriptor(TablesDisplay& display
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::ExtendedChannelNameDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -107,14 +111,7 @@ void ts::ExtendedChannelNameDescriptor::buildXML(DuckContext& duck, xml::Element
     long_channel_name_text.toXML(duck, root, u"long_channel_name_text", true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::ExtendedChannelNameDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ExtendedChannelNameDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        long_channel_name_text.fromXML(duck, element, u"long_channel_name_text", false);
+    return long_channel_name_text.fromXML(duck, element, u"long_channel_name_text", false);
 }

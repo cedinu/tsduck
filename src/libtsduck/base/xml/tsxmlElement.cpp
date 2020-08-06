@@ -272,11 +272,16 @@ ts::xml::Element* ts::xml::Element::addElement(const UString& childName)
 // Add a new text inside this node.
 //----------------------------------------------------------------------------
 
-ts::xml::Text* ts::xml::Element::addText(const UString& text)
+ts::xml::Text* ts::xml::Element::addText(const UString& text, bool onlyNotEmpty)
 {
-    Text* child = new Text(this, text);
-    CheckNonNull(child);
-    return child;
+    if (onlyNotEmpty && text.empty()) {
+        return nullptr;
+    }
+    else {
+        Text* child = new Text(this, text);
+        CheckNonNull(child);
+        return child;
+    }
 }
 
 
@@ -284,12 +289,17 @@ ts::xml::Text* ts::xml::Element::addText(const UString& text)
 // Add a new text containing hexadecimal data inside this node.
 //----------------------------------------------------------------------------
 
-ts::xml::Text* ts::xml::Element::addHexaText(const void* data, size_t size)
+ts::xml::Text* ts::xml::Element::addHexaText(const void* data, size_t size, bool onlyNotEmpty)
 {
     // Filter incorrect parameters.
     if (data == nullptr) {
         data = "";
         size = 0;
+    }
+
+    // Do nothing if empty.
+    if (size == 0 && onlyNotEmpty) {
+        return nullptr;
     }
 
     // Format the data.
@@ -298,6 +308,24 @@ ts::xml::Text* ts::xml::Element::addHexaText(const void* data, size_t size)
 
     // Add the text node. Try to indent it in a nice way.
     return addText(u"\n" + hex + UString(dep == 0 ? 0 : 2 * (dep - 1), u' '));
+}
+
+
+//----------------------------------------------------------------------------
+// Add a new child element containing an hexadecimal data text.
+//----------------------------------------------------------------------------
+
+ts::xml::Text* ts::xml::Element::addHexaTextChild(const UString& name, const void* data, size_t size, bool onlyNotEmpty)
+{
+    if (data == nullptr) {
+        size = 0;
+    }
+    return size == 0 && onlyNotEmpty ? nullptr : addElement(name)->addHexaText(data, size);
+}
+
+ts::xml::Text* ts::xml::Element::addHexaTextChild(const UString& name, const ByteBlock& data, bool onlyNotEmpty)
+{
+    return data.empty() && onlyNotEmpty ? nullptr : addElement(name)->addHexaText(data.data(), data.size());
 }
 
 
@@ -399,7 +427,7 @@ bool ts::xml::Element::getAttribute(UString& value,
 bool ts::xml::Element::getOptionalAttribute(Variable<UString>& value, const UString& name, size_t minSize, size_t maxSize) const
 {
     // Default: erase value.
-    value.reset();
+    value.clear();
     bool ok = true;
 
     if (hasAttribute(name)) {
@@ -451,7 +479,7 @@ bool ts::xml::Element::getBoolAttribute(bool& value, const UString& name, bool r
 bool ts::xml::Element::getOptionalBoolAttribute(Variable<bool>& value, const UString& name) const
 {
     // Default: erase value.
-    value.reset();
+    value.clear();
     bool ok = true;
 
     if (hasAttribute(name)) {
@@ -514,6 +542,30 @@ bool ts::xml::Element::getDateTimeAttribute(Time& value, const UString& name, bo
     const bool ok = Attribute::DateTimeFromString(value, str);
     if (!ok) {
         _report.error(u"'%s' is not a valid date/time for attribute '%s' in <%s>, line %d, use \"YYYY-MM-DD hh:mm:ss\"", {str, name, this->name(), lineNumber()});
+    }
+    return ok;
+}
+
+
+//----------------------------------------------------------------------------
+// Get a date attribute of an XML element.
+//----------------------------------------------------------------------------
+
+bool ts::xml::Element::getDateAttribute(Time& value, const UString& name, bool required, const Time& defValue) const
+{
+    UString str;
+    if (!getAttribute(str, name, required)) {
+        return false;
+    }
+    if (!required && str.empty()) {
+        value = defValue;
+        return true;
+    }
+
+    // Analyze the time string.
+    const bool ok = Attribute::DateFromString(value, str);
+    if (!ok) {
+        _report.error(u"'%s' is not a valid date for attribute '%s' in <%s>, line %d, use \"YYYY-MM-DD\"", {str, name, this->name(), lineNumber()});
     }
     return ok;
 }

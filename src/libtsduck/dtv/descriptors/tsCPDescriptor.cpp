@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"CP_descriptor"
+#define MY_CLASS ts::CPDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_CP
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CPDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CPDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::CPDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +55,13 @@ ts::CPDescriptor::CPDescriptor(uint16_t cp_id_, PID cp_pid_) :
     cp_pid(cp_pid_),
     private_data()
 {
-    _is_valid = true;
+}
+
+void ts::CPDescriptor::clearContent()
+{
+    cp_id = 0;
+    cp_pid = PID_NULL;
+    private_data.clear();
 }
 
 ts::CPDescriptor::CPDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -88,7 +94,7 @@ void ts::CPDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 5 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 5 && data[0] == MY_EDID;
 
     if (_is_valid) {
         cp_id = GetUInt16(data + 1);
@@ -106,9 +112,7 @@ void ts::CPDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
     root->setIntAttribute(u"CP_system_id", cp_id, true);
     root->setIntAttribute(u"CP_PID", cp_pid, true);
-    if (!private_data.empty()) {
-        root->addElement(u"private_data")->addHexaText(private_data);
-    }
+    root->addHexaTextChild(u"private_data", private_data, true);
 }
 
 
@@ -116,13 +120,11 @@ void ts::CPDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CPDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CPDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(cp_id, u"CP_system_id", true, 0, 0x0000, 0xFFFF) &&
-        element->getIntAttribute<PID>(cp_pid, u"CP_PID", true, 0, 0x0000, 0x1FFF) &&
-        element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 4);
+    return element->getIntAttribute<uint16_t>(cp_id, u"CP_system_id", true, 0, 0x0000, 0xFFFF) &&
+           element->getIntAttribute<PID>(cp_pid, u"CP_PID", true, 0, 0x0000, 0x1FFF) &&
+           element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 4);
 }
 
 
@@ -137,18 +139,14 @@ void ts::CPDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const 
     // See ts::TablesDisplay::displayDescriptorData()
 
     if (size >= 4) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
 
-        uint16_t id = GetUInt16(data);
-        uint16_t pid = GetUInt16(data + 2) & 0x1FFF;
+        const uint16_t id = GetUInt16(data);
+        const uint16_t pid = GetUInt16(data + 2) & 0x1FFF;
         strm << margin << UString::Format(u"CP System Id: %s, CP PID: %d (0x%X)", {NameFromSection(u"CPSystemId", id, names::FIRST), pid, pid}) << std::endl;
-
-        // CA private part.
-        if (size > 4) {
-            strm << margin << "Private CP data:" << std::endl
-                 << UString::Dump(data + 4, size - 4, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-        }
+        display.displayPrivateData(u"Private CP data", data + 4, size - 4, indent);
     }
     else {
         display.displayExtraData(data, size, indent);

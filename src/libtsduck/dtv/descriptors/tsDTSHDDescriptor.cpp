@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DTS_HD_descriptor"
+#define MY_CLASS ts::DTSHDDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_DTS_HD_AUDIO
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DTSHDDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::DTSHDDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::DTSHDDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -58,13 +58,22 @@ ts::DTSHDDescriptor::DTSHDDescriptor() :
     substream_3(),
     additional_info()
 {
-    _is_valid = true;
 }
 
 ts::DTSHDDescriptor::DTSHDDescriptor(DuckContext& duck, const Descriptor& desc) :
     DTSHDDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::DTSHDDescriptor::clearContent()
+{
+    substream_core.clear();
+    substream_0.clear();
+    substream_1.clear();
+    substream_2.clear();
+    substream_3.clear();
+    additional_info.clear();
 }
 
 ts::DTSHDDescriptor::SubstreamInfo::SubstreamInfo() :
@@ -93,11 +102,11 @@ ts::DTSHDDescriptor::AssetInfo::AssetInfo() :
 
 void ts::DTSHDDescriptor::reset()
 {
-    substream_core.reset();
-    substream_0.reset();
-    substream_1.reset();
-    substream_2.reset();
-    substream_3.reset();
+    substream_core.clear();
+    substream_0.clear();
+    substream_1.clear();
+    substream_2.clear();
+    substream_3.clear();
     additional_info.clear();
 }
 
@@ -183,12 +192,12 @@ void ts::DTSHDDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 2 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID;
 
     if (_is_valid) {
         const uint8_t flags = data[1];
         data += 2; size -= 2;
-        _is_valid = 
+        _is_valid =
             DeserializeSubstreamInfo(substream_core, (flags & 0x80) != 0, data, size) &&
             DeserializeSubstreamInfo(substream_0, (flags & 0x40) != 0, data, size) &&
             DeserializeSubstreamInfo(substream_1, (flags & 0x20) != 0, data, size) &&
@@ -204,7 +213,7 @@ bool ts::DTSHDDescriptor::DeserializeSubstreamInfo(Variable<SubstreamInfo>& info
 {
     if (!present) {
         // Substream info not present
-        info.reset();
+        info.clear();
         return true;
     }
     else {
@@ -280,9 +289,6 @@ void ts::DTSHDDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, con
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
-    const std::string margin(indent, ' ');
-
     if (size >= 1) {
         const uint8_t flags = data[0];
         data++; size--;
@@ -290,15 +296,12 @@ void ts::DTSHDDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, con
             DisplaySubstreamInfo(display, (flags & 0x40) != 0, indent, u"0", data, size) &&
             DisplaySubstreamInfo(display, (flags & 0x20) != 0, indent, u"1", data, size) &&
             DisplaySubstreamInfo(display, (flags & 0x10) != 0, indent, u"2", data, size) &&
-            DisplaySubstreamInfo(display, (flags & 0x08) != 0, indent, u"3", data, size) &&
-            size > 0)
+            DisplaySubstreamInfo(display, (flags & 0x08) != 0, indent, u"3", data, size))
         {
-            strm << margin << "Additional information:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
+            display.displayPrivateData(u"Additional information", data, size, indent);
             data += size; size = 0;
         }
     }
-
     display.displayExtraData(data, size, indent);
 }
 
@@ -323,7 +326,8 @@ bool ts::DTSHDDescriptor::DisplaySubstreamInfo(TablesDisplay& display, bool pres
     data += 3;
     size -= length + 3;
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     strm << margin << "Substream " << name << ":" << std::endl
@@ -403,7 +407,7 @@ void ts::DTSHDDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
     SubstreamInfoToXML(substream_2, u"substream_2", root);
     SubstreamInfoToXML(substream_3, u"substream_3", root);
     if (!additional_info.empty()) {
-        root->addElement(u"additional_info")->addHexaText(additional_info);
+        root->addHexaTextChild(u"additional_info", additional_info);
     }
 }
 
@@ -434,18 +438,14 @@ void ts::DTSHDDescriptor::SubstreamInfoToXML(const Variable<SubstreamInfo>& info
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DTSHDDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DTSHDDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    reset();
-
-    _is_valid =
-        checkXMLName(element) &&
-        SubstreamInfoFromXML(substream_core, u"substream_core", element) &&
-        SubstreamInfoFromXML(substream_0, u"substream_0", element) &&
-        SubstreamInfoFromXML(substream_1, u"substream_1", element) &&
-        SubstreamInfoFromXML(substream_2, u"substream_2", element) &&
-        SubstreamInfoFromXML(substream_3, u"substream_3", element) &&
-        element->getHexaTextChild(additional_info, u"additional_info", false);
+    return SubstreamInfoFromXML(substream_core, u"substream_core", element) &&
+           SubstreamInfoFromXML(substream_0, u"substream_0", element) &&
+           SubstreamInfoFromXML(substream_1, u"substream_1", element) &&
+           SubstreamInfoFromXML(substream_2, u"substream_2", element) &&
+           SubstreamInfoFromXML(substream_3, u"substream_3", element) &&
+           element->getHexaTextChild(additional_info, u"additional_info", false);
 }
 
 bool ts::DTSHDDescriptor::SubstreamInfoFromXML(Variable<SubstreamInfo>& info, const UString& name, const xml::Element* parent)
@@ -458,7 +458,7 @@ bool ts::DTSHDDescriptor::SubstreamInfoFromXML(Variable<SubstreamInfo>& info, co
 
     if (children.empty()) {
         // Element not present
-        info.reset();
+        info.clear();
         return true;
     }
     else {
@@ -470,7 +470,7 @@ bool ts::DTSHDDescriptor::SubstreamInfoFromXML(Variable<SubstreamInfo>& info, co
         const xml::Element* const x = children[0];
         xml::ElementVector xassets;
 
-        bool valid = 
+        bool valid =
             x->getIntAttribute<uint8_t>(si.channel_count, u"channel_count", true, 0, 0, 0x1F) &&
             x->getBoolAttribute(si.LFE, u"LFE", true) &&
             x->getIntAttribute<uint8_t>(si.sampling_frequency, u"sampling_frequency", true, 0, 0, 0x0F) &&

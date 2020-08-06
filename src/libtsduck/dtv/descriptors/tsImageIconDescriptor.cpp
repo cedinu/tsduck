@@ -30,19 +30,19 @@
 #include "tsImageIconDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"image_icon_descriptor"
+#define MY_CLASS ts::ImageIconDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_IMAGE_ICON
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ImageIconDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ImageIconDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::ImageIconDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -63,13 +63,27 @@ ts::ImageIconDescriptor::ImageIconDescriptor() :
     url(),
     icon_data()
 {
-    _is_valid = true;
 }
 
 ts::ImageIconDescriptor::ImageIconDescriptor(DuckContext& duck, const Descriptor& desc) :
     ImageIconDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::ImageIconDescriptor::clearContent()
+{
+    descriptor_number = 0;
+    last_descriptor_number = 0;
+    icon_id = 0;
+    icon_transport_mode = 0;
+    has_position = false;
+    coordinate_system = 0;
+    icon_horizontal_origin = 0;
+    icon_vertical_origin = 0;
+    icon_type.clear();
+    url.clear();
+    icon_data.clear();
 }
 
 
@@ -91,13 +105,13 @@ void ts::ImageIconDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
         else {
             bbp->appendUInt8(uint8_t(icon_transport_mode << 6) | 0x1F);
         }
-        bbp->append(duck.toDVBWithByteLength(icon_type));
+        bbp->append(duck.encodedWithByteLength(icon_type));
         if (icon_transport_mode == 0) {
             bbp->appendUInt8(uint8_t(icon_data.size()));
             bbp->append(icon_data);
         }
         else if (icon_transport_mode == 1) {
-            bbp->append(duck.toDVBWithByteLength(url));
+            bbp->append(duck.encodedWithByteLength(url));
         }
     }
     else {
@@ -116,7 +130,7 @@ void ts::ImageIconDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 4 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4 && data[0] == MY_EDID;
 
     icon_type.clear();
     url.clear();
@@ -143,7 +157,7 @@ void ts::ImageIconDescriptor::deserialize(DuckContext& duck, const Descriptor& d
                 }
             }
             if (_is_valid) {
-                icon_type = duck.fromDVBWithByteLength(data, size);
+                duck.decodeWithByteLength(icon_type, data, size);
                 if (icon_transport_mode == 0x00 ) {
                     const size_t len = data[0];
                     _is_valid = size > len;
@@ -153,7 +167,7 @@ void ts::ImageIconDescriptor::deserialize(DuckContext& duck, const Descriptor& d
                     }
                 }
                 else if (icon_transport_mode == 0x01) {
-                    url = duck.fromDVBWithByteLength(data, size);
+                    duck.decodeWithByteLength(url, data, size);
                 }
             }
         }
@@ -182,7 +196,8 @@ void ts::ImageIconDescriptor::DisplayDescriptor(TablesDisplay& display, DID did,
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
     bool ok = size >= 3;
 
@@ -210,18 +225,17 @@ void ts::ImageIconDescriptor::DisplayDescriptor(TablesDisplay& display, DID did,
                 }
             }
             if (ok) {
-                strm << margin << "Icon type: \"" << display.duck().fromDVBWithByteLength(data, size) << "\"" << std::endl;
+                strm << margin << "Icon type: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
                 if (transport == 0x00 ) {
                     const size_t len = data[0];
                     ok = size > len;
                     if (ok) {
-                        strm << margin << "Icon data: " << len << " bytes:" << std::endl
-                             << UString::Dump(data + 1, len, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
+                        display.displayPrivateData(u"Icon data", data + 1, len, indent);
                         data += len + 1; size -= len + 1;
                     }
                 }
                 else if (transport == 0x01) {
-                    strm << margin << "URL: \"" << display.duck().fromDVBWithByteLength(data, size) << "\"" << std::endl;
+                    strm << margin << "URL: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
                 }
             }
         }
@@ -229,8 +243,7 @@ void ts::ImageIconDescriptor::DisplayDescriptor(TablesDisplay& display, DID did,
             const size_t len = data[0];
             ok = size > len;
             if (ok) {
-                strm << margin << "Icon data: " << len << " bytes:" << std::endl
-                     << UString::Dump(data + 1, len, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
+                display.displayPrivateData(u"Icon data", data + 1, len, indent);
                 data += len + 1; size -= len + 1;
             }
         }
@@ -259,14 +272,14 @@ void ts::ImageIconDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
         }
         root->setAttribute(u"icon_type", icon_type);
         if (icon_transport_mode == 0 && !icon_data.empty()) {
-            root->addElement(u"icon_data")->addHexaText(icon_data);
+            root->addHexaTextChild(u"icon_data", icon_data);
         }
         else if (icon_transport_mode == 1) {
             root->setAttribute(u"url", url);
         }
     }
     else if (!icon_data.empty()) {
-        root->addElement(u"icon_data")->addHexaText(icon_data);
+        root->addHexaTextChild(u"icon_data", icon_data);
     }
 }
 
@@ -275,27 +288,21 @@ void ts::ImageIconDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ImageIconDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ImageIconDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    icon_type.clear();
-    url.clear();
-    icon_data.clear();
-
     has_position =
         element->hasAttribute(u"coordinate_system") ||
         element->hasAttribute(u"icon_horizontal_origin") ||
         element->hasAttribute(u"icon_vertical_origin");
 
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(descriptor_number, u"descriptor_number", true, 0, 0x00, 0x0F) &&
-        element->getIntAttribute<uint8_t>(last_descriptor_number, u"last_descriptor_number", true, 0, 0x00, 0x0F) &&
-        element->getIntAttribute<uint8_t>(icon_id, u"icon_id", true, 0, 0x00, 0x07) &&
-        element->getIntAttribute<uint8_t>(icon_transport_mode, u"icon_transport_mode", descriptor_number == 0, 0, 0x00, 0x03) &&
-        element->getIntAttribute<uint8_t>(coordinate_system, u"coordinate_system", descriptor_number == 0 && has_position, 0, 0x00, 0x07) &&
-        element->getIntAttribute<uint16_t>(icon_horizontal_origin, u"icon_horizontal_origin", descriptor_number == 0 && has_position, 0, 0x0000, 0x0FFF) &&
-        element->getIntAttribute<uint16_t>(icon_vertical_origin, u"icon_vertical_origin", descriptor_number == 0 && has_position, 0, 0x0000, 0x0FFF) &&
-        element->getAttribute(icon_type, u"icon_type", descriptor_number == 0) &&
-        element->getAttribute(url, u"url", descriptor_number == 0 && icon_transport_mode == 1) &&
-        element->getHexaTextChild(icon_data, u"icon_data", false);
+    return  element->getIntAttribute<uint8_t>(descriptor_number, u"descriptor_number", true, 0, 0x00, 0x0F) &&
+            element->getIntAttribute<uint8_t>(last_descriptor_number, u"last_descriptor_number", true, 0, 0x00, 0x0F) &&
+            element->getIntAttribute<uint8_t>(icon_id, u"icon_id", true, 0, 0x00, 0x07) &&
+            element->getIntAttribute<uint8_t>(icon_transport_mode, u"icon_transport_mode", descriptor_number == 0, 0, 0x00, 0x03) &&
+            element->getIntAttribute<uint8_t>(coordinate_system, u"coordinate_system", descriptor_number == 0 && has_position, 0, 0x00, 0x07) &&
+            element->getIntAttribute<uint16_t>(icon_horizontal_origin, u"icon_horizontal_origin", descriptor_number == 0 && has_position, 0, 0x0000, 0x0FFF) &&
+            element->getIntAttribute<uint16_t>(icon_vertical_origin, u"icon_vertical_origin", descriptor_number == 0 && has_position, 0, 0x0000, 0x0FFF) &&
+            element->getAttribute(icon_type, u"icon_type", descriptor_number == 0) &&
+            element->getAttribute(url, u"url", descriptor_number == 0 && icon_transport_mode == 1) &&
+            element->getHexaTextChild(icon_data, u"icon_data", false);
 }

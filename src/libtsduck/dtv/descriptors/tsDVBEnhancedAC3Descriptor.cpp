@@ -31,19 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DVB_enhanced_AC3_descriptor"
 #define MY_XML_NAME_LEGACY u"enhanced_AC3_descriptor"
+#define MY_CLASS ts::DVBEnhancedAC3Descriptor
 #define MY_DID ts::DID_ENHANCED_AC3
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBEnhancedAC3Descriptor, MY_XML_NAME);
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBEnhancedAC3Descriptor, MY_XML_NAME_LEGACY);
-TS_ID_DESCRIPTOR_FACTORY(ts::DVBEnhancedAC3Descriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::DVBEnhancedAC3Descriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor, MY_XML_NAME_LEGACY);
 
 
 //----------------------------------------------------------------------------
@@ -51,7 +50,7 @@ TS_FACTORY_REGISTER(ts::DVBEnhancedAC3Descriptor::DisplayDescriptor, ts::EDID::S
 //----------------------------------------------------------------------------
 
 ts::DVBEnhancedAC3Descriptor::DVBEnhancedAC3Descriptor() :
-    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
+    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0, MY_XML_NAME_LEGACY),
     component_type(),
     bsid(),
     mainid(),
@@ -62,13 +61,25 @@ ts::DVBEnhancedAC3Descriptor::DVBEnhancedAC3Descriptor() :
     substream3(),
     additional_info()
 {
-    _is_valid = true;
 }
 
 ts::DVBEnhancedAC3Descriptor::DVBEnhancedAC3Descriptor(DuckContext& duck, const Descriptor& desc) :
     DVBEnhancedAC3Descriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::DVBEnhancedAC3Descriptor::clearContent()
+{
+    component_type.clear();
+    bsid.clear();
+    mainid.clear();
+    asvc.clear();
+    mixinfoexists = false;
+    substream1.clear();
+    substream2.clear();
+    substream3.clear();
+    additional_info.clear();
 }
 
 
@@ -153,15 +164,15 @@ void ts::DVBEnhancedAC3Descriptor::serialize(DuckContext& duck, Descriptor& desc
 
 void ts::DVBEnhancedAC3Descriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 1;
 
-    component_type.reset();
-    bsid.reset();
-    mainid.reset();
-    asvc.reset();
-    substream1.reset();
-    substream2.reset();
-    substream3.reset();
+    component_type.clear();
+    bsid.clear();
+    mainid.clear();
+    asvc.clear();
+    substream1.clear();
+    substream2.clear();
+    substream3.clear();
     additional_info.clear();
 
     if (_is_valid) {
@@ -209,7 +220,8 @@ void ts::DVBEnhancedAC3Descriptor::deserialize(DuckContext& duck, const Descript
 
 void ts::DVBEnhancedAC3Descriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -254,14 +266,11 @@ void ts::DVBEnhancedAC3Descriptor::DisplayDescriptor(TablesDisplay& display, DID
             data++; size--;
             strm << margin << "Substream 3: " << names::AC3ComponentType(type, names::FIRST) << std::endl;
         }
-        if (size > 0) {
-            strm << margin << "Additional information:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            data += size; size = 0;
-        }
+        display.displayPrivateData(u"Additional information", data, size, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 
@@ -279,9 +288,7 @@ void ts::DVBEnhancedAC3Descriptor::buildXML(DuckContext& duck, xml::Element* roo
     root->setOptionalIntAttribute(u"substream1", substream1, true);
     root->setOptionalIntAttribute(u"substream2", substream2, true);
     root->setOptionalIntAttribute(u"substream3", substream3, true);
-    if (!additional_info.empty()) {
-        root->addElement(u"additional_info")->addHexaText(additional_info);
-    }
+    root->addHexaTextChild(u"additional_info", additional_info, true);
 }
 
 
@@ -289,17 +296,15 @@ void ts::DVBEnhancedAC3Descriptor::buildXML(DuckContext& duck, xml::Element* roo
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DVBEnhancedAC3Descriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DVBEnhancedAC3Descriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element, MY_XML_NAME_LEGACY) &&
-        element->getBoolAttribute(mixinfoexists, u"mixinfoexists", true) &&
-        element->getOptionalIntAttribute(component_type, u"component_type") &&
-        element->getOptionalIntAttribute(bsid, u"bsid") &&
-        element->getOptionalIntAttribute(mainid, u"mainid") &&
-        element->getOptionalIntAttribute(asvc, u"asvc") &&
-        element->getOptionalIntAttribute(substream1, u"substream1") &&
-        element->getOptionalIntAttribute(substream2, u"substream2") &&
-        element->getOptionalIntAttribute(substream3, u"substream3") &&
-        element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 8);
+    return  element->getBoolAttribute(mixinfoexists, u"mixinfoexists", true) &&
+            element->getOptionalIntAttribute(component_type, u"component_type") &&
+            element->getOptionalIntAttribute(bsid, u"bsid") &&
+            element->getOptionalIntAttribute(mainid, u"mainid") &&
+            element->getOptionalIntAttribute(asvc, u"asvc") &&
+            element->getOptionalIntAttribute(substream1, u"substream1") &&
+            element->getOptionalIntAttribute(substream2, u"substream2") &&
+            element->getOptionalIntAttribute(substream3, u"substream3") &&
+            element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 8);
 }

@@ -32,16 +32,16 @@
 #include "tsNames.h"
 #include "tsxmlElement.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"splice_information_table"
+#define MY_CLASS ts::SpliceInformationTable
 #define MY_TID ts::TID_SCTE35_SIT
-#define MY_STD ts::STD_SCTE
+#define MY_STD ts::Standards::SCTE
 
-TS_XML_TABLE_FACTORY(ts::SpliceInformationTable, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::SpliceInformationTable, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::SpliceInformationTable::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
@@ -60,7 +60,6 @@ ts::SpliceInformationTable::SpliceInformationTable() :
     private_command(),
     descs(this)
 {
-    _is_valid = true;
 }
 
 ts::SpliceInformationTable::SpliceInformationTable(const SpliceInformationTable& other) :
@@ -79,19 +78,29 @@ ts::SpliceInformationTable::SpliceInformationTable(const SpliceInformationTable&
 
 
 //----------------------------------------------------------------------------
+// Inherited public methods
+//----------------------------------------------------------------------------
+
+bool ts::SpliceInformationTable::isPrivate() const
+{
+    // Although not MPEG-defined, SCTE section are "non private".
+    return false;
+}
+
+
+//----------------------------------------------------------------------------
 // Clear all fields.
 //----------------------------------------------------------------------------
 
-void ts::SpliceInformationTable::clear()
+void ts::SpliceInformationTable::clearContent()
 {
-    _is_valid = false;
     protocol_version = 0;
     pts_adjustment = 0;
     tier = 0x0FFF;
     splice_command_type = SPLICE_NULL;
     splice_schedule.clear();
     splice_insert.clear();
-    time_signal.reset();
+    time_signal.clear();
     private_command.identifier = 0;
     private_command.private_bytes.clear();
     descs.clear();
@@ -349,24 +358,21 @@ void ts::SpliceInformationTable::buildXML(DuckContext& duck, xml::Element* root)
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SpliceInformationTable::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SpliceInformationTable::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    clear();
     xml::ElementVector command;
-
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
         element->getIntAttribute<uint64_t>(pts_adjustment, u"pts_adjustment", false, 0) &&
         element->getIntAttribute<uint16_t>(tier, u"tier", false, 0x0FFF, 0, 0x0FFF) &&
         descs.fromXML(duck, command, element, u"splice_null,splice_schedule,splice_insert,time_signal,bandwidth_reservation,private_command");
 
-    if (!_is_valid && command.size() != 1) {
-        _is_valid = false;
+    if (ok && command.size() != 1) {
         element->report().error(u"Specify exactly one splice command in <%s>, line %d", {element->name(), element->lineNumber()});
+        return false;
     }
 
-    if (_is_valid) {
+    if (ok) {
         assert(command.size() == 1);
         const xml::Element* const cmd = command[0];
         if (cmd->name() == u"splice_null") {
@@ -375,32 +381,31 @@ void ts::SpliceInformationTable::fromXML(DuckContext& duck, const xml::Element* 
         else if (cmd->name() == u"splice_schedule") {
             splice_command_type = SPLICE_SCHEDULE;
             splice_schedule.fromXML(duck, cmd);
-            _is_valid = splice_schedule.isValid();
+            ok = splice_schedule.isValid();
         }
         else if (cmd->name() == u"splice_insert") {
             splice_command_type = SPLICE_INSERT;
             splice_insert.fromXML(duck, cmd);
-            _is_valid = splice_insert.isValid();
+            ok = splice_insert.isValid();
         }
         else if (cmd->name() == u"time_signal") {
             splice_command_type = SPLICE_TIME_SIGNAL;
-            _is_valid = cmd->getOptionalIntAttribute<uint64_t>(time_signal, u"pts_time", 0, PTS_DTS_MASK);
+            ok = cmd->getOptionalIntAttribute<uint64_t>(time_signal, u"pts_time", 0, PTS_DTS_MASK);
         }
         else if (cmd->name() == u"bandwidth_reservation") {
             splice_command_type = SPLICE_BANDWIDTH_RESERVATION;
         }
         else if (cmd->name() == u"private_command") {
             splice_command_type = SPLICE_PRIVATE_COMMAND;
-            _is_valid =
-                cmd->getIntAttribute<uint32_t>(private_command.identifier, u"identifier", true) &&
-                cmd->getHexaText(private_command.private_bytes);
+            ok = cmd->getIntAttribute<uint32_t>(private_command.identifier, u"identifier", true) &&
+                 cmd->getHexaText(private_command.private_bytes);
         }
         else {
             // should not get there.
-            _is_valid = false;
-            assert(false);
+            return false;
         }
     }
+    return ok;
 }
 
 
@@ -410,8 +415,10 @@ void ts::SpliceInformationTable::fromXML(DuckContext& duck, const xml::Element* 
 
 void ts::SpliceInformationTable::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 

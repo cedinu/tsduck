@@ -48,25 +48,21 @@ TS_MAIN(MainCode);
 //  Command line options
 //----------------------------------------------------------------------------
 
-class Options: public ts::Args
-{
-    TS_NOBUILD_NOCOPY(Options);
-public:
-    Options(int argc, char *argv[]);
-    virtual ~Options();
+namespace {
+    class Options: public ts::Args
+    {
+        TS_NOBUILD_NOCOPY(Options);
+    public:
+        Options(int argc, char *argv[]);
 
 #if defined(TS_WINDOWS)
-    ts::DirectShowTest::TestType test_type;  // DirectShow test (Windows only).
+        ts::DirectShowTest::TestType test_type;  // DirectShow test (Windows only).
 #endif
+        ts::DuckContext duck;
+        ts::TunerArgs   tuner_args;  // Name of device to list (unspecified means all).
+    };
+}
 
-    ts::DuckContext duck;
-    ts::TunerArgs   tuner_args;  // Name of device to list (unspecified means all).
-};
-
-// Destructor.
-Options::~Options() {}
-
-// Constructor.
 Options::Options(int argc, char *argv[]) :
     ts::Args(u"List DVB tuner devices", u"[options]"),
 #if defined(TS_WINDOWS)
@@ -127,36 +123,42 @@ namespace {
             return;
         }
 
-        // Display name. On Windows, since names are weird, always display
-        // the adapter number and use quotes around tuner name.
+        // On Windows, since names are weird, always use quotes around tuner name.
+        const char* quote = "";
 #if defined(TS_WINDOWS)
+        quote = "\"";
+#endif
+
+        // Display name.
         if (tuner_index >= 0) {
             std::cout << tuner_index << ": ";
         }
-        std::cout << '"';
-#endif
-        std::cout << tuner.deviceName();
-#if defined(TS_WINDOWS)
-        std::cout << '"';
-#endif
+        std::cout << quote << tuner.deviceName() << quote;
 
         // Display tuner information.
         const ts::UString info(tuner.deviceInfo());
         std::cout << " (";
         if (!info.empty()) {
-            std::cout << info << ", ";
+            std::cout << "\"" << info << "\", ";
         }
         std::cout << tuner.deliverySystems().toString() << ")" << std::endl;
 
         // Display verbose information
         if (opt.verbose()) {
+
+            // Display device path.
+            const ts::UString path(tuner.devicePath());
+            if (!path.empty()) {
+                std::cout << (tuner_index >= 0 ? "   " : "") << "Device: " << path << std::endl;
+            }
+
+            // Display system-specific status (very verbose).
             std::cout << std::endl;
             tuner.displayStatus(std::cout, u"  ", opt);
             std::cout << std::endl;
         }
     }
 }
-
 
 //----------------------------------------------------------------------------
 //  Program entry point

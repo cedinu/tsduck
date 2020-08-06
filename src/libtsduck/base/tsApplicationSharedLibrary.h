@@ -50,17 +50,16 @@ namespace ts {
         //! @param [in] filename Shared library file name. Directory and suffix are optional.
         //! If @a filename contains a directory, the specified file is used directly, with
         //! and without suffix (.so, .dll). If @a filename is just a name without directory,
-        //! a search algorithm is used. All directories in @a library_path are searched.
-        //! Then the same directory as the executable is searched. In each directory, a
-        //! file with @a prefix is searched. Then, if not found, without prefix.
-        //! Finally, when everything failed, @a filename is searched with the default
-        //! system lookup mechanism.
+        //! search the file in a list of directories as defined in GetSearchPath().
+        //! In each directory, a file with @a prefix is searched. Then, if not found, without prefix.
+        //! Finally, when everything failed, @a filename is searched with the default system lookup mechanism.
         //! @param [in] prefix Prefix to add to @a filename if the file is not found.
         //! @param [in] library_path Name of an environment variable, an optional list of directories to search,
         //! similar to @c LD_LIBARY_PATH.
         //! @param [in] permanent If false (the default), the shared library is unloaded from the current process
         //! when this object is destroyed. If true, the shared library remains active.
         //! @param [in,out] report Where to report errors.
+        //! @see GetSearchPath()
         //!
         explicit ApplicationSharedLibrary(const UString& filename,
                                           const UString& prefix = UString(),
@@ -84,6 +83,20 @@ namespace ts {
         //! @return The file name prefix.
         //!
         UString prefix() const {return _prefix;}
+
+        //!
+        //! Get the list of directories where to search application shared libraries or plugins.
+        //! The ordered list of directories is:
+        //! - All directories in @a library_path environment variable (if the name is not empty).
+        //! - Directory of the current executable.
+        //! - Directory ../lib64/tsduck from current executable (64-bit UNIX only).
+        //! - Directory ../lib/tsduck from current executable (UNIX only).
+        //! - All directories in %Path% environment variable (Windows only).
+        //! @param [out] directories List of directories in search order.
+        //! @param [in] library_path Name of an environment variable, an optional list of directories to search,
+        //! similar to @c LD_LIBARY_PATH.
+        //!
+        static void GetSearchPath(UStringList& directories, const UString& library_path = UString());
 
         //!
         //! Get a list of plugins.

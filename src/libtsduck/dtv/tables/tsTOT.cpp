@@ -26,10 +26,6 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a Time Offset Table (TOT)
-//
-//----------------------------------------------------------------------------
 
 #include "tsTOT.h"
 #include "tsMJD.h"
@@ -37,17 +33,18 @@
 #include "tsCRC32.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"TOT"
+#define MY_CLASS ts::TOT
 #define MY_TID ts::TID_TOT
-#define MY_STD ts::STD_DVB
+#define MY_PID ts::PID_TOT
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::TOT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::TOT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::TOT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection, nullptr, {MY_PID});
 
 
 //----------------------------------------------------------------------------
@@ -60,7 +57,6 @@ ts::TOT::TOT(const Time& utc_time_) :
     regions(),
     descs(this)
 {
-    _is_valid = true;
 }
 
 ts::TOT::TOT(DuckContext& duck, const BinaryTable& table) :
@@ -75,6 +71,18 @@ ts::TOT::TOT(const TOT& other) :
     regions(other.regions),
     descs(this, other.descs)
 {
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::TOT::clearContent()
+{
+    utc_time.clear();
+    regions.clear();
+    descs.clear();
 }
 
 
@@ -170,6 +178,11 @@ void ts::TOT::deserializeContent(DuckContext& duck, const BinaryTable& table)
     remain -= MJD_SIZE + 2;
     remain = std::min(length, remain);
 
+    // In Japan, the time field is in fact a JST time, convert it to UTC.
+    if ((duck.standards() & Standards::JAPAN) == Standards::JAPAN) {
+        utc_time = utc_time.JSTToUTC();
+    }
+
     // Get descriptor list.
     // Build a descriptor list.
     DescriptorList dlist(nullptr);
@@ -187,12 +200,18 @@ void ts::TOT::deserializeContent(DuckContext& duck, const BinaryTable& table)
 void ts::TOT::serializeContent(DuckContext& duck, BinaryTable& table) const
 {
     // Build the section
-    uint8_t payload [MAX_PSI_SHORT_SECTION_PAYLOAD_SIZE];
+    uint8_t payload [MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
     uint8_t* data = payload;
     size_t remain = sizeof(payload);
 
     // Encode the data in MJD in the payload (5 bytes)
-    EncodeMJD (utc_time, data, MJD_SIZE);
+    // In Japan, the time field is in fact a JST time, convert UTC to JST before serialization.
+    if ((duck.standards() & Standards::JAPAN) == Standards::JAPAN) {
+        EncodeMJD(utc_time.UTCToJST(), data, MJD_SIZE);
+    }
+    else {
+        EncodeMJD(utc_time, data, MJD_SIZE);
+    }
     data += MJD_SIZE;
     remain -= MJD_SIZE;
 
@@ -246,8 +265,10 @@ void ts::TOT::serializeContent(DuckContext& duck, BinaryTable& table) const
 
 void ts::TOT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -322,18 +343,14 @@ void ts::TOT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TOT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TOT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    regions.clear();
-    descs.clear();
     DescriptorList orig(this);
 
     // Get all descriptors in a separated list.
-    _is_valid =
-        checkXMLName(element) &&
-        element->getDateTimeAttribute(utc_time, u"UTC_time", true) &&
-        orig.fromXML(duck, element);
+    const bool ok = element->getDateTimeAttribute(utc_time, u"UTC_time", true) && orig.fromXML(duck, element);
 
     // Then, split local_time_offset_descriptor and others.
     addDescriptors(duck, orig);
+    return ok;
 }

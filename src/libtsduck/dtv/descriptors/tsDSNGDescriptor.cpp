@@ -30,17 +30,17 @@
 #include "tsDSNGDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DSNG_descriptor"
+#define MY_CLASS ts::DSNGDescriptor
 #define MY_DID ts::DID_DSNG
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DSNGDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::DSNGDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::DSNGDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -51,7 +51,11 @@ ts::DSNGDescriptor::DSNGDescriptor(const UString& id) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     station_identification(id)
 {
-    _is_valid = true;
+}
+
+void ts::DSNGDescriptor::clearContent()
+{
+    station_identification.clear();
 }
 
 ts::DSNGDescriptor::DSNGDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -68,7 +72,7 @@ ts::DSNGDescriptor::DSNGDescriptor(DuckContext& duck, const Descriptor& desc) :
 void ts::DSNGDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 {
     ByteBlockPtr bbp(serializeStart());
-    bbp->append(duck.toDVB(station_identification));
+    bbp->append(duck.encoded(station_identification));
     serializeEnd(desc, bbp);
 }
 
@@ -79,10 +83,10 @@ void ts::DSNGDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 
 void ts::DSNGDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
 
     if (_is_valid) {
-        station_identification.assign(duck.fromDVB(desc.payload(), desc.payloadSize()));
+        duck.decode(station_identification, desc.payload(), desc.payloadSize());
     }
     else {
         station_identification.clear();
@@ -96,14 +100,16 @@ void ts::DSNGDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 
 void ts::DSNGDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* payload, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
-    strm << margin << "Station identification: \"" << display.duck().fromDVB(payload, size) << "\"" << std::endl;
+
+    strm << margin << "Station identification: \"" << duck.decoded(payload, size) << "\"" << std::endl;
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::DSNGDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -111,15 +117,7 @@ void ts::DSNGDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
     root->setAttribute(u"station_identification", station_identification);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::DSNGDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DSNGDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    station_identification.clear();
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(station_identification, u"station_identification", true, u"", 0, MAX_DESCRIPTOR_SIZE - 2);
+    return element->getAttribute(station_identification, u"station_identification", true, u"", 0, MAX_DESCRIPTOR_SIZE - 2);
 }

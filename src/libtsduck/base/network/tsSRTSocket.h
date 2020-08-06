@@ -43,7 +43,7 @@ namespace ts {
     //!
     //! Secure Reliable Transport (SRT) socket mode
     //!
-    enum SRTSocketMode: int {
+    enum class SRTSocketMode : int {
         LISTENER   = 0,  //!< Listener mode.
         CALLER     = 1,  //!< Caller mode.
         RENDEZVOUS = 2,  //!< Rendez-vous mode (unsupported).
@@ -111,6 +111,17 @@ namespace ts {
         //! @return True on success, false on error.
         //!
         bool receive(void* data, size_t max_size, size_t& ret_size, Report& report = CERR);
+
+        //!
+        //! Receive a message with timestamp.
+        //! @param [out] data Address of the buffer for the received message.
+        //! @param [in] max_size Size in bytes of the reception buffer.
+        //! @param [out] ret_size Size in bytes of the received message. Will never be larger than @a max_size.
+        //! @param [out] timestamp Source timestamp in micro-seconds, negative if not available.
+        //! @param [in,out] report Where to report error.
+        //! @return True on success, false on error.
+        //!
+        bool receive(void* data, size_t max_size, size_t& ret_size, MicroSecond& timestamp, Report& report = CERR);
 
         //!
         //! Get SRT option.

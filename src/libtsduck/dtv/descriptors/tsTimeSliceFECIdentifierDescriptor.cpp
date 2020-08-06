@@ -30,17 +30,17 @@
 #include "tsTimeSliceFECIdentifierDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"time_slice_fec_identifier_descriptor"
+#define MY_CLASS ts::TimeSliceFECIdentifierDescriptor
 #define MY_DID ts::DID_TIME_SLICE_FEC_ID
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::TimeSliceFECIdentifierDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::TimeSliceFECIdentifierDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::TimeSliceFECIdentifierDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -57,7 +57,17 @@ ts::TimeSliceFECIdentifierDescriptor::TimeSliceFECIdentifierDescriptor() :
     time_slice_fec_id(0),
     id_selector_bytes()
 {
-    _is_valid = true;
+}
+
+void ts::TimeSliceFECIdentifierDescriptor::clearContent()
+{
+    time_slicing = false;
+    mpe_fec = 0;
+    frame_size = 0;
+    max_burst_duration = 0;
+    max_average_rate = 0;
+    time_slice_fec_id = 0;
+    id_selector_bytes.clear();
 }
 
 ts::TimeSliceFECIdentifierDescriptor::TimeSliceFECIdentifierDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -97,7 +107,7 @@ void ts::TimeSliceFECIdentifierDescriptor::deserialize(DuckContext& duck, const 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 3;
 
     if (_is_valid) {
         time_slicing = (data[0] & 0x80) != 0;
@@ -123,9 +133,7 @@ void ts::TimeSliceFECIdentifierDescriptor::buildXML(DuckContext& duck, xml::Elem
     root->setIntAttribute(u"max_burst_duration", max_burst_duration, true);
     root->setIntAttribute(u"max_average_rate", max_average_rate, true);
     root->setIntAttribute(u"time_slice_fec_id", time_slice_fec_id, true);
-    if (!id_selector_bytes.empty()) {
-        root->addElement(u"id_selector_bytes")->addHexaText(id_selector_bytes);
-    }
+    root->addHexaTextChild(u"id_selector_bytes", id_selector_bytes, true);
 }
 
 
@@ -133,19 +141,15 @@ void ts::TimeSliceFECIdentifierDescriptor::buildXML(DuckContext& duck, xml::Elem
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TimeSliceFECIdentifierDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TimeSliceFECIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    id_selector_bytes.clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(time_slicing, u"time_slicing", true) &&
-        element->getIntAttribute<uint8_t>(mpe_fec, u"mpe_fec", true, 0, 0, 0x03) &&
-        element->getIntAttribute<uint8_t>(frame_size, u"frame_size", true, 0, 0x00, 0x07) &&
-        element->getIntAttribute<uint8_t>(max_burst_duration, u"max_burst_duration", true) &&
-        element->getIntAttribute<uint8_t>(max_average_rate, u"max_average_rate", true, 0, 0x00, 0x0F) &&
-        element->getIntAttribute<uint8_t>(time_slice_fec_id, u"time_slice_fec_id", false, 0, 0x00, 0x0F) &&
-        element->getHexaTextChild(id_selector_bytes, u"id_selector_bytes", false, 0, MAX_DESCRIPTOR_SIZE - 5);
+    return  element->getBoolAttribute(time_slicing, u"time_slicing", true) &&
+            element->getIntAttribute<uint8_t>(mpe_fec, u"mpe_fec", true, 0, 0, 0x03) &&
+            element->getIntAttribute<uint8_t>(frame_size, u"frame_size", true, 0, 0x00, 0x07) &&
+            element->getIntAttribute<uint8_t>(max_burst_duration, u"max_burst_duration", true) &&
+            element->getIntAttribute<uint8_t>(max_average_rate, u"max_average_rate", true, 0, 0x00, 0x0F) &&
+            element->getIntAttribute<uint8_t>(time_slice_fec_id, u"time_slice_fec_id", false, 0, 0x00, 0x0F) &&
+            element->getHexaTextChild(id_selector_bytes, u"id_selector_bytes", false, 0, MAX_DESCRIPTOR_SIZE - 5);
 }
 
 
@@ -155,7 +159,8 @@ void ts::TimeSliceFECIdentifierDescriptor::fromXML(DuckContext& duck, const xml:
 
 void ts::TimeSliceFECIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 3) {
@@ -198,12 +203,9 @@ void ts::TimeSliceFECIdentifierDescriptor::DisplayDescriptor(TablesDisplay& disp
         }
         strm << std::endl
              << margin << UString::Format(u"Time slice FEC id: 0x%X (%d)", {time_slice_fec_id, time_slice_fec_id}) << std::endl;
-        if (size > 0) {
-            strm << margin << "Id selector bytes:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            data += size; size = 0;
-        }
+        display.displayPrivateData(u"Id selector bytes", data, size, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }

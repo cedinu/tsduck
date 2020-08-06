@@ -30,23 +30,23 @@
 #include "tsPrefetchDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"prefetch_descriptor"
+#define MY_CLASS ts::PrefetchDescriptor
 #define MY_DID ts::DID_AIT_PREFETCH
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::PrefetchDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::PrefetchDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::PrefetchDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::PrefetchDescriptor::PrefetchDescriptor() :
@@ -54,13 +54,13 @@ ts::PrefetchDescriptor::PrefetchDescriptor() :
     transport_protocol_label(0),
     entries()
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::PrefetchDescriptor::clearContent()
+{
+    transport_protocol_label = 0;
+    entries.clear();
+}
 
 ts::PrefetchDescriptor::PrefetchDescriptor(DuckContext& duck, const Descriptor& desc) :
     PrefetchDescriptor()
@@ -78,7 +78,7 @@ void ts::PrefetchDescriptor::serialize(DuckContext& duck, Descriptor& desc) cons
     ByteBlockPtr bbp(serializeStart());
     bbp->appendUInt8(transport_protocol_label);
     for (auto it = entries.begin(); it != entries.end(); ++it) {
-        bbp->append(duck.toDVBWithByteLength(it->label));
+        bbp->append(duck.encodedWithByteLength(it->label));
         bbp->appendUInt8(it->prefetch_priority);
     }
     serializeEnd(desc, bbp);
@@ -96,7 +96,7 @@ void ts::PrefetchDescriptor::deserialize(DuckContext& duck, const Descriptor& de
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         transport_protocol_label = data[0];
@@ -106,7 +106,7 @@ void ts::PrefetchDescriptor::deserialize(DuckContext& duck, const Descriptor& de
             data++; size--;
             _is_valid = len + 1 <= size;
             if (_is_valid) {
-                entries.push_back(Entry(duck.fromDVB(data, len), data[len]));
+                entries.push_back(Entry(duck.decoded(data, len), data[len]));
                 data += len + 1; size -= len + 1;
             }
         }
@@ -122,7 +122,8 @@ void ts::PrefetchDescriptor::deserialize(DuckContext& duck, const Descriptor& de
 
 void ts::PrefetchDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -134,7 +135,7 @@ void ts::PrefetchDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, 
                 break;
             }
             strm << margin
-                 << UString::Format(u"Label: \"%s\", prefetch priority: %d", {display.duck().fromDVB(data + 1, len), data[len + 1]})
+                 << UString::Format(u"Label: \"%s\", prefetch priority: %d", {duck.decoded(data + 1, len), data[len + 1]})
                  << std::endl;
             data += len + 2; size -= len + 2;
         }
@@ -163,23 +164,18 @@ void ts::PrefetchDescriptor::buildXML(DuckContext& duck, xml::Element* root) con
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::PrefetchDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::PrefetchDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(transport_protocol_label, u"transport_protocol_label", true) &&
         element->getChildren(children, u"module");
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getAttribute(entry.label, u"label", true) &&
-            children[i]->getIntAttribute<uint8_t>(entry.prefetch_priority, u"prefetch_priority", true, 1, 1, 100);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getAttribute(entry.label, u"label", true) &&
+             children[i]->getIntAttribute<uint8_t>(entry.prefetch_priority, u"prefetch_priority", true, 1, 1, 100);
+        entries.push_back(entry);
     }
+    return ok;
 }

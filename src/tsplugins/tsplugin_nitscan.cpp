@@ -32,9 +32,9 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsSectionDemux.h"
+#include "tsBinaryTable.h"
 #include "tsSysUtils.h"
 #include "tsChannelFile.h"
 #include "tsPAT.h"
@@ -89,8 +89,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(nitscan, ts::NITScanPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"nitscan", ts::NITScanPlugin);
 
 
 //----------------------------------------------------------------------------
@@ -120,6 +119,9 @@ ts::NITScanPlugin::NITScanPlugin(TSP* tsp_) :
     _update_channel_file(false),
     _default_channel_file(false)
 {
+    // We need to define character sets to specify service names.
+    duck.defineArgsForCharset(*this);
+
     option(u"all-nits", 'a');
     help(u"all-nits",
          u"Analyze all NIT's (NIT actual and NIT other). By default, only the "
@@ -189,6 +191,7 @@ ts::NITScanPlugin::NITScanPlugin(TSP* tsp_) :
 bool ts::NITScanPlugin::getOptions()
 {
     // Get option values
+    duck.loadArgs(*this);
     _output_name = value(u"output-file");
     _all_nits = present(u"all-nits");
     _terminate = present(u"terminate");
@@ -357,7 +360,8 @@ void ts::NITScanPlugin::processNIT(const NIT& nit)
     _nit_count++;
 
     // Process each TS descriptor list
-    for (NIT::TransportMap::const_iterator it = nit.transports.begin(); it != nit.transports.end(); ++it) {
+    for (auto it = nit.transports.begin(); it != nit.transports.end(); ++it) {
+
         const TransportStreamId& tsid(it->first);
         const DescriptorList& dlist(it->second.descs);
 
@@ -365,7 +369,7 @@ void ts::NITScanPlugin::processNIT(const NIT& nit)
         for (size_t i = 0; i < dlist.count(); ++i) {
             // Try to get delivery system information from current descriptor
             ModulationArgs tp;
-            if (tp.fromDeliveryDescriptor(*dlist[i])) {
+            if (tp.fromDeliveryDescriptor(duck, *dlist[i], tsid.transport_stream_id)) {
 
                 // Output --dvb-options.
                 if (_dvb_options) {

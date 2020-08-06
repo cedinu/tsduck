@@ -34,6 +34,7 @@
 
 #pragma once
 #include "tsCyclingPacketizer.h"
+#include "tsTSPacket.h"
 
 namespace ts {
     //!
@@ -42,16 +43,17 @@ namespace ts {
     //!
     class TSDUCKDLL OneShotPacketizer: public CyclingPacketizer
     {
-        TS_NOCOPY(OneShotPacketizer);
+        TS_NOBUILD_NOCOPY(OneShotPacketizer);
     public:
         //!
         //! Default constructor.
+        //! @param [in] duck TSDuck execution context. The reference is kept inside the packetizer.
         //! @param [in] pid PID for generated TS packets.
         //! @param [in] do_stuffing TS packet stuffing at end of section.
         //! @param [in] bitrate Output bitrate, zero if undefined.
         //! Useful only when using specific repetition rates for sections
         //!
-        OneShotPacketizer(PID pid = PID_NULL, bool do_stuffing = false, BitRate bitrate = 0);
+        OneShotPacketizer(const DuckContext& duck, PID pid = PID_NULL, bool do_stuffing = false, BitRate bitrate = 0);
 
         //!
         //! Virtual destructor.

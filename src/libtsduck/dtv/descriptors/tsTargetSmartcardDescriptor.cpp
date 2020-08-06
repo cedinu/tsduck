@@ -30,21 +30,19 @@
 #include "tsTargetSmartcardDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"target_smartcard_descriptor"
+#define MY_CLASS ts::TargetSmartcardDescriptor
 #define MY_DID ts::DID_INT_SMARTCARD
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::TargetSmartcardDescriptor, MY_XML_NAME, ts::TID_INT, ts::TID_UNT);
-
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetSmartcardDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_INT));
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetSmartcardDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT));
-
-TS_FACTORY_REGISTER(ts::TargetSmartcardDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_INT));
-TS_FACTORY_REGISTER(ts::TargetSmartcardDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT));
+// Table-specific descriptor which is allowed in two distinct tables.
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, ts::TID_INT), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -56,7 +54,12 @@ ts::TargetSmartcardDescriptor::TargetSmartcardDescriptor() :
     super_CA_system_id(0),
     private_data()
 {
-    _is_valid = true;
+}
+
+void ts::TargetSmartcardDescriptor::clearContent()
+{
+    super_CA_system_id = 0;
+    private_data.clear();
 }
 
 ts::TargetSmartcardDescriptor::TargetSmartcardDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -88,7 +91,7 @@ void ts::TargetSmartcardDescriptor::deserialize(DuckContext& duck, const Descrip
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4;
     private_data.clear();
 
     if (_is_valid) {
@@ -104,12 +107,14 @@ void ts::TargetSmartcardDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::TargetSmartcardDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
+    const std::string margin(indent, ' ');
+
     if (size >= 4) {
         const uint32_t id = GetUInt32(data);
-        display.duck().out() << UString::Format(u"%*sSuper CAS Id: 0x%X (%d)", {indent, u"", id, id})
-                      << std::endl
-                      << UString::Format(u"%*sPrivate data (%d bytes): %s", {indent, u"", size - 4, UString::Dump(data + 4, size - 4, UString::SINGLE_LINE)})
-                      << std::endl;
+        strm << margin << UString::Format(u"Super CAS Id: 0x%X (%d)", {id, id}) << std::endl
+             << margin << UString::Format(u"Private data (%d bytes): %s", {size - 4, UString::Dump(data + 4, size - 4, UString::SINGLE_LINE)}) << std::endl;
     }
     else {
         display.displayExtraData(data, size, indent);
@@ -124,9 +129,7 @@ void ts::TargetSmartcardDescriptor::DisplayDescriptor(TablesDisplay& display, DI
 void ts::TargetSmartcardDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
     root->setIntAttribute(u"super_CA_system_id", super_CA_system_id, true);
-    if (!private_data.empty()) {
-        root->addHexaText(private_data);
-    }
+    root->addHexaText(private_data, true);
 }
 
 
@@ -134,12 +137,8 @@ void ts::TargetSmartcardDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TargetSmartcardDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TargetSmartcardDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    private_data.clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute(super_CA_system_id, u"super_CA_system_id", true) &&
-        element->getHexaText(private_data, 0, MAX_DESCRIPTOR_SIZE - 6);
+    return element->getIntAttribute(super_CA_system_id, u"super_CA_system_id", true) &&
+           element->getHexaText(private_data, 0, MAX_DESCRIPTOR_SIZE - 6);
 }

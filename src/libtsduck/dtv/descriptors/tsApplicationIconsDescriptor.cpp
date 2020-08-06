@@ -30,23 +30,23 @@
 #include "tsApplicationIconsDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"application_icons_descriptor"
+#define MY_CLASS ts::ApplicationIconsDescriptor
 #define MY_DID ts::DID_AIT_APP_ICONS
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::ApplicationIconsDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::ApplicationIconsDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::ApplicationIconsDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::ApplicationIconsDescriptor::ApplicationIconsDescriptor() :
@@ -55,13 +55,19 @@ ts::ApplicationIconsDescriptor::ApplicationIconsDescriptor() :
     icon_flags(0),
     reserved_future_use()
 {
-    _is_valid = true;
 }
 
 
 //----------------------------------------------------------------------------
 // Constructor from a binary descriptor
 //----------------------------------------------------------------------------
+
+void ts::ApplicationIconsDescriptor::clearContent()
+{
+    icon_locator.clear();
+    icon_flags = 0;
+    reserved_future_use.clear();
+}
 
 ts::ApplicationIconsDescriptor::ApplicationIconsDescriptor(DuckContext& duck, const Descriptor& desc) :
     ApplicationIconsDescriptor()
@@ -77,7 +83,7 @@ ts::ApplicationIconsDescriptor::ApplicationIconsDescriptor(DuckContext& duck, co
 void ts::ApplicationIconsDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 {
     ByteBlockPtr bbp(serializeStart());
-    bbp->append(duck.toDVBWithByteLength(icon_locator));
+    bbp->append(duck.encodedWithByteLength(icon_locator));
     bbp->appendUInt16(icon_flags);
     bbp->append(reserved_future_use);
     serializeEnd(desc, bbp);
@@ -96,10 +102,10 @@ void ts::ApplicationIconsDescriptor::deserialize(DuckContext& duck, const Descri
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1 && size >= size_t(data[0]) + 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1 && size >= size_t(data[0]) + 3;
 
     if (_is_valid) {
-        icon_locator = duck.fromDVBWithByteLength(data, size);
+        duck.decodeWithByteLength(icon_locator, data, size);
         assert(size >= 2);
         icon_flags = GetUInt16(data);
         reserved_future_use.copy(data + 2, size - 2);
@@ -113,11 +119,12 @@ void ts::ApplicationIconsDescriptor::deserialize(DuckContext& duck, const Descri
 
 void ts::ApplicationIconsDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size > 0) {
-        strm << margin << "Icon locator: \"" << display.duck().fromDVBWithByteLength(data, size) << "\"" << std::endl;
+        strm << margin << "Icon locator: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
         if (size >= 2) {
             const uint16_t flags = GetUInt16(data);
             strm << margin << UString::Format(u"Icon flags: 0x%X", {flags}) << std::endl;
@@ -126,10 +133,7 @@ void ts::ApplicationIconsDescriptor::DisplayDescriptor(TablesDisplay& display, D
                     strm << margin << "  - " << NameFromSection(u"ApplicationIconFlags", mask) << std::endl;
                 }
             }
-            if (size > 2) {
-                strm << margin << "Reserved bytes:" << std::endl
-                     << UString::Dump(data + 2, size - 2, UString::HEXA | UString::ASCII | UString::OFFSET, indent + 2);
-            }
+            display.displayPrivateData(u"Reserved bytes", data + 2, size - 2, indent);
         }
     }
 }
@@ -143,9 +147,7 @@ void ts::ApplicationIconsDescriptor::buildXML(DuckContext& duck, xml::Element* r
 {
     root->setAttribute(u"icon_locator", icon_locator);
     root->setIntAttribute(u"icon_flags", icon_flags, true);
-    if (!reserved_future_use.empty()) {
-        root->addElement(u"reserved_future_use")->addHexaText(reserved_future_use);
-    }
+    root->addHexaTextChild(u"reserved_future_use", reserved_future_use, true);
 }
 
 
@@ -153,14 +155,9 @@ void ts::ApplicationIconsDescriptor::buildXML(DuckContext& duck, xml::Element* r
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationIconsDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ApplicationIconsDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    icon_locator.clear();
-    reserved_future_use.clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(icon_locator, u"icon_locator", true) &&
-        element->getIntAttribute<uint16_t>(icon_flags, u"icon_flags", true) &&
-        element->getHexaTextChild(reserved_future_use, u"reserved_future_use");
+    return element->getAttribute(icon_locator, u"icon_locator", true) &&
+           element->getIntAttribute<uint16_t>(icon_flags, u"icon_flags", true) &&
+           element->getHexaTextChild(reserved_future_use, u"reserved_future_use");
 }

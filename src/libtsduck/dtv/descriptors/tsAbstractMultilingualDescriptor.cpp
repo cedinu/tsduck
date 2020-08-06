@@ -30,7 +30,8 @@
 #include "tsAbstractMultilingualDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
@@ -40,21 +41,21 @@ TSDUCK_SOURCE;
 //----------------------------------------------------------------------------
 
 ts::AbstractMultilingualDescriptor::AbstractMultilingualDescriptor(DID tag, const UChar* xml_name, const UChar* xml_attribute) :
-    AbstractDescriptor(tag, xml_name, STD_DVB, 0),
+    AbstractDescriptor(tag, xml_name, Standards::DVB, 0),
     entries(),
     _xml_attribute(xml_attribute)
 {
 }
 
-
-//----------------------------------------------------------------------------
-// Contructor for language entry.
-//----------------------------------------------------------------------------
-
 ts::AbstractMultilingualDescriptor::Entry::Entry(const UString& lang_, const UString& name_) :
     language(lang_),
     name(name_)
 {
+}
+
+void ts::AbstractMultilingualDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 
@@ -88,7 +89,7 @@ void ts::AbstractMultilingualDescriptor::serialize(DuckContext& duck, Descriptor
             desc.invalidate();
             return;
         }
-        bbp->append(duck.toDVBWithByteLength(it->name));
+        bbp->append(duck.encodedWithByteLength(it->name));
     }
 
     serializeEnd(desc, bbp);
@@ -101,7 +102,7 @@ void ts::AbstractMultilingualDescriptor::serialize(DuckContext& duck, Descriptor
 
 void ts::AbstractMultilingualDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
     entries.clear();
@@ -117,7 +118,7 @@ void ts::AbstractMultilingualDescriptor::deserialize(DuckContext& duck, const De
         data += 4; size -= 4;
         _is_valid = len <= size;
         if (_is_valid) {
-            entries.push_back(Entry(lang, duck.fromDVB(data, len)));
+            entries.push_back(Entry(lang, duck.decoded(data, len)));
             data += len; size -= len;
         }
     }
@@ -131,14 +132,15 @@ void ts::AbstractMultilingualDescriptor::deserialize(DuckContext& duck, const De
 
 void ts::AbstractMultilingualDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 4) {
         const size_t len = std::min<size_t>(data[3], size - 4);
         strm << margin
              << "Language: " << DeserializeLanguageCode(data)
-             << ", name: \"" << display.duck().fromDVB(data + 4, len) << "\""
+             << ", name: \"" << duck.decoded(data + 4, len) << "\""
              << std::endl;
         data += 4 + len; size -= 4 + len;
     }
@@ -165,22 +167,18 @@ void ts::AbstractMultilingualDescriptor::buildXML(DuckContext& duck, xml::Elemen
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AbstractMultilingualDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AbstractMultilingualDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"language");
+    bool ok = element->getChildren(children, u"language");
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getAttribute(entry.language, u"code", true, u"", 3, 3) &&
-            children[i]->getAttribute(entry.name, _xml_attribute, true);
-        if (_is_valid) {
+        ok = children[i]->getAttribute(entry.language, u"code", true, u"", 3, 3) &&
+             children[i]->getAttribute(entry.name, _xml_attribute, true);
+        if (ok) {
             entries.push_back(entry);
         }
     }
+    return ok;
 }

@@ -30,17 +30,17 @@
 #include "tsMetadataSTDDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"metadata_STD_descriptor"
+#define MY_CLASS ts::MetadataSTDDescriptor
 #define MY_DID ts::DID_METADATA_STD
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MetadataSTDDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MetadataSTDDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MetadataSTDDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,13 @@ ts::MetadataSTDDescriptor::MetadataSTDDescriptor() :
     metadata_buffer_size(0),
     metadata_output_leak_rate(0)
 {
-    _is_valid = true;
+}
+
+void ts::MetadataSTDDescriptor::clearContent()
+{
+    metadata_input_leak_rate = 0;
+    metadata_buffer_size = 0;
+    metadata_output_leak_rate = 0;
 }
 
 ts::MetadataSTDDescriptor::MetadataSTDDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -86,7 +92,7 @@ void ts::MetadataSTDDescriptor::deserialize(DuckContext& duck, const Descriptor&
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 9;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 9;
 
     if (_is_valid) {
         metadata_input_leak_rate = GetUInt24(data) & 0x3FFFFF;
@@ -102,7 +108,8 @@ void ts::MetadataSTDDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::MetadataSTDDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 9) {
@@ -135,11 +142,9 @@ void ts::MetadataSTDDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MetadataSTDDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MetadataSTDDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(metadata_input_leak_rate, u"metadata_input_leak_rate", true, 0, 0, 0x3FFFFF) &&
-        element->getIntAttribute<uint32_t>(metadata_buffer_size, u"metadata_buffer_size", true, 0, 0, 0x3FFFFF) &&
-        element->getIntAttribute<uint32_t>(metadata_output_leak_rate, u"metadata_output_leak_rate", true, 0, 0, 0x3FFFFF);
+    return element->getIntAttribute<uint32_t>(metadata_input_leak_rate, u"metadata_input_leak_rate", true, 0, 0, 0x3FFFFF) &&
+           element->getIntAttribute<uint32_t>(metadata_buffer_size, u"metadata_buffer_size", true, 0, 0, 0x3FFFFF) &&
+           element->getIntAttribute<uint32_t>(metadata_output_leak_rate, u"metadata_output_leak_rate", true, 0, 0, 0x3FFFFF);
 }

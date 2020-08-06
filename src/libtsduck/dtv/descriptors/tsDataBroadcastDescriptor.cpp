@@ -26,27 +26,23 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a data_broadcast_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsDataBroadcastDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsDataBroadcastIdDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"data_broadcast_descriptor"
+#define MY_CLASS ts::DataBroadcastDescriptor
 #define MY_DID ts::DID_DATA_BROADCAST
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DataBroadcastDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::DataBroadcastDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::DataBroadcastDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -61,18 +57,21 @@ ts::DataBroadcastDescriptor::DataBroadcastDescriptor() :
     language_code(),
     text()
 {
-    _is_valid = true;
 }
 
 ts::DataBroadcastDescriptor::DataBroadcastDescriptor(DuckContext& duck, const Descriptor& desc) :
-    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
-    data_broadcast_id(0),
-    component_tag(0),
-    selector_bytes(),
-    language_code(),
-    text()
+    DataBroadcastDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::DataBroadcastDescriptor::clearContent()
+{
+    data_broadcast_id = 0;
+    component_tag = 0;
+    selector_bytes.clear();
+    language_code.clear();
+    text.clear();
 }
 
 
@@ -82,7 +81,8 @@ ts::DataBroadcastDescriptor::DataBroadcastDescriptor(DuckContext& duck, const De
 
 void ts::DataBroadcastDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
@@ -101,7 +101,7 @@ void ts::DataBroadcastDescriptor::DisplayDescriptor(TablesDisplay& display, DID 
         if (size >= 3) {
             strm << margin << "Language: " << DeserializeLanguageCode(data) << std::endl;
             data += 3; size -= 3;
-            strm << margin << "Description: \"" << display.duck().fromDVBWithByteLength(data, size) << "\"" << std::endl;
+            strm << margin << "Description: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
         }
     }
 
@@ -125,7 +125,7 @@ void ts::DataBroadcastDescriptor::serialize(DuckContext& duck, Descriptor& desc)
         desc.invalidate();
         return;
     }
-    bbp->append(duck.toDVBWithByteLength(text));
+    bbp->append(duck.encodedWithByteLength(text));
 
     serializeEnd(desc, bbp);
 }
@@ -141,7 +141,7 @@ void ts::DataBroadcastDescriptor::deserialize(DuckContext& duck, const Descripto
     language_code.clear();
     text.clear();
 
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 8)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 8)) {
         return;
     }
 
@@ -162,7 +162,7 @@ void ts::DataBroadcastDescriptor::deserialize(DuckContext& duck, const Descripto
 
     language_code = DeserializeLanguageCode(data);
     data += 3; size -= 3;
-    text = duck.fromDVBWithByteLength(data, size);
+    duck.decodeWithByteLength(text, data, size);
     _is_valid = size == 0;
 }
 
@@ -176,9 +176,7 @@ void ts::DataBroadcastDescriptor::buildXML(DuckContext& duck, xml::Element* root
     root->setIntAttribute(u"data_broadcast_id", data_broadcast_id, true);
     root->setIntAttribute(u"component_tag", component_tag, true);
     root->setAttribute(u"language_code", language_code);
-    if (!selector_bytes.empty()) {
-        root->addElement(u"selector_bytes")->addHexaText(selector_bytes);
-    }
+    root->addHexaTextChild(u"selector_bytes", selector_bytes, true);
     root->addElement(u"text")->addText(text);
 }
 
@@ -187,17 +185,11 @@ void ts::DataBroadcastDescriptor::buildXML(DuckContext& duck, xml::Element* root
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DataBroadcastDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DataBroadcastDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    selector_bytes.clear();
-    language_code.clear();
-    text.clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(data_broadcast_id, u"data_broadcast_id", true) &&
-        element->getIntAttribute<uint8_t>(component_tag, u"component_tag", true) &&
-        element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
-        element->getHexaTextChild(selector_bytes, u"selector_bytes", true) &&
-        element->getTextChild(text, u"text");
+    return  element->getIntAttribute<uint16_t>(data_broadcast_id, u"data_broadcast_id", true) &&
+            element->getIntAttribute<uint8_t>(component_tag, u"component_tag", true) &&
+            element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
+            element->getHexaTextChild(selector_bytes, u"selector_bytes", true) &&
+            element->getTextChild(text, u"text");
 }

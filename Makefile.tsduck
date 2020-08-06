@@ -38,15 +38,14 @@ include $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))/Makefile.common
 
 # Project specific directories and files.
 
-STATIC_LIBTSDUCK := libtsduck.a
-SHARED_LIBTSDUCK := tsduck.so
-
 INSTALLERDIR := $(ROOTDIR)/installers
 SRCROOT      := $(ROOTDIR)/src
 LIBTSDUCKDIR := $(SRCROOT)/libtsduck
 TSTOOLSDIR   := $(SRCROOT)/tstools
 TSPLUGINSDIR := $(SRCROOT)/tsplugins
-LIBTSDUCK    := $(LIBTSDUCKDIR)/$(OBJDIR)/$(STATIC_LIBTSDUCK)
+
+STATIC_LIBTSDUCK := $(BINDIR)/libtsduck.a
+SHARED_LIBTSDUCK := $(BINDIR)/libtsduck.so
 
 ifndef TSPLUGINS
     export TSPLUGINS := $(sort $(filter-out $(if $(NOTELETEXT),tsplugin_teletext,),\
@@ -75,6 +74,11 @@ ifdef STATIC
     ifdef MACOS
         $(error static linking is not supported on macOS)
     else
+        NOCURL  := true
+        NOPCSC  := true
+        NODTAPI := true
+        NOSRT   := true
+        NOTEST  := true
         CFLAGS_INCLUDES += -DTSDUCK_STATIC=1
     endif
 else
@@ -85,18 +89,23 @@ endif
 
 ifdef CROSS_TARGET
     # Some libraries are bypassed in cross-compilation.
-    NOCURL := true
-    NOPCSC := true
+    NOCURL  := true
+    NOPCSC  := true
     NODTAPI := true
+    NOSRT   := true
 endif
 
 ifdef NOTELETEXT
     CFLAGS_INCLUDES += -DTS_NOTELETEXT=1
 endif
 
+ifdef ASSERTIONS
+    CFLAGS_INCLUDES += -DTS_KEEP_ASSERTIONS=1
+endif
+
 ifeq ($(MACOS)$(NOSRT),)
     # Not on macOS and SRT not disabled, check if libsrt is available.
-    NOSRT = $(if $(wildcard /usr/include/srt/*.h)$(wildcard /usr/local/include/srt/*.h),,true)
+    NOSRT := $(if $(wildcard /usr/include/srt/*.h)$(wildcard /usr/local/include/srt/*.h),,true)
 endif
 
 ifneq ($(NOSRT),)
@@ -146,12 +155,4 @@ CFLAGS_INCLUDES += $(addprefix -I,$(shell find $(LIBTSDUCKDIR) -type d ! -name p
 
 ifneq ($(TS_NO_BUILD_VERSION),)
     CPPFLAGS += -DTS_NO_BUILD_VERSION
-endif
-
-# The following script is used to build a few project files.
-# It shall be used when source files are added or removed in the library.
-
-ifndef BUILD_PROJ_FILES
-    export BUILD_PROJ_FILES = $(ROOTDIR)/build/build-project-files.sh
-    export LIB_SOURCES = $(shell find $(LIBTSDUCKDIR) \( -name '*.h' -o -name '*.cpp' \) ! -name tsduck.h ! -name tsTables.h ! -name tsRefType.h)
 endif

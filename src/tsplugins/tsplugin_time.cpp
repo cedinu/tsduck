@@ -32,9 +32,9 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsSectionDemux.h"
+#include "tsBinaryTable.h"
 #include "tsEnumeration.h"
 #include "tsTime.h"
 #include "tsTDT.h"
@@ -90,8 +90,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(time, ts::TimePlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"time", ts::TimePlugin);
 
 
 //----------------------------------------------------------------------------

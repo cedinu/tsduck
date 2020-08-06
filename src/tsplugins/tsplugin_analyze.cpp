@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsTSAnalyzerReport.h"
 #include "tsTSSpeedMetrics.h"
@@ -76,8 +75,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(analyze, ts::AnalyzePlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"analyze", ts::AnalyzePlugin);
 
 
 //----------------------------------------------------------------------------
@@ -98,7 +96,7 @@ ts::AnalyzePlugin::AnalyzePlugin(TSP* tsp_) :
 {
     // Define all standard analysis options.
     duck.defineArgsForStandards(*this);
-    duck.defineArgsForDVBCharset(*this);
+    duck.defineArgsForCharset(*this);
     _analyzer_options.defineArgs(*this);
 
     option(u"interval", 'i', POSITIVE);

@@ -26,14 +26,10 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Abstract base class for tables containing a list of transport stream
-//  descriptions. Common code for BAT and NIT.
-//
-//----------------------------------------------------------------------------
 
 #include "tsAbstractTransportListTable.h"
 #include "tsBinaryTable.h"
+#include "tsSection.h"
 #include "tsTablesDisplay.h"
 TSDUCK_SOURCE;
 
@@ -53,7 +49,6 @@ ts::AbstractTransportListTable::AbstractTransportListTable(TID tid_,
     transports(this),
     _tid_ext(tid_ext_)
 {
-    _is_valid = true;
 }
 
 ts::AbstractTransportListTable::AbstractTransportListTable(const AbstractTransportListTable& other) :
@@ -81,6 +76,28 @@ ts::AbstractTransportListTable::Transport::Transport(const AbstractTable* table)
     EntryWithDescriptors(table),
     preferred_section(-1)
 {
+}
+
+
+//----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::AbstractTransportListTable::tableIdExtension() const
+{
+    return _tid_ext;
+}
+
+
+//----------------------------------------------------------------------------
+// Clear all fields.
+//----------------------------------------------------------------------------
+
+void ts::AbstractTransportListTable::clearContent()
+{
+    _tid_ext = 0xFFFF;
+    descs.clear();
+    transports.clear();
 }
 
 
@@ -178,7 +195,7 @@ void ts::AbstractTransportListTable::addSection(BinaryTable& table,
                                                 size_t& remain) const
 {
     table.addSection(new Section(_table_id,
-                                 true,   // is_private_section
+                                 isPrivate(),
                                  _tid_ext,
                                  version,
                                  is_current,
@@ -271,7 +288,7 @@ void ts::AbstractTransportListTable::serializeContent(DuckContext& duck, BinaryT
     }
 
     // Build the sections
-    uint8_t payload[MAX_PSI_LONG_SECTION_PAYLOAD_SIZE];
+    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
     int section_number = 0;
     uint8_t* data = payload;
     size_t remain = sizeof(payload);

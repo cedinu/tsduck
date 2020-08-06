@@ -59,6 +59,9 @@ ts::AbstractDescrambler::AbstractDescrambler(TSP* tsp_, const UString& descripti
     _ecm_thread(this),
     _stop_thread(false)
 {
+    // We need to define character sets to specify service names.
+    duck.defineArgsForCharset(*this);
+
     // Generic scrambling options.
     _scrambling.defineArgs(*this);
 
@@ -104,7 +107,7 @@ bool ts::AbstractDescrambler::getOptions()
     _synchronous = present(u"synchronous") || !tsp->realtime();
     _swap_cw = present(u"swap-cw");
     getIntValues(_pids, u"pid");
-    if (!_scrambling.loadArgs(duck, *this)) {
+    if (!duck.loadArgs(*this) || !_scrambling.loadArgs(duck, *this)) {
         return false;
     }
 
@@ -232,7 +235,7 @@ bool ts::AbstractDescrambler::stop()
 //  This method is invoked when a PMT is available for the service.
 //----------------------------------------------------------------------------
 
-void ts::AbstractDescrambler::handlePMT(const PMT& pmt)
+void ts::AbstractDescrambler::handlePMT(const PMT& pmt, PID)
 {
     tsp->debug(u"PMT: service 0x%X, %d elementary streams", {pmt.service_id, pmt.streams.size()});
 
@@ -390,7 +393,7 @@ void ts::AbstractDescrambler::handleSection(SectionDemux& demux, const Section& 
 void ts::AbstractDescrambler::processECM(ECMStream& estream)
 {
     // Copy the ECM out of the protected area into local data
-    Section ecm(estream.ecm, COPY);
+    Section ecm(estream.ecm, ShareMode::COPY);
     estream.new_ecm = false;
 
     // Local data for deciphered CW's from ECM.

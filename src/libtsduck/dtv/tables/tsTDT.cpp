@@ -26,26 +26,23 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a Time & Date Table (TDT)
-//
-//----------------------------------------------------------------------------
 
 #include "tsTDT.h"
 #include "tsMJD.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"TDT"
+#define MY_CLASS ts::TDT
 #define MY_TID ts::TID_TDT
-#define MY_STD ts::STD_DVB
+#define MY_PID ts::PID_TDT
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::TDT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::TDT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::TDT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection, nullptr, {MY_PID});
 
 
 //----------------------------------------------------------------------------
@@ -56,13 +53,22 @@ ts::TDT::TDT(const Time& utc_time_) :
     AbstractTable(MY_TID, MY_XML_NAME, MY_STD),
     utc_time(utc_time_)
 {
-    _is_valid = true;
 }
 
 ts::TDT::TDT(DuckContext& duck, const BinaryTable& table) :
     TDT()
 {
     deserialize(duck, table);
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::TDT::clearContent()
+{
+    utc_time.clear();
 }
 
 
@@ -84,6 +90,11 @@ void ts::TDT::deserializeContent(DuckContext& duck, const BinaryTable& table)
     if (sect.payloadSize() >= MJD_SIZE) {
         DecodeMJD(sect.payload(), MJD_SIZE, utc_time);
         _is_valid = true;
+
+        // In Japan, the time field is in fact a JST time, convert it to UTC.
+        if ((duck.standards() & Standards::JAPAN) == Standards::JAPAN) {
+            utc_time = utc_time.JSTToUTC();
+        }
     }
 }
 
@@ -95,8 +106,14 @@ void ts::TDT::deserializeContent(DuckContext& duck, const BinaryTable& table)
 void ts::TDT::serializeContent(DuckContext& duck, BinaryTable& table) const
 {
     // Encode the data in MJD in the payload (5 bytes)
+    // In Japan, the time field is in fact a JST time, convert UTC to JST before serialization.
     uint8_t payload[MJD_SIZE];
-    EncodeMJD(utc_time, payload, MJD_SIZE);
+    if ((duck.standards() & Standards::JAPAN) == Standards::JAPAN) {
+        EncodeMJD(utc_time.UTCToJST(), payload, MJD_SIZE);
+    }
+    else {
+        EncodeMJD(utc_time, payload, MJD_SIZE);
+    }
 
     // Add the section in the table
     table.addSection(new Section(MY_TID, // tid
@@ -112,7 +129,8 @@ void ts::TDT::serializeContent(DuckContext& duck, BinaryTable& table) const
 
 void ts::TDT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -120,8 +138,7 @@ void ts::TDT::DisplaySection(TablesDisplay& display, const ts::Section& section,
         Time time;
         DecodeMJD(data, 5, time);
         data += 5; size -= 5;
-        strm << std::string(indent, ' ') << "UTC time: "
-             << time.format(Time::DATE | Time::TIME) << std::endl;
+        strm << std::string(indent, ' ') << "UTC time: " << time.format(Time::DATETIME) << std::endl;
     }
 
     display.displayExtraData(data, size, indent);
@@ -142,9 +159,7 @@ void ts::TDT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TDT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TDT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getDateTimeAttribute(utc_time, u"UTC_time", true);
+    return element->getDateTimeAttribute(utc_time, u"UTC_time", true);
 }

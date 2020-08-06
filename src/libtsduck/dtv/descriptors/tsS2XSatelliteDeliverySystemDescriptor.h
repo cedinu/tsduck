@@ -53,6 +53,8 @@ namespace ts {
         {
         public:
             Channel();                            //!< Default constructor.
+            void clear();                         //!< Clear content.
+
             uint64_t frequency;                   //!< Frequency in Hz.
             uint16_t orbital_position;            //!< Orbital position, unit is 0.1 degree.
             bool     east_not_west;               //!< True for East, false for West.
@@ -91,12 +93,13 @@ namespace ts {
         // Inherited methods
         virtual void serialize(DuckContext&, Descriptor&) const override;
         virtual void deserialize(DuckContext&, const Descriptor&) override;
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
 
     private:
         // Enumerations for XML.

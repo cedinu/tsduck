@@ -102,13 +102,15 @@ namespace ts {
         SelectionInformationTable(DuckContext& duck, const BinaryTable& table);
 
         // Inherited methods
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
+        virtual uint16_t tableIdExtension() const override;
         DeclareDisplaySection();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void serializeContent(DuckContext&, BinaryTable&) const override;
         virtual void deserializeContent(DuckContext&, const BinaryTable&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
     };
 }

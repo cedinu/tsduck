@@ -104,6 +104,7 @@ const ts::TSPacket ts::EmptyPacket = {{
 
 void ts::TSPacket::SanityCheck()
 {
+#if !defined(NDEBUG)
     assert(sizeof(TSPacket) == PKT_SIZE);
     TSPacket p;
     assert(reinterpret_cast<uint8_t*>(&p) == p.b);
@@ -111,6 +112,7 @@ void ts::TSPacket::SanityCheck()
     assert(reinterpret_cast<char*>(&(pa[1])) == reinterpret_cast<char*>(&(pa[0])) + PKT_SIZE);
     TSPacketVector pv(2);
     assert(reinterpret_cast<char*>(&(pv[1])) == reinterpret_cast<char*>(&(pv[0])) + PKT_SIZE);
+#endif
 }
 
 //----------------------------------------------------------------------------
@@ -1039,7 +1041,7 @@ std::ostream& ts::TSPacket::display(std::ostream& strm, uint32_t flags, size_t i
 
     // Filter invalid packets
 
-    if (!hasValidSync ()) {
+    if (!hasValidSync()) {
         strm << margin << "**** INVALID PACKET ****" << std::endl;
         flags = (flags & 0x0000FFFF) | DUMP_RAW;
     }
@@ -1088,7 +1090,7 @@ std::ostream& ts::TSPacket::display(std::ostream& strm, uint32_t flags, size_t i
              << margin << UString::Format(u"PID: %d (0x%X), header size: %d, sync: 0x%X", {getPID(), getPID(), header_size, b[0]}) << std::endl
              << margin << "Error: " << getTEI() << ", unit start: " << getPUSI() << ", priority: " << getPriority() << std::endl
              << margin << "Scrambling: " << int (getScrambling()) << ", continuity counter: " << int (getCC()) << std::endl
-             << margin << "Adaptation field: " << UString::YesNo (hasAF()) << " (" << getAFSize () << " bytes)"
+             << margin << "Adaptation field: " << UString::YesNo (hasAF()) << " (" << getAFSize() << " bytes)"
              << ", payload: " << UString::YesNo (hasPayload()) << " (" << getPayloadSize() << " bytes)" << std::endl;
         if (hasAF()) {
             strm << margin << "Discontinuity: " << getDiscontinuityIndicator()

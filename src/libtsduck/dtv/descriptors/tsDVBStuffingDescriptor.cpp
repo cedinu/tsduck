@@ -31,41 +31,39 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DVB_stuffing_descriptor"
 #define MY_XML_NAME_LEGACY u"stuffing_descriptor"
+#define MY_CLASS ts::DVBStuffingDescriptor
 #define MY_DID ts::DID_STUFFING
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBStuffingDescriptor, MY_XML_NAME);
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBStuffingDescriptor, MY_XML_NAME_LEGACY);
-TS_ID_DESCRIPTOR_FACTORY(ts::DVBStuffingDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::DVBStuffingDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor, MY_XML_NAME_LEGACY);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::DVBStuffingDescriptor::DVBStuffingDescriptor() :
-    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
+    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0, MY_XML_NAME_LEGACY),
     stuffing()
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::DVBStuffingDescriptor::DVBStuffingDescriptor(DuckContext& duck, const Descriptor& desc) :
     DVBStuffingDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::DVBStuffingDescriptor::clearContent()
+{
+    stuffing.clear();
 }
 
 
@@ -87,7 +85,7 @@ void ts::DVBStuffingDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 
 void ts::DVBStuffingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
 
     if (_is_valid) {
         stuffing.copy(desc.payload(), desc.payloadSize());
@@ -104,10 +102,7 @@ void ts::DVBStuffingDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::DVBStuffingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
-    const std::string margin(indent, ' ');
-    strm << margin << "Stuffing data, " << size << " bytes" << std::endl
-         << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
+    display.displayPrivateData(u"Stuffing data", data, size, indent);
 }
 
 
@@ -117,9 +112,7 @@ void ts::DVBStuffingDescriptor::DisplayDescriptor(TablesDisplay& display, DID di
 
 void ts::DVBStuffingDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    if (!stuffing.empty()) {
-        root->addHexaText(stuffing);
-    }
+    root->addHexaText(stuffing, true);
 }
 
 
@@ -127,8 +120,7 @@ void ts::DVBStuffingDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DVBStuffingDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DVBStuffingDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    stuffing.clear();
-    _is_valid = checkXMLName(element, MY_XML_NAME_LEGACY) && element->getHexaText(stuffing, 0, 255);
+    return element->getHexaText(stuffing, 0, 255);
 }

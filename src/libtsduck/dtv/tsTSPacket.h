@@ -37,6 +37,7 @@
 #include "tsMemory.h"
 #include "tsCerrReport.h"
 #include "tsException.h"
+#include "tsResidentBuffer.h"
 
 namespace ts {
 
@@ -53,8 +54,9 @@ namespace ts {
     //! For performance reason, there is no constructor. Uninitialized packets have undefined
     //! binary content.
     //!
-    struct TSDUCKDLL TSPacket
+    class TSDUCKDLL TSPacket final
     {
+    public:
         //!
         //! The public content is the 188-byte array representing the TS packet.
         //!
@@ -917,6 +919,11 @@ namespace ts {
     //! Vector of packets.
     //!
     typedef std::vector<TSPacket> TSPacketVector;
+
+    //!
+    //! TS packet are accessed in a memory-resident buffer.
+    //!
+    typedef ResidentBuffer<TSPacket> PacketBuffer;
 }
 
 //!

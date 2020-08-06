@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"MPEG4_audio_descriptor"
+#define MY_CLASS ts::MPEG4AudioDescriptor
 #define MY_DID ts::DID_MPEG4_AUDIO
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MPEG4AudioDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MPEG4AudioDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MPEG4AudioDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,13 +52,17 @@ ts::MPEG4AudioDescriptor::MPEG4AudioDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     MPEG4_audio_profile_and_level(0)
 {
-    _is_valid = true;
 }
 
 ts::MPEG4AudioDescriptor::MPEG4AudioDescriptor(DuckContext& duck, const Descriptor& desc) :
     MPEG4AudioDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::MPEG4AudioDescriptor::clearContent()
+{
+    MPEG4_audio_profile_and_level = 0;
 }
 
 
@@ -83,7 +87,7 @@ void ts::MPEG4AudioDescriptor::deserialize(DuckContext& duck, const Descriptor& 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 1;
 
     if (_is_valid) {
         MPEG4_audio_profile_and_level = data[0];
@@ -97,7 +101,8 @@ void ts::MPEG4AudioDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 
 void ts::MPEG4AudioDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -123,9 +128,7 @@ void ts::MPEG4AudioDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MPEG4AudioDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MPEG4AudioDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(MPEG4_audio_profile_and_level, u"MPEG4_audio_profile_and_level", true);
+    return element->getIntAttribute<uint8_t>(MPEG4_audio_profile_and_level, u"MPEG4_audio_profile_and_level", true);
 }

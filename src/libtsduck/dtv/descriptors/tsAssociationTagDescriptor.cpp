@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"association_tag_descriptor"
+#define MY_CLASS ts::AssociationTagDescriptor
 #define MY_DID ts::DID_ASSOCIATION_TAG
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::AssociationTagDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::AssociationTagDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::AssociationTagDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +55,14 @@ ts::AssociationTagDescriptor::AssociationTagDescriptor() :
     selector_bytes(),
     private_data()
 {
-    _is_valid = true;
+}
+
+void ts::AssociationTagDescriptor::clearContent()
+{
+    association_tag = 0;
+    use = 0;
+    selector_bytes.clear();
+    private_data.clear();
 }
 
 ts::AssociationTagDescriptor::AssociationTagDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -93,7 +100,7 @@ void ts::AssociationTagDescriptor::deserialize(DuckContext& duck, const Descript
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 5;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 5;
 
     if (_is_valid) {
         association_tag = GetUInt16(data);
@@ -117,7 +124,8 @@ void ts::AssociationTagDescriptor::deserialize(DuckContext& duck, const Descript
 
 void ts::AssociationTagDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 5) {
@@ -127,18 +135,12 @@ void ts::AssociationTagDescriptor::DisplayDescriptor(TablesDisplay& display, DID
         data += 5; size -= 5;
 
         strm << margin << UString::Format(u"Association tag: 0x%X (%d), use: 0x%X (%d)", {tag, tag, use, use}) << std::endl;
-        if (len > 0) {
-            strm << margin << "Selector bytes:" << std::endl
-                 << UString::Dump(data, len, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-        }
-        if (size > len) {
-            strm << margin << "Private data:" << std::endl
-                 << UString::Dump(data + len, size - len, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-        }
-        size = 0;
+        display.displayPrivateData(u"Selector bytes", data, len, indent);
+        display.displayPrivateData(u"Private data", data + len, size - len, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 
@@ -151,10 +153,10 @@ void ts::AssociationTagDescriptor::buildXML(DuckContext& duck, xml::Element* roo
     root->setIntAttribute(u"association_tag", association_tag, true);
     root->setIntAttribute(u"use", use, true);
     if (!selector_bytes.empty()) {
-        root->addElement(u"selector_bytes")->addHexaText(selector_bytes);
+        root->addHexaTextChild(u"selector_bytes", selector_bytes);
     }
     if (!private_data.empty()) {
-        root->addElement(u"private_data")->addHexaText(private_data);
+        root->addHexaTextChild(u"private_data", private_data);
     }
 }
 
@@ -163,15 +165,10 @@ void ts::AssociationTagDescriptor::buildXML(DuckContext& duck, xml::Element* roo
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AssociationTagDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AssociationTagDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    selector_bytes.clear();
-    private_data.clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(association_tag, u"association_tag", true) &&
-        element->getIntAttribute<uint16_t>(use, u"use", true) &&
-        element->getHexaTextChild(selector_bytes, u"selector_bytes", false) &&
-        element->getHexaTextChild(private_data, u"private_data", false);
+    return element->getIntAttribute<uint16_t>(association_tag, u"association_tag", true) &&
+           element->getIntAttribute<uint16_t>(use, u"use", true) &&
+           element->getHexaTextChild(selector_bytes, u"selector_bytes", false) &&
+           element->getHexaTextChild(private_data, u"private_data", false);
 }

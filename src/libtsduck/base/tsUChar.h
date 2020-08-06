@@ -239,6 +239,49 @@ namespace ts {
     }
 
     //!
+    //! Check if a 32-bit Unicode code point needs a surrogate pair in UTF-16 representation.
+    //! @param [in] cp A 32-bit Unicode code point.
+    //! @return True if @a cp needs a surrogate pair.
+    //!
+    TSDUCKDLL inline bool NeedSurrogate(char32_t cp)
+    {
+        return cp >= 0x10000;
+    }
+
+    //!
+    //! Compute the first part of the surrogate pair of a 32-bit Unicode code point (which needs a surrogate pair).
+    //! @param [in] cp A 32-bit Unicode code point.
+    //! @return The first part of its surrogate pair.
+    //! @see NeedSurrogate()
+    //!
+    TSDUCKDLL inline UChar LeadingSurrogate(char32_t cp)
+    {
+        return 0xD800 | UChar(((cp - 0x10000) >> 10) & 0x03FF);
+    }
+
+    //!
+    //! Compute the second part of the surrogate pair of a 32-bit Unicode code point (which needs a surrogate pair).
+    //! @param [in] cp A 32-bit Unicode code point.
+    //! @return The second part of its surrogate pair.
+    //! @see NeedSurrogate()
+    //!
+    TSDUCKDLL inline UChar TrailingSurrogate(char32_t cp)
+    {
+        return 0xDC00 | UChar((cp - 0x10000) & 0x03FF);
+    }
+
+    //!
+    //! Build a 32-bit Unicode code point from a surrogate pair.
+    //! @param [in] lead First part of the surrogate pair.
+    //! @param [in] trail Second part of the surrogate pair.
+    //! @return A 32-bit Unicode code point.
+    //!
+    TSDUCKDLL inline char32_t FromSurrogatePair(UChar lead, UChar trail)
+    {
+        return 0x10000 + (((uint32_t(lead) & 0x03FF) << 10) | (uint32_t(trail) & 0x03FF));
+    }
+
+    //!
     //! Convert a character into its corresponding HTML sequence.
     //! @param [in] c A character.
     //! @return A string containing the html sequence for @a c.
@@ -1186,4 +1229,5 @@ namespace ts {
     static constexpr UChar BLACK_CLUB_SUIT                             = UChar(0x2663); //!< Non-ISO-8859 Unicode character.
     static constexpr UChar BLACK_HEART_SUIT                            = UChar(0x2665); //!< Non-ISO-8859 Unicode character.
     static constexpr UChar BLACK_DIAMOND_SUIT                          = UChar(0x2666); //!< Non-ISO-8859 Unicode character.
+    static constexpr UChar IDEOGRAPHIC_SPACE                           = UChar(0x3000); //!< CJK character for space. 
 }

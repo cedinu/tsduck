@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsPacketDecapsulation.h"
 TSDUCK_SOURCE;
@@ -60,8 +59,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(decap, ts::DecapPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"decap", ts::DecapPlugin);
 
 
 //----------------------------------------------------------------------------

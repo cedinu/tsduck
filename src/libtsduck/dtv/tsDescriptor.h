@@ -35,11 +35,13 @@
 #pragma once
 #include "tsByteBlock.h"
 #include "tsTablesPtr.h"
-#include "tsDuckContext.h"
 #include "tsEDID.h"
 #include "tsxml.h"
 
 namespace ts {
+
+    class DuckContext;
+
     //!
     //! Representation of a MPEG PSI/SI descriptors in binary format.
     //! @ingroup mpeg
@@ -58,7 +60,7 @@ namespace ts {
         //! @param [in] mode The descriptors' data are either shared (ts::SHARE) between the
         //! two descriptors or duplicated (ts::COPY).
         //!
-        Descriptor(const Descriptor& desc, CopyShare mode);
+        Descriptor(const Descriptor& desc, ShareMode mode);
 
         //!
         //! Move constructor.
@@ -105,7 +107,7 @@ namespace ts {
         //! @param [in] mode The data are either shared (ts::SHARE) between the
         //! descriptor and @a bb or duplicated (ts::COPY).
         //!
-        Descriptor(const ByteBlockPtr& bb, CopyShare mode);
+        Descriptor(const ByteBlockPtr& bb, ShareMode mode);
 
         //!
         //! Assignment operator.

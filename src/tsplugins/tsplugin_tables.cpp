@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsTablesLogger.h"
 TSDUCK_SOURCE;
@@ -60,8 +59,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(tables, ts::TablesPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"tables", ts::TablesPlugin);
 
 
 //----------------------------------------------------------------------------
@@ -76,7 +74,7 @@ ts::TablesPlugin::TablesPlugin(TSP* tsp_) :
     duck.defineArgsForCAS(*this);
     duck.defineArgsForPDS(*this);
     duck.defineArgsForStandards(*this);
-    duck.defineArgsForDVBCharset(*this);
+    duck.defineArgsForCharset(*this);
     _logger.defineArgs(*this);
     _display.defineArgs(*this);
 }

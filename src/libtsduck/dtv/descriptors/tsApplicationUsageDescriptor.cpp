@@ -30,35 +30,39 @@
 #include "tsApplicationUsageDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"application_usage_descriptor"
+#define MY_CLASS ts::ApplicationUsageDescriptor
 #define MY_DID ts::DID_AIT_APP_USAGE
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::ApplicationUsageDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::ApplicationUsageDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::ApplicationUsageDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::ApplicationUsageDescriptor::ApplicationUsageDescriptor(uint8_t type) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     usage_type(type)
 {
-    _is_valid = true;
 }
 
 
 //----------------------------------------------------------------------------
 // Constructor from a binary descriptor
 //----------------------------------------------------------------------------
+
+void ts::ApplicationUsageDescriptor::clearContent()
+{
+    usage_type = 0;
+}
 
 ts::ApplicationUsageDescriptor::ApplicationUsageDescriptor(DuckContext& duck, const Descriptor& desc) :
     ApplicationUsageDescriptor()
@@ -85,7 +89,7 @@ void ts::ApplicationUsageDescriptor::serialize(DuckContext& duck, Descriptor& de
 
 void ts::ApplicationUsageDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 1;
 
     if (_is_valid) {
         usage_type = GetUInt8(desc.payload());
@@ -99,7 +103,8 @@ void ts::ApplicationUsageDescriptor::deserialize(DuckContext& duck, const Descri
 
 void ts::ApplicationUsageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
 
     if (size >= 1) {
         uint8_t type = data[0];
@@ -112,7 +117,7 @@ void ts::ApplicationUsageDescriptor::DisplayDescriptor(TablesDisplay& display, D
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::ApplicationUsageDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -120,14 +125,7 @@ void ts::ApplicationUsageDescriptor::buildXML(DuckContext& duck, xml::Element* r
     root->setIntAttribute(u"usage_type", usage_type, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::ApplicationUsageDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ApplicationUsageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(usage_type, u"usage_type", true);
+    return element->getIntAttribute<uint8_t>(usage_type, u"usage_type", true);
 }

@@ -29,10 +29,11 @@
 
 #include "tsNames.h"
 #include "tsMPEG.h"
+#include "tsDuckContext.h"
 #include "tsSysUtils.h"
 #include "tsFatal.h"
 #include "tsCerrReport.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
 TSDUCK_SOURCE;
 
 
@@ -47,6 +48,65 @@ ts::NamesMain::~NamesMain() {}
 TS_DEFINE_SINGLETON(ts::NamesOUI);
 ts::NamesOUI::NamesOUI() : Names(u"tsduck.oui.names") {}
 ts::NamesOUI::~NamesOUI() {}
+
+
+//----------------------------------------------------------------------------
+// Tables ids: specific standards processing
+//----------------------------------------------------------------------------
+
+ts::UString ts::names::TID(const DuckContext& duck, uint8_t tid, uint16_t cas, Flags flags)
+{
+    // Where to search table ids.
+    const Names* const repo = NamesMain::Instance();
+    const UString section(u"TableId");
+
+    // Check without standard, then with all known standards in TSDuck context.
+    // In all cases, use version with CAS first, then without CAS.
+    // Return the first name which is found.
+    // If no name is found in the list of supported standards but some with
+    // other standards, use the first one that was found.
+
+    const Names::Value casMask = Names::Value(CASFamilyOf(cas)) << 8;
+    Names::Value finalValue = Names::Value(tid);
+
+    if (repo->nameExists(section, finalValue | casMask)) {
+        // Found without standard, with CAS.
+        finalValue |= casMask;
+    }
+    else if (repo->nameExists(section, finalValue)) {
+        // Found without standard, without CAS. Nothing to do. Keep this value.
+    }
+    else {
+        // Loop on all possible standards.
+        bool foundOnce = false;
+        for (Standards mask = Standards(1); mask != Standards::NONE; mask <<= 1) {
+            // TID value with mask for this standard:
+            const Names::Value value = Names::Value(tid) | (Names::Value(mask) << 16);
+            // Check if this standard is currently in TSDuck context.
+            const bool supportedStandard = (duck.standards() & mask) != Standards::NONE;
+            // Lookup name only if supported standard or no previous standard was found.
+            if (!foundOnce || supportedStandard) {
+                bool foundHere = repo->nameExists(section, value | casMask);
+                if (foundHere) {
+                    // Found with that standard, with CAS.
+                    finalValue = value | casMask;
+                    foundOnce = true;
+                }
+                else if (repo->nameExists(section, value)) {
+                    // Found with that standard, without CAS.
+                    finalValue = value;
+                    foundHere = foundOnce = true;
+                }
+                if (foundHere && supportedStandard) {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Return the name for best matched value.
+    return repo->nameFromSection(section, finalValue, flags, 8);
+}
 
 
 //----------------------------------------------------------------------------
@@ -81,12 +141,6 @@ ts::UString ts::names::DID(uint8_t did, uint32_t pds, uint8_t tid, Flags flags)
 // Public functions returning names.
 //----------------------------------------------------------------------------
 
-ts::UString ts::names::TID(uint8_t tid, uint16_t cas, Flags flags)
-{
-    // Use version with CAS first, then without CAS.
-    return NamesMain::Instance()->nameFromSectionWithFallback(u"TableId", (Names::Value(CASFamilyOf(cas)) << 8) | Names::Value(tid), Names::Value(tid), flags, 8);
-}
-
 ts::UString ts::names::EDID(uint8_t edid, Flags flags)
 {
     return NamesMain::Instance()->nameFromSection(u"DVBExtendedDescriptorId", Names::Value(edid), flags, 8);
@@ -112,9 +166,10 @@ ts::UString ts::names::CASFamily(ts::CASFamily cas)
     return NamesMain::Instance()->nameFromSection(u"CASFamily", Names::Value(cas), NAME | DECIMAL);
 }
 
-ts::UString ts::names::CASId(uint16_t id, Flags flags)
+ts::UString ts::names::CASId(const DuckContext& duck, uint16_t id, Flags flags)
 {
-    return NamesMain::Instance()->nameFromSection(u"CASystemId", Names::Value(id), flags, 16);
+    const UChar* section = (duck.standards() & Standards::ISDB) == Standards::ISDB ? u"ARIBCASystemId" : u"CASystemId";
+    return NamesMain::Instance()->nameFromSection(section, Names::Value(id), flags, 16);
 }
 
 ts::UString ts::names::BouquetId(uint16_t id, Flags flags)
@@ -242,7 +297,7 @@ ts::UString ts::names::T2MIPacketType(uint8_t type, Flags flags)
 // Component Type (in Component Descriptor)
 //----------------------------------------------------------------------------
 
-ts::UString ts::names::ComponentType(uint16_t type, Flags flags)
+ts::UString ts::names::ComponentType(const DuckContext& duck, uint16_t type, Flags flags)
 {
     // There is a special case here. The binary layout of the 16 bits are:
     //   stream_content_ext (4 bits)
@@ -269,7 +324,11 @@ ts::UString ts::names::ComponentType(uint16_t type, Flags flags)
     // Value to display:
     const uint16_t dType = sc >= 1 && sc <= 8 ? (type & 0x0FFF) : type;
 
-    if ((nType & 0xFF00) == 0x3F00) {
+    if ((duck.standards() & Standards::JAPAN) == Standards::JAPAN) {
+        // Japan / ISDB uses a completely different mapping.
+        return NamesMain::Instance()->nameFromSection(u"ComponentTypeJapan", Names::Value(nType), flags | names::ALTERNATE, 16, dType);
+    }
+    else if ((nType & 0xFF00) == 0x3F00) {
         return SubtitlingType(nType & 0x00FF, flags);
     }
     else if ((nType & 0xFF00) == 0x4F00) {
@@ -342,7 +401,7 @@ ts::Names::Names(const UString& fileName, bool mergeExtensions) :
     if (mergeExtensions) {
         // Get list of extension names.
         UStringList files;
-        TablesFactory::Instance()->getRegisteredNamesFiles(files);
+        PSIRepository::Instance()->getRegisteredNamesFiles(files);
         for (auto name = files.begin(); name != files.end(); ++name) {
             const UString path(SearchConfigurationFile(*name));
             if (path.empty()) {
@@ -432,9 +491,12 @@ bool ts::Names::decodeDefinition(const UString& line, ConfigSection* section)
     UString value(line, equal + 1, line.length() - equal - 1);
     value.trim();
 
+    // Allowed "thousands separators" (ignored characters)
+    const UString ignore(u".,_");
+
     // Special case: specification of size in bits of values in this section.
     if (range.similar(u"bits")) {
-        return value.toInteger(section->bits);
+        return value.toInteger(section->bits, ignore, 0, UString());
     }
 
     // Decode "first[-last]"
@@ -444,11 +506,11 @@ bool ts::Names::decodeDefinition(const UString& line, ConfigSection* section)
     bool valid = false;
 
     if (dash == NPOS) {
-        valid = range.toInteger(first);
+        valid = range.toInteger(first, ignore, 0, UString());
         last = first;
     }
     else {
-        valid = range.substr(0, dash).toInteger(first) && range.substr(dash + 1).toInteger(last) && last >= first;
+        valid = range.substr(0, dash).toInteger(first, ignore, 0, UString()) && range.substr(dash + 1).toInteger(last, ignore, 0, UString()) && last >= first;
     }
 
     // Add the definition.
@@ -619,12 +681,24 @@ ts::UString ts::Names::Formatted(Value value, const UString& name, names::Flags 
     value &= DisplayMask(bits);
 
     // Default name.
-    const UString defaultName(u"unknown");
+    UString defaultName;
     const UString* displayName = &name;
     if (name.empty()) {
-        // Name not found, force value display.
-        flags |= names::VALUE;
-        displayName = &defaultName;
+        // Name not found.
+        if ((flags & names::NAME_OR_VALUE) == 0) {
+            // Force value display with a default name.
+            flags |= names::VALUE;
+            defaultName = u"unknown";
+            displayName = &defaultName;
+        }
+        else if ((flags & names::DECIMAL) != 0) {
+            // Display decimal value only.
+            return UString::Format(u"%d", {value});
+        }
+        else {
+            // Display hexadecimal value only.
+            return UString::Format(u"0x%0*X", {HexaDigits(bits), value});
+        }
     }
 
     if ((flags & (names::VALUE | names::FIRST)) == 0) {
@@ -632,27 +706,29 @@ ts::UString ts::Names::Formatted(Value value, const UString& name, names::Flags 
         return *displayName;
     }
 
+    TS_PUSH_WARNING()
+    TS_LLVM_NOWARNING(switch-enum) // enumeration values not explicitly handled in switch
+    TS_MSC_NOWARNING(4061)         // enumerator in switch of enum is not explicitly handled by a case label
+
     switch (flags & (names::FIRST | names::DECIMAL | names::HEXA)) {
         case names::DECIMAL:
             return UString::Format(u"%s (%d)", {*displayName, value});
         case names::HEXA:
             return UString::Format(u"%s (0x%0*X)", {*displayName, HexaDigits(bits), value});
-        case names::BOTH:
+        case names::HEXA | names::DECIMAL:
             return UString::Format(u"%s (0x%0*X, %d)", {*displayName, HexaDigits(bits), value, value});
-        case names::DECIMAL_FIRST:
+        case names::DECIMAL | names::FIRST:
             return UString::Format(u"%d (%s)", {value, *displayName});
-        case names::HEXA_FIRST:
+        case names::HEXA | names::FIRST:
             return UString::Format(u"0x%0*X (%s)", {HexaDigits(bits), value, *displayName});
-        case names::BOTH_FIRST:
+        case names::HEXA | names::DECIMAL | names::FIRST:
             return UString::Format(u"0x%0*X (%d, %s)", {HexaDigits(bits), value, value, *displayName});
-        case names::NAME:
-        case names::VALUE:
-        case names::FIRST:
-        case names::ALTERNATE:
         default:
             assert(false);
             return UString();
     }
+
+    TS_POP_WARNING()
 }
 
 

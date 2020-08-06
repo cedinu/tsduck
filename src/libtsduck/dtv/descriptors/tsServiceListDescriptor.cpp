@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"service_list_descriptor"
+#define MY_CLASS ts::ServiceListDescriptor
 #define MY_DID ts::DID_SERVICE_LIST
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ServiceListDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ServiceListDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ServiceListDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,13 +52,17 @@ ts::ServiceListDescriptor::ServiceListDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
 }
 
 ts::ServiceListDescriptor::ServiceListDescriptor(DuckContext& duck, const Descriptor& desc) :
     ServiceListDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::ServiceListDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 
@@ -123,7 +127,7 @@ void ts::ServiceListDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 
 void ts::ServiceListDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() % 3 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 3 == 0;
     entries.clear();
 
     if (_is_valid) {
@@ -144,7 +148,8 @@ void ts::ServiceListDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::ServiceListDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 3) {
@@ -176,22 +181,16 @@ void ts::ServiceListDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceListDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ServiceListDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"service", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"service", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getIntAttribute<uint16_t>(entry.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
-            children[i]->getIntAttribute<uint8_t>(entry.service_type, u"service_type", true, 0, 0x00, 0xFF);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(entry.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
+             children[i]->getIntAttribute<uint8_t>(entry.service_type, u"service_type", true, 0, 0x00, 0xFF);
+        entries.push_back(entry);
     }
+    return ok;
 }

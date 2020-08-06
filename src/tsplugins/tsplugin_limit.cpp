@@ -32,9 +32,9 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsSectionDemux.h"
+#include "tsBinaryTable.h"
 #include "tsMonotonic.h"
 #include "tsPAT.h"
 #include "tsPMT.h"
@@ -114,8 +114,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(limit, ts::LimitPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"limit", ts::LimitPlugin);
 
 
 //----------------------------------------------------------------------------

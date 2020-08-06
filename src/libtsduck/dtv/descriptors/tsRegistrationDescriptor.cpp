@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"registration_descriptor"
+#define MY_CLASS ts::RegistrationDescriptor
 #define MY_DID ts::DID_REGISTRATION
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::RegistrationDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::RegistrationDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::RegistrationDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,12 @@ ts::RegistrationDescriptor::RegistrationDescriptor(uint32_t identifier, const By
     format_identifier(identifier),
     additional_identification_info(info)
 {
-    _is_valid = true;
+}
+
+void ts::RegistrationDescriptor::clearContent()
+{
+    format_identifier = 0;
+    additional_identification_info.clear();
 }
 
 ts::RegistrationDescriptor::RegistrationDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -82,7 +87,7 @@ void ts::RegistrationDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 
 void ts::RegistrationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 4;
     additional_identification_info.clear();
 
     if (_is_valid) {
@@ -100,48 +105,34 @@ void ts::RegistrationDescriptor::deserialize(DuckContext& duck, const Descriptor
 
 void ts::RegistrationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
         // Sometimes, the format identifier is made of ASCII characters. Try to display them.
         strm << margin << UString::Format(u"Format identifier: 0x%X", {GetUInt32(data)});
-        display.duck().displayIfASCII(data, 4, u" (\"", u"\")");
-        strm << std::endl;
-        data += 4; size -= 4;
-        // Additional binary info.
-        if (size > 0) {
-            strm << margin << "Additional identification info:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            data += size; size = 0;
-        }
+        duck.displayIfASCII(data, 4, u" (\"", u"\")") << std::endl;
+        display.displayPrivateData(u"Additional identification info", data + 4, size - 4, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::RegistrationDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
     root->setIntAttribute(u"format_identifier", format_identifier, true);
-    if (!additional_identification_info.empty()) {
-        root->addElement(u"additional_identification_info")->addHexaText(additional_identification_info);
-    }
+    root->addHexaTextChild(u"additional_identification_info", additional_identification_info, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::RegistrationDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::RegistrationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(format_identifier, u"format_identifier", true) &&
-        element->getHexaTextChild(additional_identification_info, u"additional_identification_info", false, 0, MAX_DESCRIPTOR_SIZE - 6);
+    return element->getIntAttribute<uint32_t>(format_identifier, u"format_identifier", true) &&
+           element->getHexaTextChild(additional_identification_info, u"additional_identification_info", false, 0, MAX_DESCRIPTOR_SIZE - 6);
 }

@@ -30,17 +30,17 @@
 #include "tsFMCDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"FMC_descriptor"
+#define MY_CLASS ts::FMCDescriptor
 #define MY_DID ts::DID_FMC
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::FMCDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::FMCDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::FMCDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -51,7 +51,11 @@ ts::FMCDescriptor::FMCDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
+}
+
+void ts::FMCDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 ts::FMCDescriptor::FMCDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -84,7 +88,7 @@ void ts::FMCDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size % 3 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size % 3 == 0;
     entries.clear();
 
     if (_is_valid) {
@@ -102,7 +106,8 @@ void ts::FMCDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 
 void ts::FMCDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 3) {
@@ -134,22 +139,16 @@ void ts::FMCDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::FMCDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::FMCDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"stream", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"stream", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getIntAttribute<uint16_t>(entry.ES_ID, u"ES_ID", true) &&
-            children[i]->getIntAttribute<uint8_t>(entry.FlexMuxChannel, u"FlexMuxChannel", true);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(entry.ES_ID, u"ES_ID", true) &&
+             children[i]->getIntAttribute<uint8_t>(entry.FlexMuxChannel, u"FlexMuxChannel", true);
+        entries.push_back(entry);
     }
+    return ok;
 }

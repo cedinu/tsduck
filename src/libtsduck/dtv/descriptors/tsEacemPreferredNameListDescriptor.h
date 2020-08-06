@@ -29,43 +29,24 @@
 //!
 //!  @file
 //!  Representation of an eacem_preferred_name_list_descriptor.
-//!  This is a private descriptor, must be preceeded by the EACEM/EICTA PDS.
+//!  This is a private descriptor, must be preceded by the EACEM/EICTA PDS.
 //!
 //----------------------------------------------------------------------------
 
 #pragma once
-#include "tsAbstractDescriptor.h"
+#include "tsAbstractPreferredNameListDescriptor.h"
 
 namespace ts {
     //!
     //! Representation of an eacem_preferred_name_list_descriptor.
     //!
-    //! This is a private descriptor, must be preceeded by the EACEM/EICTA PDS.
+    //! This is a private descriptor, must be preceded by the EACEM/EICTA PDS.
     //! @see EACEM Technical Report Number TR-030, 9.2.11.2.
     //! @ingroup descriptor
     //!
-    class TSDUCKDLL EacemPreferredNameListDescriptor : public AbstractDescriptor
+    class TSDUCKDLL EacemPreferredNameListDescriptor : public AbstractPreferredNameListDescriptor
     {
     public:
-        //!
-        //! Maximum number of preferred names per descriptor.
-        //! Defined in EACEM TR-030, 9.2.11.2.
-        //!
-        static const size_t MAX_PREFERRED_NAMES = 5;
-
-        //!
-        //! For each language, there is a map of service names per 8-bit name_id.
-        //!
-        typedef std::map<uint8_t, UString> NameByIdMap;
-
-        //!
-        //! There is a map of service name sets per language.
-        //!
-        typedef std::map<UString, NameByIdMap> LanguageMap;
-
-        // EacemPreferredNameListDescriptor public members:
-        LanguageMap entries;  //!< Map of language entries.
-
         //!
         //! Default constructor.
         //!
@@ -78,14 +59,9 @@ namespace ts {
         //!
         EacemPreferredNameListDescriptor(DuckContext& duck, const Descriptor& bin);
 
-        // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
-        DeclareDisplayDescriptor();
-
-    protected:
-        // Inherited methods
-        virtual void buildXML(DuckContext&, xml::Element*) const override;
+        //!
+        //! Destructor.
+        //!
+        virtual ~EacemPreferredNameListDescriptor();
     };
 }

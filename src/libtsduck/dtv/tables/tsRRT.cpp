@@ -30,17 +30,17 @@
 #include "tsRRT.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"RRT"
+#define MY_CLASS ts::RRT
 #define MY_TID ts::TID_RRT
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_TABLE_FACTORY(ts::RRT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::RRT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::RRT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +55,6 @@ ts::RRT::RRT(uint8_t vers, uint8_t reg) :
     dimensions(),
     descs(this)
 {
-    _is_valid = true;
 }
 
 ts::RRT::RRT(const RRT& other) :
@@ -92,10 +91,20 @@ ts::RRT::RatingValue::RatingValue() :
 
 
 //----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::RRT::tableIdExtension() const
+{
+    return 0xFF00 | rating_region;
+}
+
+
+//----------------------------------------------------------------------------
 // Clear the content of the table.
 //----------------------------------------------------------------------------
 
-void ts::RRT::clear()
+void ts::RRT::clearContent()
 {
     rating_region = 0;
     protocol_version = 0;
@@ -234,7 +243,7 @@ void ts::RRT::serializeContent(DuckContext& duck, BinaryTable& table) const
     // Add one single section in the table
     table.addSection(new Section(MY_TID,           // tid
                                  true,             // is_private_section
-                                 0xFF00 | rating_region, // tid_ext
+                                 tableIdExtension(),
                                  version,
                                  is_current,       // should be true
                                  0,                // section_number,
@@ -250,8 +259,10 @@ void ts::RRT::serializeContent(DuckContext& duck, BinaryTable& table) const
 
 void ts::RRT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -351,42 +362,38 @@ void ts::RRT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::RRT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::RRT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    clear();
-
     xml::ElementVector xdim;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
         element->getIntAttribute<uint8_t>(rating_region, u"rating_region", true) &&
         rating_region_name.fromXML(duck, element, u"rating_region_name", false) &&
         descs.fromXML(duck, xdim, element, u"rating_region_name,dimension");
 
-    for (size_t idim = 0; _is_valid && idim < xdim.size(); ++idim) {
+    for (size_t idim = 0; ok && idim < xdim.size(); ++idim) {
         // The extracted non-descriptor children can be <rating_region_name> or <dimension>.
         // The optional <rating_region_name> has already been separately processed.
         // Process <dimension> only.
         if (xdim[idim]->name().similar(u"dimension")) {
             Dimension dim;
             xml::ElementVector xval;
-            _is_valid =
-                xdim[idim]->getBoolAttribute(dim.graduated_scale, u"graduated_scale", true) &&
-                dim.dimension_name.fromXML(duck, xdim[idim], u"dimension_name", false) &&
-                xdim[idim]->getChildren(xval, u"value", 0, 15);
-            for (size_t ival = 0; _is_valid && ival < xval.size(); ++ival) {
+            ok = xdim[idim]->getBoolAttribute(dim.graduated_scale, u"graduated_scale", true) &&
+                 dim.dimension_name.fromXML(duck, xdim[idim], u"dimension_name", false) &&
+                 xdim[idim]->getChildren(xval, u"value", 0, 15);
+            for (size_t ival = 0; ok && ival < xval.size(); ++ival) {
                 RatingValue val;
-                _is_valid =
-                    val.abbrev_rating_value.fromXML(duck, xval[ival], u"abbrev_rating_value", false) &&
-                    val.rating_value.fromXML(duck, xval[ival], u"rating_value", false);
-                if (_is_valid) {
+                ok = val.abbrev_rating_value.fromXML(duck, xval[ival], u"abbrev_rating_value", false) &&
+                     val.rating_value.fromXML(duck, xval[ival], u"rating_value", false);
+                if (ok) {
                     dim.values.push_back(val);
                 }
             }
-            if (_is_valid) {
+            if (ok) {
                 dimensions.push_back(dim);
             }
         }
     }
+    return ok;
 }

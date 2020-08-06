@@ -30,17 +30,17 @@
 #include "tsPDCDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"PDC_descriptor"
+#define MY_CLASS ts::PDCDescriptor
 #define MY_DID ts::DID_PDC
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::PDCDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::PDCDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::PDCDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,7 +54,14 @@ ts::PDCDescriptor::PDCDescriptor() :
     pil_hours(0),
     pil_minutes(0)
 {
-    _is_valid = true;
+}
+
+void ts::PDCDescriptor::clearContent()
+{
+    pil_month = 0;
+    pil_day = 0;
+    pil_hours = 0;
+    pil_minutes = 0;
 }
 
 ts::PDCDescriptor::PDCDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -86,7 +93,7 @@ void ts::PDCDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 
 void ts::PDCDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 3;
 
     if (_is_valid) {
         const uint32_t date = GetUInt24(desc.payload());
@@ -104,7 +111,8 @@ void ts::PDCDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 
 void ts::PDCDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 3) {
@@ -134,22 +142,18 @@ void ts::PDCDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::PDCDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::PDCDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     UString date;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(date, u"programme_identification_label", true);
-
-    if (_is_valid) {
-        _is_valid =
-            date.scan(u"%d-%d %d:%d", {&pil_month, &pil_day, &pil_hours, &pil_minutes}) &&
-            pil_month > 0 && pil_month < 13 &&
-            pil_day > 0 && pil_day < 32 &&
-            pil_hours < 24 &&
-            pil_minutes < 60;
-        if (!_is_valid) {
-            element->report().error(u"Incorrect value '%s' for attribute 'programme_identification_label' in <%s>, line %d, use 'MM-DD hh:mm'", {date, element->name(), element->lineNumber()});
-        }
+    bool ok =
+        element->getAttribute(date, u"programme_identification_label", true) &&
+        date.scan(u"%d-%d %d:%d", {&pil_month, &pil_day, &pil_hours, &pil_minutes}) &&
+        pil_month > 0 && pil_month < 13 &&
+        pil_day > 0 && pil_day < 32 &&
+        pil_hours < 24 &&
+        pil_minutes < 60;
+    if (!ok) {
+        element->report().error(u"Incorrect value '%s' for attribute 'programme_identification_label' in <%s>, line %d, use 'MM-DD hh:mm'", {date, element->name(), element->lineNumber()});
     }
+    return ok;
 }

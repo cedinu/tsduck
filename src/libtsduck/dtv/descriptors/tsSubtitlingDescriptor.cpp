@@ -26,26 +26,22 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a subtitling_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsSubtitlingDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"subtitling_descriptor"
+#define MY_CLASS ts::SubtitlingDescriptor
 #define MY_DID ts::DID_SUBTITLING
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::SubtitlingDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::SubtitlingDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::SubtitlingDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -72,7 +68,11 @@ ts::SubtitlingDescriptor::SubtitlingDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
+}
+
+void ts::SubtitlingDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 ts::SubtitlingDescriptor::SubtitlingDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -89,7 +89,8 @@ ts::SubtitlingDescriptor::SubtitlingDescriptor(DuckContext& duck, const Descript
 
 void ts::SubtitlingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 8) {
@@ -136,7 +137,7 @@ void ts::SubtitlingDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 {
     entries.clear();
 
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag())) {
         return;
     }
 
@@ -177,23 +178,18 @@ void ts::SubtitlingDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SubtitlingDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SubtitlingDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"subtitling", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"subtitling", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getAttribute(entry.language_code, u"language_code", true, u"", 3, 3) &&
-            children[i]->getIntAttribute<uint8_t>(entry.subtitling_type, u"subtitling_type", true) &&
-            children[i]->getIntAttribute<uint16_t>(entry.composition_page_id, u"composition_page_id", true) &&
-            children[i]->getIntAttribute<uint16_t>(entry.ancillary_page_id, u"ancillary_page_id", true);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getAttribute(entry.language_code, u"language_code", true, u"", 3, 3) &&
+             children[i]->getIntAttribute<uint8_t>(entry.subtitling_type, u"subtitling_type", true) &&
+             children[i]->getIntAttribute<uint16_t>(entry.composition_page_id, u"composition_page_id", true) &&
+             children[i]->getIntAttribute<uint16_t>(entry.ancillary_page_id, u"ancillary_page_id", true);
+        entries.push_back(entry);
     }
+    return ok;
 }

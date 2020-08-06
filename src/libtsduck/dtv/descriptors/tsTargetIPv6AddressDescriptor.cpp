@@ -30,21 +30,19 @@
 #include "tsTargetIPv6AddressDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"target_IPv6_address_descriptor"
+#define MY_CLASS ts::TargetIPv6AddressDescriptor
 #define MY_DID ts::DID_INT_IPV6_ADDR
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::TargetIPv6AddressDescriptor, MY_XML_NAME, ts::TID_INT, ts::TID_UNT);
-
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetIPv6AddressDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_INT));
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetIPv6AddressDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT));
-
-TS_FACTORY_REGISTER(ts::TargetIPv6AddressDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_INT));
-TS_FACTORY_REGISTER(ts::TargetIPv6AddressDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT));
+// Table-specific descriptor which is allowed in two distinct tables.
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, ts::TID_INT), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, ts::TID_UNT), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -56,7 +54,12 @@ ts::TargetIPv6AddressDescriptor::TargetIPv6AddressDescriptor() :
     IPv6_addr_mask(),
     IPv6_addr()
 {
-    _is_valid = true;
+}
+
+void ts::TargetIPv6AddressDescriptor::clearContent()
+{
+    IPv6_addr_mask.clear();
+    IPv6_addr.clear();
 }
 
 ts::TargetIPv6AddressDescriptor::TargetIPv6AddressDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -90,7 +93,7 @@ void ts::TargetIPv6AddressDescriptor::deserialize(DuckContext& duck, const Descr
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 16 && size % 16 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 16 && size % 16 == 0;
     IPv6_addr.clear();
 
     if (_is_valid) {
@@ -110,7 +113,8 @@ void ts::TargetIPv6AddressDescriptor::deserialize(DuckContext& duck, const Descr
 
 void ts::TargetIPv6AddressDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     const char* header = "Address mask: ";
@@ -141,21 +145,17 @@ void ts::TargetIPv6AddressDescriptor::buildXML(DuckContext& duck, xml::Element* 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TargetIPv6AddressDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TargetIPv6AddressDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    IPv6_addr.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIPv6Attribute(IPv6_addr_mask, u"IPv6_addr_mask", true) &&
         element->getChildren(children, u"address", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         IPv6Address addr;
-        _is_valid = children[i]->getIPv6Attribute(addr, u"IPv6_addr", true);
-        if (_is_valid) {
-            IPv6_addr.push_back(addr);
-        }
+        ok = children[i]->getIPv6Attribute(addr, u"IPv6_addr", true);
+        IPv6_addr.push_back(addr);
     }
+    return ok;
 }

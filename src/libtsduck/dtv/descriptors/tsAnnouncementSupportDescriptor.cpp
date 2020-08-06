@@ -30,18 +30,18 @@
 #include "tsAnnouncementSupportDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"announcement_support_descriptor"
+#define MY_CLASS ts::AnnouncementSupportDescriptor
 #define MY_DID ts::DID_ANNOUNCE_SUPPORT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::AnnouncementSupportDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::AnnouncementSupportDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::AnnouncementSupportDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,11 @@ ts::AnnouncementSupportDescriptor::AnnouncementSupportDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     announcements()
 {
-    _is_valid = true;
+}
+
+void ts::AnnouncementSupportDescriptor::clearContent()
+{
+    announcements.clear();
 }
 
 ts::AnnouncementSupportDescriptor::AnnouncementSupportDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -107,7 +111,7 @@ void ts::AnnouncementSupportDescriptor::deserialize(DuckContext& duck, const Des
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2;
     announcements.clear();
 
     if (!_is_valid) {
@@ -164,7 +168,8 @@ void ts::AnnouncementSupportDescriptor::deserialize(DuckContext& duck, const Des
 
 void ts::AnnouncementSupportDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 2) {
@@ -235,24 +240,22 @@ void ts::AnnouncementSupportDescriptor::buildXML(DuckContext& duck, xml::Element
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AnnouncementSupportDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AnnouncementSupportDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    announcements.clear();
-
     xml::ElementVector xann;
-    _is_valid = checkXMLName(element) && element->getChildren(xann, u"announcement");
+    bool ok = element->getChildren(xann, u"announcement");
 
-    for (size_t i = 0; _is_valid && i < xann.size(); ++i) {
+    for (size_t i = 0; ok && i < xann.size(); ++i) {
         Announcement ann;
-        _is_valid =
-            xann[i]->getIntAttribute<uint8_t>(ann.announcement_type, u"announcement_type", true, 0, 0x00, 0x0F) &&
-            xann[i]->getIntAttribute<uint8_t>(ann.reference_type, u"reference_type", true, 0, 0x00, 0x07) &&
-            xann[i]->getIntAttribute<uint16_t>(ann.original_network_id, u"original_network_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
-            xann[i]->getIntAttribute<uint16_t>(ann.transport_stream_id, u"transport_stream_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
-            xann[i]->getIntAttribute<uint16_t>(ann.service_id, u"service_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
-            xann[i]->getIntAttribute<uint8_t>(ann.component_tag, u"component_tag", ann.reference_type >= 1 && ann.reference_type <= 3);
-        if (_is_valid) {
+        ok = xann[i]->getIntAttribute<uint8_t>(ann.announcement_type, u"announcement_type", true, 0, 0x00, 0x0F) &&
+             xann[i]->getIntAttribute<uint8_t>(ann.reference_type, u"reference_type", true, 0, 0x00, 0x07) &&
+             xann[i]->getIntAttribute<uint16_t>(ann.original_network_id, u"original_network_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
+             xann[i]->getIntAttribute<uint16_t>(ann.transport_stream_id, u"transport_stream_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
+             xann[i]->getIntAttribute<uint16_t>(ann.service_id, u"service_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
+             xann[i]->getIntAttribute<uint8_t>(ann.component_tag, u"component_tag", ann.reference_type >= 1 && ann.reference_type <= 3);
+        if (ok) {
             announcements.push_back(ann);
         }
     }
+    return ok;
 }

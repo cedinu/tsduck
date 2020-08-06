@@ -47,7 +47,7 @@ ts::Condition::Condition() :
 #if defined(TS_WINDOWS)
 
     // Windows implementation.
-    if ((_handle = ::CreateEvent(NULL, FALSE, FALSE, NULL)) == NULL) {
+    if ((_handle = ::CreateEvent(NULL, false, false, NULL)) == NULL) {
         throw ConditionError(::GetLastError());
     }
 
@@ -108,7 +108,7 @@ void ts::Condition::signal()
 
 #if defined(TS_WINDOWS)
     if (::SetEvent(_handle) == 0) {
-        throw ConditionError (::GetLastError ());
+        throw ConditionError (::GetLastError());
     }
 #else
     int error;
@@ -156,7 +156,7 @@ bool ts::Condition::wait(Mutex& mutex, MilliSecond timeout, bool& signaled)
     }
 
     // Re-acquire the mutex
-    return mutex.acquire () && success;
+    return mutex.acquire() && success;
 
 #else
 

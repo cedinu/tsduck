@@ -36,8 +36,8 @@
 #include "tsArgsSupplierInterface.h"
 #include "tsMPEG.h"
 #include "tsCASFamily.h"
-#include "tsTLVSyntax.h"
 #include "tsDuckContext.h"
+#include "tsTLVSyntax.h"
 
 namespace ts {
 
@@ -46,6 +46,7 @@ namespace ts {
     class Section;
     class Descriptor;
     class DescriptorList;
+    class PSIBuffer;
 
     //!
     //! A class to display PSI/SI tables.
@@ -77,6 +78,12 @@ namespace ts {
         //! @return A reference to the TSDuck execution context.
         //!
         DuckContext& duck() { return _duck; }
+
+        //!
+        //! Get the output stream.
+        //! @return A reference to the output stream.
+        //!
+        std::ostream& out() { return _duck.out(); }
 
         //!
         //! Display a table on the output stream.
@@ -165,6 +172,23 @@ namespace ts {
         virtual std::ostream& displayDescriptorList(const Section& section, const void* data, size_t size, int indent = 0, uint16_t cas = CASID_NULL);
 
         //!
+        //! Display a list of descriptors (with is preceding length) from a PSI buffer.
+        //! @param [in] section Section containing the descriptor list.
+        //! @param [in,out] buf Buffer containing the descriptor list to read
+        //! @param [in] indent Indentation width.
+        //! @param [in] title Optional title to display as preceding line.
+        //! @param [in] length_bits Number of meaningful bits in the length field.
+        //! @param [in] cas CAS id of the table.
+        //! @return A reference to the output stream.
+        //!
+        virtual std::ostream& displayDescriptorListWithLength(const Section& section,
+                                                              PSIBuffer& buf,
+                                                              int indent = 0,
+                                                              const UString& title = UString(),
+                                                              size_t length_bits = 12,
+                                                              uint16_t cas = CASID_NULL);
+
+        //!
         //! Display a list of descriptors.
         //! @param [in] list Descriptor list.
         //! @param [in] indent Indentation width.
@@ -181,6 +205,26 @@ namespace ts {
         //! @return A reference to the output stream.
         //!
         virtual std::ostream& displayExtraData(const void *data, size_t size, int indent = 0);
+
+        //!
+        //! A utility method to dump extraneous bytes after expected data in a PSI buffer.
+        //! @param [in,out] buf Buffer containing extra data to read.
+        //! @param [in] indent Indentation width.
+        //! @return A reference to the output stream.
+        //!
+        virtual std::ostream& displayExtraData(PSIBuffer& buf, int indent = 0);
+
+        //!
+        //! A utility method to dump private binary data in a descriptor or section.
+        //! @param [in] title Name of the private data to display.
+        //! @param [in] data Address of data to dump.
+        //! @param [in] size Size of data to dump.
+        //! @param [in] indent Indentation width.
+        //! @param [in] single_line_max Below that size, private data are displayed on one
+        //! line after the title. Above that size, a multi-line hexa/ascii display is used.
+        //! @return A reference to the output stream.
+        //!
+        virtual std::ostream& displayPrivateData(const UString& title, const void* data, size_t size, int indent = 0, size_t single_line_max = 8);
 
         //!
         //! Display the content of an unknown section.

@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"video_stream_descriptor"
+#define MY_CLASS ts::VideoStreamDescriptor
 #define MY_DID ts::DID_VIDEO
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::VideoStreamDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::VideoStreamDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::VideoStreamDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -58,15 +58,25 @@ ts::VideoStreamDescriptor::VideoStreamDescriptor() :
     profile_and_level_indication(0),
     chroma_format(0),
     frame_rate_extension(false)
-
 {
-    _is_valid = true;
 }
 
 ts::VideoStreamDescriptor::VideoStreamDescriptor(DuckContext& duck, const Descriptor& desc) :
     VideoStreamDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::VideoStreamDescriptor::clearContent()
+{
+    multiple_frame_rate = false;
+    frame_rate_code = 0;
+    MPEG_1_only = false;
+    constrained_parameter = false;
+    still_picture = false;
+    profile_and_level_indication = 0;
+    chroma_format = 0;
+    frame_rate_extension = false;
 }
 
 
@@ -101,7 +111,7 @@ void ts::VideoStreamDescriptor::deserialize(DuckContext& duck, const Descriptor&
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         multiple_frame_rate = (data[0] & 0x80) != 0;
@@ -125,7 +135,8 @@ void ts::VideoStreamDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::VideoStreamDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -177,16 +188,14 @@ void ts::VideoStreamDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::VideoStreamDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::VideoStreamDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(multiple_frame_rate, u"multiple_frame_rate", true) &&
-        element->getIntAttribute<uint8_t>(frame_rate_code, u"frame_rate_code", true, 0, 0x00, 0x0F) &&
-        element->getBoolAttribute(MPEG_1_only, u"MPEG_1_only", true) &&
-        element->getBoolAttribute(constrained_parameter, u"constrained_parameter", true) &&
-        element->getBoolAttribute(still_picture, u"still_picture", true) &&
-        element->getIntAttribute<uint8_t>(profile_and_level_indication, u"profile_and_level_indication", !MPEG_1_only) &&
-        element->getIntAttribute<uint8_t>(chroma_format, u"chroma_format", !MPEG_1_only, 0, 0x00, 0x03) &&
-        element->getBoolAttribute(frame_rate_extension, u"frame_rate_extension", !MPEG_1_only);
+    return  element->getBoolAttribute(multiple_frame_rate, u"multiple_frame_rate", true) &&
+            element->getIntAttribute<uint8_t>(frame_rate_code, u"frame_rate_code", true, 0, 0x00, 0x0F) &&
+            element->getBoolAttribute(MPEG_1_only, u"MPEG_1_only", true) &&
+            element->getBoolAttribute(constrained_parameter, u"constrained_parameter", true) &&
+            element->getBoolAttribute(still_picture, u"still_picture", true) &&
+            element->getIntAttribute<uint8_t>(profile_and_level_indication, u"profile_and_level_indication", !MPEG_1_only) &&
+            element->getIntAttribute<uint8_t>(chroma_format, u"chroma_format", !MPEG_1_only, 0, 0x00, 0x03) &&
+            element->getBoolAttribute(frame_rate_extension, u"frame_rate_extension", !MPEG_1_only);
 }

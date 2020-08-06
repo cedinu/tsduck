@@ -43,9 +43,11 @@
 #include "tsCondition.h"
 #include "tsMutex.h"
 #include "tsThread.h"
-#include "tsMessageQueue.h"
 
 namespace ts {
+
+    class DuckContext;
+
     //!
     //! A DVB-EMMG client which connects to any MUX to inject data.
     //!
@@ -57,12 +59,13 @@ namespace ts {
     //!
     class TSDUCKDLL EMMGClient: private Thread
     {
-        TS_NOCOPY(EMMGClient);
+        TS_NOBUILD_NOCOPY(EMMGClient);
     public:
         //!
         //! Constructor.
+        //! @param [in] duck TSDuck execution context. The reference is kept inside the packetizer.
         //!
-        EMMGClient();
+        EMMGClient(const DuckContext& duck);
 
         //!
         //! Destructor.
@@ -199,6 +202,7 @@ namespace ts {
         static const MilliSecond RESPONSE_TIMEOUT = 5000;
 
         // Private members
+        const DuckContext&     _duck;
         volatile State         _state;
         SocketAddress          _udp_address;
         uint64_t               _total_bytes;

@@ -30,17 +30,17 @@
 #include "tsETT.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"ETT"
+#define MY_CLASS ts::ETT
 #define MY_TID ts::TID_ETT
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_TABLE_FACTORY(ts::ETT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::ETT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::ETT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
@@ -54,13 +54,35 @@ ts::ETT::ETT(uint8_t version_) :
     ETM_id(0),
     extended_text_message()
 {
-    _is_valid = true;
 }
 
 ts::ETT::ETT(DuckContext& duck, const BinaryTable& table) :
     ETT()
 {
     deserialize(duck, table);
+}
+
+
+//----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::ETT::tableIdExtension() const
+{
+    return ETT_table_id_extension;
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::ETT::clearContent()
+{
+    ETT_table_id_extension = 0;
+    protocol_version = 0;
+    ETM_id = 0;
+    extended_text_message.clear();
 }
 
 
@@ -136,7 +158,8 @@ void ts::ETT::serializeContent(DuckContext& duck, BinaryTable& table) const
 
 void ts::ETT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
@@ -172,16 +195,11 @@ void ts::ETT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ETT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ETT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    extended_text_message.clear();
-
-    xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
-        element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
-        element->getIntAttribute<uint16_t>(ETT_table_id_extension, u"ETT_table_id_extension", true) &&
-        element->getIntAttribute<uint32_t>(ETM_id, u"ETM_id", true) &&
-        extended_text_message.fromXML(duck, element, u"extended_text_message", false);
+    return element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+           element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
+           element->getIntAttribute<uint16_t>(ETT_table_id_extension, u"ETT_table_id_extension", true) &&
+           element->getIntAttribute<uint32_t>(ETM_id, u"ETM_id", true) &&
+           extended_text_message.fromXML(duck, element, u"extended_text_message", false);
 }

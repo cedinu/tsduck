@@ -31,17 +31,17 @@
 #include "tsNames.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"INT"
+#define MY_CLASS ts::INT
 #define MY_TID ts::TID_INT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::INT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::INT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::INT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
@@ -72,7 +72,7 @@ ts::INT::Device& ts::INT::Device::operator=(const Device& other)
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::INT::INT(uint8_t version_, bool is_current_) :
@@ -83,13 +83,7 @@ ts::INT::INT(uint8_t version_, bool is_current_) :
     platform_descs(this),
     devices(this)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Copy constructor.
-//----------------------------------------------------------------------------
 
 ts::INT::INT(const INT& other) :
     AbstractLongTable(other),
@@ -101,15 +95,36 @@ ts::INT::INT(const INT& other) :
 {
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary table
-//----------------------------------------------------------------------------
-
 ts::INT::INT(DuckContext& duck, const BinaryTable& table) :
     INT()
 {
     deserialize(duck, table);
+}
+
+
+//----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::INT::tableIdExtension() const
+{
+    // The table id extension is made of action_type and platform_id_hash.
+    return uint16_t(uint16_t(action_type) << 8) |
+           uint16_t(((platform_id >> 16) & 0xFF) ^ ((platform_id >> 8) & 0xFF) ^ (platform_id& 0xFF));
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::INT::clearContent()
+{
+    action_type = 0;
+    platform_id = 0;
+    processing_order = 0;
+    platform_descs.clear();
+    devices.clear();
 }
 
 
@@ -201,7 +216,7 @@ void ts::INT::deserializeContent(DuckContext& duck, const BinaryTable& table)
 void ts::INT::serializeContent(DuckContext& duck, BinaryTable& table) const
 {
     // Build the sections
-    uint8_t payload[MAX_PSI_LONG_SECTION_PAYLOAD_SIZE];
+    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
     int section_number = 0;
     uint8_t* data = payload;
     size_t remain = sizeof(payload);
@@ -299,13 +314,9 @@ void ts::INT::addSection(BinaryTable& table,
                          uint8_t*& data,
                          size_t& remain) const
 {
-    // The table id extension is made of action_type and platform_id_hash.
-    const uint16_t tidext = uint16_t(uint16_t(action_type) << 8) |
-        uint16_t(((platform_id >> 16) & 0xFF) ^ ((platform_id >> 8) & 0xFF) ^ (platform_id& 0xFF));
-
     table.addSection(new Section(_table_id,
                                  true,    // is_private_section
-                                 tidext,
+                                 tableIdExtension(),
                                  version,
                                  is_current,
                                  uint8_t(section_number),
@@ -327,7 +338,8 @@ void ts::INT::addSection(BinaryTable& table,
 
 bool ts::INT::DisplayDescriptorList(TablesDisplay& display, const Section& section, const uint8_t*& data, size_t& remain, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (remain < 2) {
@@ -360,8 +372,10 @@ bool ts::INT::DisplayDescriptorList(TablesDisplay& display, const Section& secti
 
 void ts::INT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
+
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -436,14 +450,10 @@ void ts::INT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::INT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::INT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    platform_descs.clear();
-    devices.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
         element->getIntAttribute<uint8_t>(action_type, u"action_type", false, 0x01) &&
@@ -451,14 +461,14 @@ void ts::INT::fromXML(DuckContext& duck, const xml::Element* element)
         element->getIntAttribute<uint32_t>(platform_id, u"platform_id", true, 0, 0x000000, 0xFFFFFF) &&
         platform_descs.fromXML(duck, children, element, u"device");
 
-    for (size_t index = 0; _is_valid && index < children.size(); ++index) {
+    for (size_t index = 0; ok && index < children.size(); ++index) {
         Device& dev(devices.newEntry());
         xml::ElementVector target;
         xml::ElementVector operational;
-        _is_valid =
-            children[index]->getChildren(target, u"target", 0, 1) &&
-            (target.empty() || dev.target_descs.fromXML(duck, target[0])) &&
-            children[index]->getChildren(operational, u"operational", 0, 1) &&
-            (operational.empty() || dev.operational_descs.fromXML(duck, operational[0]));
+        ok = children[index]->getChildren(target, u"target", 0, 1) &&
+             (target.empty() || dev.target_descs.fromXML(duck, target[0])) &&
+             children[index]->getChildren(operational, u"operational", 0, 1) &&
+             (operational.empty() || dev.operational_descs.fromXML(duck, operational[0]));
     }
+    return ok;
 }

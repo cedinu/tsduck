@@ -30,17 +30,17 @@
 #include "tsMultiplexBufferDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"multiplex_buffer_descriptor"
+#define MY_CLASS ts::MultiplexBufferDescriptor
 #define MY_DID ts::DID_MUX_BUFFER
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MultiplexBufferDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MultiplexBufferDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MultiplexBufferDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,12 @@ ts::MultiplexBufferDescriptor::MultiplexBufferDescriptor() :
     MB_buffer_size(0),
     TB_leak_rate(0)
 {
-    _is_valid = true;
+}
+
+void ts::MultiplexBufferDescriptor::clearContent()
+{
+    MB_buffer_size = 0;
+    TB_leak_rate = 0;
 }
 
 ts::MultiplexBufferDescriptor::MultiplexBufferDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -84,7 +89,7 @@ void ts::MultiplexBufferDescriptor::deserialize(DuckContext& duck, const Descrip
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 6;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 6;
 
     if (_is_valid) {
         MB_buffer_size = GetUInt24(data);
@@ -99,7 +104,8 @@ void ts::MultiplexBufferDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::MultiplexBufferDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 6) {
@@ -115,7 +121,7 @@ void ts::MultiplexBufferDescriptor::DisplayDescriptor(TablesDisplay& display, DI
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::MultiplexBufferDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -124,15 +130,8 @@ void ts::MultiplexBufferDescriptor::buildXML(DuckContext& duck, xml::Element* ro
     root->setIntAttribute(u"TB_leak_rate", TB_leak_rate);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::MultiplexBufferDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MultiplexBufferDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(MB_buffer_size, u"MB_buffer_size", true, 0, 0, 0x00FFFFFF) &&
-        element->getIntAttribute<uint32_t>(TB_leak_rate, u"TB_leak_rate", true, 0, 0, 0x00FFFFFF);
+    return element->getIntAttribute<uint32_t>(MB_buffer_size, u"MB_buffer_size", true, 0, 0, 0x00FFFFFF) &&
+           element->getIntAttribute<uint32_t>(TB_leak_rate, u"TB_leak_rate", true, 0, 0, 0x00FFFFFF);
 }

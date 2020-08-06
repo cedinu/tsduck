@@ -30,18 +30,18 @@
 #include "tsNorDigLogicalChannelDescriptorV1.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"nordig_logical_channel_descriptor_v1"
+#define MY_CLASS ts::NorDigLogicalChannelDescriptorV1
 #define MY_DID ts::DID_NORDIG_CHAN_NUM_V1
 #define MY_PDS ts::PDS_NORDIG
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::NorDigLogicalChannelDescriptorV1, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::NorDigLogicalChannelDescriptorV1, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::NorDigLogicalChannelDescriptorV1::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,13 +52,17 @@ ts::NorDigLogicalChannelDescriptorV1::NorDigLogicalChannelDescriptorV1() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, MY_PDS),
     entries()
 {
-    _is_valid = true;
 }
 
 ts::NorDigLogicalChannelDescriptorV1::NorDigLogicalChannelDescriptorV1(DuckContext& duck, const Descriptor& desc) :
     NorDigLogicalChannelDescriptorV1()
 {
     deserialize(duck, desc);
+}
+
+void ts::NorDigLogicalChannelDescriptorV1::clearContent()
+{
+    entries.clear();
 }
 
 
@@ -83,7 +87,7 @@ void ts::NorDigLogicalChannelDescriptorV1::serialize(DuckContext& duck, Descript
 
 void ts::NorDigLogicalChannelDescriptorV1::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() % 4 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 4 == 0;
     entries.clear();
 
     if (_is_valid) {
@@ -104,7 +108,8 @@ void ts::NorDigLogicalChannelDescriptorV1::deserialize(DuckContext& duck, const 
 
 void ts::NorDigLogicalChannelDescriptorV1::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 4) {
@@ -140,23 +145,17 @@ void ts::NorDigLogicalChannelDescriptorV1::buildXML(DuckContext& duck, xml::Elem
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::NorDigLogicalChannelDescriptorV1::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::NorDigLogicalChannelDescriptorV1::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"service", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"service", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getIntAttribute<uint16_t>(entry.service_id, u"service_id", true) &&
-            children[i]->getIntAttribute<uint16_t>(entry.lcn, u"logical_channel_number", true, 0, 0x0000, 0x3FFF) &&
-            children[i]->getBoolAttribute(entry.visible, u"visible_service", false, true);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(entry.service_id, u"service_id", true) &&
+             children[i]->getIntAttribute<uint16_t>(entry.lcn, u"logical_channel_number", true, 0, 0x0000, 0x3FFF) &&
+             children[i]->getBoolAttribute(entry.visible, u"visible_service", false, true);
+        entries.push_back(entry);
     }
+    return ok;
 }

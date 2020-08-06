@@ -26,12 +26,9 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  A SectionDemux which extracts MPEG tables without external handler.
-//
-//----------------------------------------------------------------------------
 
 #include "tsStandaloneTableDemux.h"
+#include "tsBinaryTable.h"
 TSDUCK_SOURCE;
 
 
@@ -100,5 +97,5 @@ void ts::StandaloneTableDemux::resetPID(PID pid)
 
 void ts::StandaloneTableDemux::handleTable(SectionDemux&, const BinaryTable& table)
 {
-    _tables.push_back(new BinaryTable(table, SHARE));
+    _tables.push_back(new BinaryTable(table, ShareMode::SHARE));
 }

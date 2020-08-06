@@ -30,18 +30,18 @@
 #include "tsFTAContentManagementDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"FTA_content_management_descriptor"
+#define MY_CLASS ts::FTAContentManagementDescriptor
 #define MY_DID ts::DID_FTA_CONTENT_MGMT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::FTAContentManagementDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::FTAContentManagementDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::FTAContentManagementDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +55,14 @@ ts::FTAContentManagementDescriptor::FTAContentManagementDescriptor() :
     control_remote_access_over_internet(0),
     do_not_apply_revocation(false)
 {
-    _is_valid = true;
+}
+
+void ts::FTAContentManagementDescriptor::clearContent()
+{
+    user_defined = false;
+    do_not_scramble = false;
+    control_remote_access_over_internet = 0;
+    do_not_apply_revocation = false;
 }
 
 ts::FTAContentManagementDescriptor::FTAContentManagementDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -86,7 +93,7 @@ void ts::FTAContentManagementDescriptor::serialize(DuckContext& duck, Descriptor
 
 void ts::FTAContentManagementDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 1;
 
     if (_is_valid) {
         const uint8_t* data = desc.payload();
@@ -104,7 +111,8 @@ void ts::FTAContentManagementDescriptor::deserialize(DuckContext& duck, const De
 
 void ts::FTAContentManagementDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -136,12 +144,10 @@ void ts::FTAContentManagementDescriptor::buildXML(DuckContext& duck, xml::Elemen
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::FTAContentManagementDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::FTAContentManagementDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(user_defined, u"user_defined", true) &&
-        element->getBoolAttribute(do_not_scramble, u"do_not_scramble", true) &&
-        element->getIntAttribute<uint8_t>(control_remote_access_over_internet, u"control_remote_access_over_internet", true, 0, 0, 3) &&
-        element->getBoolAttribute(do_not_apply_revocation, u"do_not_apply_revocation", true);
+    return element->getBoolAttribute(user_defined, u"user_defined", true) &&
+           element->getBoolAttribute(do_not_scramble, u"do_not_scramble", true) &&
+           element->getIntAttribute<uint8_t>(control_remote_access_over_internet, u"control_remote_access_over_internet", true, 0, 0, 3) &&
+           element->getBoolAttribute(do_not_apply_revocation, u"do_not_apply_revocation", true);
 }

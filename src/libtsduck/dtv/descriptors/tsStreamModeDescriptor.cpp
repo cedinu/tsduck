@@ -30,40 +30,39 @@
 #include "tsStreamModeDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"stream_mode_descriptor"
+#define MY_CLASS ts::StreamModeDescriptor
 #define MY_DID ts::DID_STREAM_MODE
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::StreamModeDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::StreamModeDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::StreamModeDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::StreamModeDescriptor::StreamModeDescriptor(uint8_t mode) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     stream_mode(mode)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::StreamModeDescriptor::StreamModeDescriptor(DuckContext& duck, const Descriptor& desc) :
     StreamModeDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::StreamModeDescriptor::clearContent()
+{
+    stream_mode = 0;
 }
 
 
@@ -86,7 +85,7 @@ void ts::StreamModeDescriptor::serialize(DuckContext& duck, Descriptor& desc) co
 
 void ts::StreamModeDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 2;
 
     if (_is_valid) {
         stream_mode = GetUInt8(desc.payload());
@@ -100,7 +99,8 @@ void ts::StreamModeDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 
 void ts::StreamModeDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 2) {
@@ -127,9 +127,7 @@ void ts::StreamModeDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::StreamModeDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::StreamModeDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(stream_mode, u"stream_mode", true);
+    return element->getIntAttribute<uint8_t>(stream_mode, u"stream_mode", true);
 }

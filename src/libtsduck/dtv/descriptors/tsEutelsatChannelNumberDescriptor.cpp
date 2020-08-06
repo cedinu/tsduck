@@ -30,41 +30,40 @@
 #include "tsEutelsatChannelNumberDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"eutelsat_channel_number_descriptor"
+#define MY_CLASS ts::EutelsatChannelNumberDescriptor
 #define MY_DID ts::DID_EUTELSAT_CHAN_NUM
 #define MY_PDS ts::PDS_EUTELSAT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::EutelsatChannelNumberDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::EutelsatChannelNumberDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::EutelsatChannelNumberDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::EutelsatChannelNumberDescriptor::EutelsatChannelNumberDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, MY_PDS),
     entries()
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::EutelsatChannelNumberDescriptor::EutelsatChannelNumberDescriptor(DuckContext& duck, const Descriptor& desc) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, MY_PDS),
     entries()
 {
     deserialize(duck, desc);
+}
+
+void ts::EutelsatChannelNumberDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 
@@ -91,7 +90,7 @@ void ts::EutelsatChannelNumberDescriptor::serialize(DuckContext& duck, Descripto
 
 void ts::EutelsatChannelNumberDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() % 8 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 8 == 0;
     entries.clear();
 
     if (_is_valid) {
@@ -112,7 +111,8 @@ void ts::EutelsatChannelNumberDescriptor::deserialize(DuckContext& duck, const D
 
 void ts::EutelsatChannelNumberDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 8) {
@@ -151,24 +151,19 @@ void ts::EutelsatChannelNumberDescriptor::buildXML(DuckContext& duck, xml::Eleme
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::EutelsatChannelNumberDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::EutelsatChannelNumberDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"service", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"service", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
+        ok =
             children[i]->getIntAttribute<uint16_t>(entry.onetw_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
             children[i]->getIntAttribute<uint16_t>(entry.ts_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
             children[i]->getIntAttribute<uint16_t>(entry.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
             children[i]->getIntAttribute<uint16_t>(entry.ecn, u"eutelsat_channel_number", true, 0, 0x0000, 0x03FF);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        entries.push_back(entry);
     }
+    return ok;
 }

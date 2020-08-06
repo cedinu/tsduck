@@ -80,10 +80,10 @@ namespace ts {
         typedef EntryWithDescriptorsMap<ApplicationIdentifier, Application> ApplicationMap;
 
         // AIT public members:
-        uint16_t application_type;   //!< Type of the application.
-        bool test_application_flag;  //!< Indicates the application is meant for receiver testing.
-        DescriptorList descs;        //!< Common descriptor list.
-        ApplicationMap applications; //!< Map of applications: key=application_identifier, value=application.
+        uint16_t       application_type;       //!< Type of the application.
+        bool           test_application_flag;  //!< Indicates the application is meant for receiver testing.
+        DescriptorList descs;                  //!< Common descriptor list.
+        ApplicationMap applications;           //!< Map of applications: key=application_identifier, value=application.
 
         //!
         //! Default constructor.
@@ -118,13 +118,15 @@ namespace ts {
         AIT(DuckContext& duck, const BinaryTable& table);
 
         // Inherited methods
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
+        virtual uint16_t tableIdExtension() const override;
         DeclareDisplaySection();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void serializeContent(DuckContext&, BinaryTable&) const override;
         virtual void deserializeContent(DuckContext&, const BinaryTable&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
     };
 }

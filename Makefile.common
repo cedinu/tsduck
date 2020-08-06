@@ -46,6 +46,13 @@
 #  This common makefile also defines a few common targets which are usable
 #  everywhere. See the section "Common targets" below.
 #
+#  All binaries are built into one single root directory named
+#  bin/release|debug-arch-hostname where bin is located in the top-level
+#  directory, where this Makefile.common is located. The variable $(BINDIR)
+#  points to this directory. The variable $(OBJDIR) points to the directory
+#  where object files are stored. This is, by default, the same place as
+#  $(BINDIR), except when a local makefile defines $(OBJSUBDIR).
+#
 #-----------------------------------------------------------------------------
 #
 #  Common targets
@@ -129,6 +136,19 @@
 #  ARFLAGS_EXTRA
 #    Additional options for the "ar" command.
 #    This variable can be defined after inclusion of this makefile.
+#
+#  BINDIR
+#    Alternate definition for the BINDIR subdirectory, where all objects and
+#    executables are built. If unspecified, it will be built from current
+#    host, architecture and debug vs. release target.
+#
+#  BINDIR_PREFIX
+#    Fixed prefix to add to generated BINDIR subdirectory name. Ignored if
+#    BINDIR is defined as input variable.
+#
+#  BINDIR_SUFFIX
+#    Fixed suffix to add to generated BINDIR subdirectory name. Ignored if
+#    BINDIR is defined as input variable.
 #
 #  CFLAGS_EXTRA
 #    Additional options for the C compiler.
@@ -293,11 +313,10 @@
 #    non-standard "clean" targets, it should set them in NODEPS before
 #    inclusion of this make file.
 #
-#  OBJDIR_PREFIX
-#    Fixed prefix to add to OBJDIR variable.
-#
-#  OBJDIR_SUFFIX
-#    Fixed suffix to add to OBJDIR variable.
+#  OBJSUBDIR
+#    A subdirectory name to store object files below $(BINDIR). By default,
+#    object files (compilation products, not final executable and shared
+#    binaries) are stored in $(BINDIR).
 #
 #  RECURSE_ORDER
 #    Define which subdirectories should be used in which order in the
@@ -341,6 +360,11 @@
 #    Contains the absolute path of the texi2dvi utility (part of Texinfo).
 #    If empty, texi2dvi is searched in $PATH.
 #
+#  USRLIBDIR
+#    Optional name of the library directory for the target architecture.
+#    The default is either $(SYSPREFIX)/lib or $(SYSPREFIX)/lib64.
+#    See USRLIBDIR in "Output variables".
+#
 #-----------------------------------------------------------------------------
 #
 #  Output variables
@@ -351,6 +375,12 @@
 #  ARFLAGS
 #    Options which are applied to the archiver (ar) when adding a module into
 #    a static library.
+#
+#  BINDIR
+#    Name of the directory which receives final binary files (executable or
+#    shared binaries). Typically either "bin/release-{arch}-{hostname}" or
+#    "bin/debug-{arch}-{hostname}". See also input variables BINDIR,
+#    BINDIR_PREFIX and BINDIR_SUFFIX.
 #
 #  CFLAGS
 #    Options which are applied to C compilations.
@@ -436,6 +466,9 @@
 #    List of all header names, that is to say the list of all "f" for which
 #    a source file f.h exists.
 #
+#  HOSTNAME
+#    Simple name of the local host.
+#
 #  LDFLAGS
 #    Options which are applied to the linker.
 #
@@ -484,9 +517,9 @@
 #    the source files.
 #
 #  OBJDIR
-#    Name of the subdirectory which receives all generated binary files.
-#    Typically either "release-{arch}" or "debug-{arch}".
-#    See also input variables OBJDIR_PREFIX and OBJDIR_SUFFIX.
+#    Name of the directory which receives all object files (.o files, direct
+#    compilation products, not final executable or shared binaries).
+#    See also input variable OBJSUBDIR.
 #
 #  OBJS
 #    All object files (.o) to build, for all C/C++ source files.
@@ -551,9 +584,13 @@
 #  TEXI2PDF_FLAGS
 #    Texi2dvi flags used in .texi to .pdf transformation.
 #
+#  UDEVDIR
+#    Name of the directory for system-defined udev rules.
+#
 #  USRLIBDIR
 #    Name of the library directory for the target architecture. This is
-#    $(SYSPREFIX)/lib64 for Linux x86_64 and $(SYSPREFIX)/lib elsewhere.
+#    $(SYSPREFIX)/lib64 for Linux x86_64 where /usr/lib64/libc.so* exists
+#    and $(SYSPREFIX)/lib elsewhere.
 #
 #-----------------------------------------------------------------------------
 
@@ -616,10 +653,11 @@ RECURSE_SUBDIRS = $(filter $(SUBDIRS),$(filter-out $(NORECURSE_SUBDIRS),$(if $(R
 # make targets in the subdirectories (useful for "all" or "clean").
 RECURSE = for dir in $(RECURSE_SUBDIRS); do $(MAKE) -C $$dir $@ $(if $(CONTINUE),,|| exit $$?); done
 
-# Operating system, architecture.
+# Operating system, architecture, host name.
 ifndef LOCAL_OS
     export LOCAL_OS   := $(shell uname -s | tr A-Z a-z)
     export LOCAL_ARCH := $(shell uname -m)
+    export HOSTNAME   := $(shell hostname | $(SED) -e 's/\..*//')
 endif
 ifeq ($(LOCAL_OS),darwin)
     MACOS = true
@@ -671,7 +709,7 @@ ifdef M32
     LDFLAGS_M32 := -m32
 else ifndef MAIN_ARCH
     MAIN_ARCH    := $(shell uname -m | $(SED) -e 's/i.86/i386/' -e 's/arm.*/arm/')
-    TARGET_FLAGS := 
+    TARGET_FLAGS :=
     CFLAGS_M32   :=
     LDFLAGS_M32  :=
 endif
@@ -845,11 +883,21 @@ CXXFLAGS = $(CFLAGS_DEBUG) $(CFLAGS_M32) $(CFLAGS_GCOV) $(CXXFLAGS_WARNINGS) $(C
 LDFLAGS  = $(LDFLAGS_DEBUG) $(LDFLAGS_M32) $(LDFLAGS_GCOV) $(TARGET_FLAGS) $(LDFLAGS_CROSS) $(LDFLAGS_PTHREAD) $(LDFLAGS_EXTRA)
 ARFLAGS  = rc$(if $(MACOS),,U) $(ARFLAGS_EXTRA)
 
-# Output subdirectories in each project directory
-ifdef DEBUG
-    OBJDIR = $(OBJDIR_PREFIX)debug-$(MAIN_ARCH)$(OBJDIR_SUFFIX)
+# Output subdirectories in each project directory.
+ifdef BINDIR
+    # BINDIR is specified in input, transform it into an absolute path for recursion.
+    INBINDIR := $(BINDIR)
+    override BINDIR := $(abspath $(INBINDIR))
+    MAKEOVERRIDES := $(subst BINDIR=$(INBINDIR),BINDIR=$(BINDIR),$(MAKEOVERRIDES))
+else ifdef DEBUG
+    BINDIR = $(ROOTDIR)/bin/$(BINDIR_PREFIX)debug-$(MAIN_ARCH)$(if $(HOSTNAME),-$(HOSTNAME),)$(BINDIR_SUFFIX)
 else
-    OBJDIR = $(OBJDIR_PREFIX)release-$(MAIN_ARCH)$(OBJDIR_SUFFIX)
+    BINDIR = $(ROOTDIR)/bin/$(BINDIR_PREFIX)release-$(MAIN_ARCH)$(if $(HOSTNAME),-$(HOSTNAME),)$(BINDIR_SUFFIX)
+endif
+ifdef OBJSUBDIR
+    OBJDIR = $(BINDIR)/$(OBJSUBDIR)
+else
+    OBJDIR = $(BINDIR)
 endif
 
 # Implicit search directives.
@@ -863,11 +911,16 @@ ifneq ($(CVPATH)$(CXXVPATH),)
     vpath %.h $(CVPATH) $(CXXVPATH)
 endif
 
+# Check if we are on a x86_64 Linux distro using /usr/lib64 as library path.
+# Define USELIB64 as "true" or empty.
+USELIB64 := $(if $(subst linux-x86_64,,$(LOCAL_OS)-$(MAIN_ARCH)),,$(if $(wildcard /usr/lib64/libc.so*),true,))
+
 # On macOS, /usr/local is used without system privileges.
-# On x86_64, the libraries are installed in lib64, not lib.
+# On some x86_64 distros, the libraries are installed in lib64, not lib.
 SYSPREFIX ?= $(if $(MACOS),/usr/local,/usr)
 ETCDIR    ?= $(if $(subst /usr,,$(SYSPREFIX)),$(SYSPREFIX)/etc,/etc)
-USRLIBDIR ?= $(if $(subst linux-x86_64,,$(LOCAL_OS)-$(MAIN_ARCH)),$(SYSPREFIX)/lib,$(SYSPREFIX)/lib64)
+USRLIBDIR ?= $(if $(USELIB64),$(SYSPREFIX)/lib64,$(SYSPREFIX)/lib)
+UDEVDIR   ?= $(if $(subst /usr,,$(SYSPREFIX)),$(SYSPREFIX)/etc/udev/rules.d,/lib/udev/rules.d)
 
 # RPM building.
 RPMBUILD     ?= rpmbuild
@@ -882,7 +935,7 @@ MODULES_MAIN := $(sort $(filter-out $(HEADERS),$(MODULES)))
 MODULES_LIB  := $(sort $(filter-out $(MODULES_MAIN),$(MODULES)))
 OBJS_MAIN    := $(addprefix $(OBJDIR)/,$(addsuffix .o,$(MODULES_MAIN)))
 OBJS_LIB     := $(addprefix $(OBJDIR)/,$(addsuffix .o,$(MODULES_LIB)))
-EXECS        := $(addprefix $(OBJDIR)/,$(MODULES_MAIN))
+EXECS        := $(addprefix $(BINDIR)/,$(MODULES_MAIN))
 
 # Keep intermediate files, avoid using "ar" again.
 .SECONDARY:
@@ -908,10 +961,10 @@ $(OBJDIR)/%.o: %.cpp
 (%): %
 	@echo '  [AR] $<'; \
 	$(ARLOCK) $(AR) $(ARFLAGS) $@ $<
-$(OBJDIR)/%: $(OBJDIR)/%.o
+$(BINDIR)/%: $(OBJDIR)/%.o
 	@echo '  [LD] $@'; \
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
-$(OBJDIR)/%.so: $(OBJDIR)/%.o
+$(BINDIR)/%.so: $(OBJDIR)/%.o
 	@echo '  [CC] $@'; \
 	$(CC) $(CFLAGS) $(SOFLAGS) $(LDFLAGS) $^ $(LDLIBS) -shared -o $@
 
@@ -961,7 +1014,7 @@ distclean: clean
 
 # List of file and directory patterns for non-source files.
 NOSOURCE = \
-    .git .svn *.zip *.gz *.tgz [Dd]ebug* [Rr]elease* doxy doxygen *.t2d \
+    .git .svn *.zip *.gz *.tgz [Dd]ebug* [Rr]elease* [Bb]in doxy doxygen *.t2d \
     *.o *.so *.ko *.a *.lib *.obj *.exe *.dll *.gcov *.dep .kdbgrc.* \
     tmp *.tmp *.out *.log *.tlog core core.* vgcore.* *.stackdump \
     .vs ipch *.ncb *.suo *.idb *.sdf *.opensdf *.vcproj.*.user *.user.* \
@@ -969,11 +1022,24 @@ NOSOURCE = \
     .tmp_versions *.VC.db *.VC.dbopen *.VC.opendb *.deb *.rpm *.bz2 *.7z \
     *~ *.bak *.autosave cov-int
 
+# Doxygen version 1.8.17 has a bug which reports thousands of false errors.
+# Define a filter for doxygen errors.
+DOXYGEN_ERROR_FILTER = $(if $(subst 1.8.17,,$(shell $(DOXYGEN) --version)),, 2>&1 | grep -v 'warning: return type of member .* is not documented$$')
+
 # Source code documentation generation.
+# - Make sure that the output directory is created (doxygen does not create parent directories).
+# - Delete empty subdirectories (many of them created for nothing in case of hierachical output).
 DOXYGEN ?= $(call F_COMMAND,doxygen,doxygen)
 .PHONY: doxygen
 doxygen:
-	@[ -e Doxyfile ] && $(DOXYGEN) $(DOXYGEN_FLAGS) || $(RECURSE)
+	@if [ -e Doxyfile ]; then \
+	    outdir=$$($(GREP) '^ *OUTPUT_DIRECTORY *=' Doxyfile | tail -1 | $(SED) -e 's/.*= *//' -e 's/ *$$//'); \
+	    [ -n "$$outdir" ] && mkdir -p "$$outdir"; \
+	    $(DOXYGEN) $(DOXYGEN_FLAGS) $(DOXYGEN_ERROR_FILTER); \
+	    [ -n "$$outdir" ] && find "$$outdir" -type d -empty -delete; \
+	else \
+	    $(RECURSE) \
+	fi
 
 # Texinfo document generation.
 MAKEINFO ?= makeinfo
@@ -1028,7 +1094,7 @@ flawfinder:
 # Static code analysis: Run scan-build on the source code tree starting at current directory.
 SCANBUILD ?= scan-build
 SCANBUILD_SOURCES ?= $(CURDIR)
-SCANBUILD_FLAGS += -o $(OBJDIR)
+SCANBUILD_FLAGS += -o $(BINDIR)
 .PHONY: scan-build
 scan-build:
 	$(SCANBUILD) $(SCANBUILD_FLAGS) $(MAKE) -C $(SCANBUILD_SOURCES)

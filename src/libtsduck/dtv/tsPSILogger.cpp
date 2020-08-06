@@ -26,12 +26,11 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  This class logs sections and tables.
-//
-//----------------------------------------------------------------------------
 
 #include "tsPSILogger.h"
+#include "tsDuckContext.h"
+#include "tsBinaryTable.h"
+#include "tsTSPacket.h"
 #include "tsNames.h"
 #include "tsPAT.h"
 TSDUCK_SOURCE;
@@ -61,13 +60,12 @@ ts::PSILogger::PSILogger(TablesDisplay& display) :
     _cat_ok(_clear),
     _sdt_ok(_cat_only),
     _bat_ok(false),
-    _mgt_ok(false),
     _expected_pmt(0),
     _received_pmt(0),
     _clear_packets_cnt(0),
     _scrambled_packets_cnt(0),
     _demux(_duck, this, _dump ? this : nullptr),
-    _standards(STD_NONE)
+    _standards(Standards::NONE)
 {
 }
 
@@ -149,7 +147,10 @@ bool ts::PSILogger::open()
     if (!_cat_only) {
         _demux.addPID(PID_PAT);   // MPEG
         _demux.addPID(PID_TSDT);  // MPEG
-        _demux.addPID(PID_SDT);   // DVB
+        _demux.addPID(PID_SDT);   // DVB, ISDB (also contain BAT)
+        _demux.addPID(PID_PCAT);  // ISDB
+        _demux.addPID(PID_BIT);   // ISDB
+        _demux.addPID(PID_LDT);   // ISDB (also contain NBIT)
         _demux.addPID(PID_PSIP);  // ATSC
     }
     if (!_clear) {
@@ -160,7 +161,7 @@ bool ts::PSILogger::open()
     _demux.setCurrentNext(_use_current, _use_next);
 
     // Initial blank line
-    _display.duck().out() << std::endl;
+    _duck.out() << std::endl;
     return true;
 }
 
@@ -194,7 +195,7 @@ void ts::PSILogger::feedPacket(const TSPacket& pkt)
     // Check if the list of standards has changed.
     const Standards new_standards = _duck.standards();
     if (new_standards != _standards) {
-        _duck.report().debug(u"standards are now %s", {StandardsEnum.bitMaskNames(new_standards, u", ", true)});
+        _duck.report().debug(u"standards are now %s", {StandardsNames(new_standards)});
         _standards = new_standards;
     }
 }
@@ -208,7 +209,7 @@ void ts::PSILogger::handleTable(SectionDemux&, const BinaryTable& table)
 {
     assert(table.sectionCount() > 0);
 
-    std::ostream& strm(_display.duck().out());
+    std::ostream& strm(_duck.out());
     const TID tid = table.tableId();
     const PID pid = table.sourcePID();
 
@@ -304,8 +305,7 @@ void ts::PSILogger::handleTable(SectionDemux&, const BinaryTable& table)
             }
             else if (_all_versions || !_sdt_ok) {
                 _sdt_ok = true;
-                // We cannot stop filtering this PID if we don't need all versions
-                // since a BAT can also be found here.
+                // We cannot stop filtering this PID if we don't need all versions since a BAT can also be found here.
                 _display.displayTable(table);
                 strm << std::endl;
             }
@@ -331,29 +331,63 @@ void ts::PSILogger::handleTable(SectionDemux&, const BinaryTable& table)
             else if (_all_versions || !_bat_ok) {
                 // Got the BAT.
                 _bat_ok = true;
-                // We cannot stop filtering this PID if we don't need all versions
-                // since the SDT can also be found here.
+                // We cannot stop filtering this PID if we don't need all versions since the SDT can also be found here.
                 _display.displayTable(table);
                 strm << std::endl;
             }
             break;
         }
 
+        case TID_PCAT: {
+            if (pid != PID_PCAT) {
+                // An ISDB PCAT is only expected on PID 0x0022
+                strm << UString::Format(u"* Got unexpected ISDB PCAT on PID %d (0x%X)", {pid, pid}) << std::endl;
+            }
+            else if (!_all_versions) {
+                _demux.removePID(pid);
+            }
+            _display.displayTable(table);
+            strm << std::endl;
+            break;
+        }
+
+        case TID_BIT: {
+            if (pid != PID_BIT) {
+                // An ISDB BIT is only expected on PID 0x0024
+                strm << UString::Format(u"* Got unexpected ISDB BIT on PID %d (0x%X)", {pid, pid}) << std::endl;
+            }
+            else if (!_all_versions) {
+                _demux.removePID(pid);
+            }
+            _display.displayTable(table);
+            strm << std::endl;
+            break;
+        }
+
+        case TID_NBIT_REF:
+        case TID_NBIT_BODY: {
+            if (pid != PID_NBIT) {
+                // An ISDB BIT is only expected on PID 0x0025
+                strm << UString::Format(u"* Got unexpected ISDB NBIT on PID %d (0x%X)", {pid, pid}) << std::endl;
+            }
+            // We cannot stop filtering this PID if we don't need all versions since the LDT can also be found here.
+            _display.displayTable(table);
+            strm << std::endl;
+            break;
+        }
+
+        // case TID_LDT: (same value as TID_MGT)
         case TID_MGT: {
-            if (pid != PID_PSIP) {
-                // An MGT is only expected on PID 0x1FFB
-                strm << UString::Format(u"* Got unexpected ATSC MGT on PID %d (0x%X)", {pid, pid}) << std::endl;
-                _display.displayTable(table);
-                strm << std::endl;
+            // ATSC MGT and ISDB LDT use the same table id, so it can be any.
+            if (pid != PID_PSIP && pid != PID_LDT) {
+                // An ATSC MGT is only expected on PID 0x1FFB.
+                // An ISDB LDT is only expected on PID 0x0025.
+                strm << UString::Format(u"* Got unexpected ATSC MGT / ISDB LDT on PID %d (0x%X)", {pid, pid}) << std::endl;
             }
-            else if (_all_versions || !_mgt_ok) {
-                // Got the MGT.
-                _mgt_ok = true;
-                // We cannot stop filtering this PID if we don't need all versions
-                // since the TVCT or CVCT can also be found here.
-                _display.displayTable(table);
-                strm << std::endl;
-            }
+            // We cannot stop filtering this PID if we don't need all versions
+            // since the TVCT or CVCT (ATSC) and NBIT (ISDB) can also be found here.
+            _display.displayTable(table);
+            strm << std::endl;
             break;
         }
 
@@ -381,7 +415,7 @@ void ts::PSILogger::handleTable(SectionDemux&, const BinaryTable& table)
 
 void ts::PSILogger::handleSection(SectionDemux&, const Section& sect)
 {
-    sect.dump(_display.duck().out()) << std::endl;
+    sect.dump(_duck.out()) << std::endl;
 }
 
 
@@ -389,11 +423,11 @@ void ts::PSILogger::handleSection(SectionDemux&, const Section& sect)
 // Report the demux errors (if any)
 //----------------------------------------------------------------------------
 
-void ts::PSILogger::reportDemuxErrors ()
+void ts::PSILogger::reportDemuxErrors()
 {
     if (_demux.hasErrors()) {
         SectionDemux::Status status(_demux);
-        _display.duck().out() << "* PSI/SI analysis errors:" << std::endl;
-        status.display(_display.duck().out(), 4, true);
+        _duck.out() << "* PSI/SI analysis errors:" << std::endl;
+        status.display(_duck.out(), 4, true);
     }
 }

@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"video_window_descriptor"
+#define MY_CLASS ts::VideoWindowDescriptor
 #define MY_DID ts::DID_VIDEO_WIN
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::VideoWindowDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::VideoWindowDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::VideoWindowDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,13 +54,19 @@ ts::VideoWindowDescriptor::VideoWindowDescriptor() :
     vertical_offset(0),
     window_priority(0)
 {
-    _is_valid = true;
 }
 
 ts::VideoWindowDescriptor::VideoWindowDescriptor(DuckContext& duck, const Descriptor& desc) :
     VideoWindowDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::VideoWindowDescriptor::clearContent()
+{
+    horizontal_offset = 0;
+    vertical_offset = 0;
+    window_priority = 0;
 }
 
 
@@ -87,7 +93,7 @@ void ts::VideoWindowDescriptor::deserialize(DuckContext& duck, const Descriptor&
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 4;
 
     if (_is_valid) {
         const uint32_t x = GetUInt32(data);
@@ -104,7 +110,8 @@ void ts::VideoWindowDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::VideoWindowDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
@@ -135,11 +142,9 @@ void ts::VideoWindowDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::VideoWindowDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::VideoWindowDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(horizontal_offset, u"horizontal_offset", true, 0, 0, 0x3FFF) &&
-        element->getIntAttribute<uint16_t>(vertical_offset, u"vertical_offset", true, 0, 0, 0x3FFF) &&
-        element->getIntAttribute<uint8_t>(window_priority, u"window_priority", true, 0, 0, 0x0F);
+    return element->getIntAttribute<uint16_t>(horizontal_offset, u"horizontal_offset", true, 0, 0, 0x3FFF) &&
+           element->getIntAttribute<uint16_t>(vertical_offset, u"vertical_offset", true, 0, 0, 0x3FFF) &&
+           element->getIntAttribute<uint8_t>(window_priority, u"window_priority", true, 0, 0, 0x0F);
 }

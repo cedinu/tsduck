@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"CI_ancillary_data_descriptor"
+#define MY_CLASS ts::CIAncillaryDataDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_CI_ANCILLARY_DATA
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CIAncillaryDataDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CIAncillaryDataDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::CIAncillaryDataDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,13 +53,17 @@ ts::CIAncillaryDataDescriptor::CIAncillaryDataDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     ancillary_data()
 {
-    _is_valid = true;
 }
 
 ts::CIAncillaryDataDescriptor::CIAncillaryDataDescriptor(DuckContext& duck, const Descriptor& desc) :
     CIAncillaryDataDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::CIAncillaryDataDescriptor::clearContent()
+{
+    ancillary_data.clear();
 }
 
 
@@ -84,7 +88,7 @@ void ts::CIAncillaryDataDescriptor::deserialize(DuckContext& duck, const Descrip
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1 && data[0] == MY_EDID;
 
     if (_is_valid) {
         ancillary_data.copy(data + 1, size - 1);
@@ -98,9 +102,7 @@ void ts::CIAncillaryDataDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::CIAncillaryDataDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    if (!ancillary_data.empty()) {
-        root->addElement(u"ancillary_data")->addHexaText(ancillary_data);
-    }
+    root->addHexaTextChild(u"ancillary_data", ancillary_data, true);
 }
 
 
@@ -108,11 +110,9 @@ void ts::CIAncillaryDataDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CIAncillaryDataDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CIAncillaryDataDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getHexaTextChild(ancillary_data, u"ancillary_data", false, 0, MAX_DESCRIPTOR_SIZE - 3);
+    return element->getHexaTextChild(ancillary_data, u"ancillary_data", false, 0, MAX_DESCRIPTOR_SIZE - 3);
 }
 
 
@@ -126,11 +126,5 @@ void ts::CIAncillaryDataDescriptor::DisplayDescriptor(TablesDisplay& display, DI
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
-    const std::string margin(indent, ' ');
-
-    if (size > 0) {
-        strm << margin << "Ancillary data:" << std::endl
-             << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-    }
+    display.displayPrivateData(u"Ancillary data", data, size, indent);
 }

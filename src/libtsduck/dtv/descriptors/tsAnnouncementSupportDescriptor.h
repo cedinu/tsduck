@@ -56,10 +56,10 @@ namespace ts {
             uint16_t service_id;           //!< When reference_type == 1, 2 or 3
             uint8_t  component_tag;        //!< When reference_type == 1, 2 or 3
 
-            //! 
+            //!
             //! Constructor.
             //! @param [in] type Announcement type.
-            //! 
+            //!
             Announcement(uint8_t type = 0);
         };
 
@@ -86,11 +86,12 @@ namespace ts {
         // Inherited methods
         virtual void serialize(DuckContext&, Descriptor&) const override;
         virtual void deserialize(DuckContext&, const Descriptor&) override;
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
     };
 }

@@ -322,6 +322,7 @@ bool ts::CreateLocator(DuckContext& duck, ComPtr<::IDigitalLocator>& locator, co
         case TT_ATSC:
             return CreateLocatorATSC(duck, locator, params, report);
         case TT_ISDB_S:
+            return CreateLocatorISDBS(duck, locator, params, report);
         case TT_ISDB_T:
         case TT_ISDB_C:
         case TT_UNDEFINED:
@@ -419,6 +420,7 @@ bool ts::CreateLocatorDVBS(DuckContext& duck, ComPtr<::IDigitalLocator>& locator
         default: source = ::BDA_LNB_SOURCE_NOT_DEFINED; break;
     }
 
+    // 
     // Microsoft oddity, part 1...
     //
     // The locator interface for DVB-S is IDVBSLocator. However, this interface did
@@ -442,6 +444,25 @@ bool ts::CreateLocatorDVBS(DuckContext& duck, ComPtr<::IDigitalLocator>& locator
 
     ComPtr<::IDVBSLocator2> loc(CLSID_DVBSLocator, ::IID_IDVBSLocator2, report);
 
+    //
+    // Microsoft oddity, part 3...
+    //
+    // The DirectShow classes have not evolve and are still stuck with the legacy
+    // model of low/high/switch frequencies. We try to emulate this with new LNB's.
+
+    uint64_t low_freq = params.lnb.value().legacyLowOscillatorFrequency();
+    uint64_t high_freq = params.lnb.value().legacyHighOscillatorFrequency();
+    uint64_t switch_freq = params.lnb.value().legacySwitchFrequency();
+
+    if (low_freq == 0) {
+        // Cannot even find a low oscillator frequency. Get the local oscillator
+        // frequency for this particular tune and pretend it is the low oscillator.
+        LNB::Transposition tr;
+        if (params.lnb.value().transpose(tr, params.frequency.value(), params.polarity.value(), NULLREP)) {
+            low_freq = tr.oscillator_frequency;
+        }
+    }
+
     if (loc.isNull() ||
         !CheckModVar(params.modulation, u"modulation", ModulationEnum, report) ||
         !CheckModVar(params.inner_fec, u"FEC", InnerFECEnum, report) ||
@@ -453,9 +474,9 @@ bool ts::CreateLocatorDVBS(DuckContext& duck, ComPtr<::IDigitalLocator>& locator
         !PUT(loc, InnerFECRate, ::BinaryConvolutionCodeRate(params.inner_fec.value())) ||
         !PUT(loc, SymbolRate, long(params.symbol_rate.value())) ||
         !PUT(loc, LocalSpectralInversionOverride, ::SpectralInversion(params.inversion.value())) ||
-        !PUT(loc, LocalOscillatorOverrideLow, long(params.lnb.value().lowFrequency() / 1000)) ||    // frequency in kHz
-        !PUT(loc, LocalOscillatorOverrideHigh, long(params.lnb.value().highFrequency() / 1000)) ||  // frequency in kHz
-        !PUT(loc, LocalLNBSwitchOverride, long(params.lnb.value().switchFrequency() / 1000)) ||     // frequency in kHz
+        !PUT(loc, LocalOscillatorOverrideLow, low_freq == 0 ? -1 : long(low_freq / 1000)) ||     // frequency in kHz, -1 means not set
+        !PUT(loc, LocalOscillatorOverrideHigh, high_freq == 0 ? -1 : long(high_freq / 1000)) ||  // frequency in kHz, -1 means not set
+        !PUT(loc, LocalLNBSwitchOverride, switch_freq == 0 ? -1 : long(switch_freq / 1000)) ||   // frequency in kHz, -1 means not set
         !PUT(loc, DiseqLNBSource, source))
     {
         return false;
@@ -523,6 +544,34 @@ bool ts::CreateLocatorATSC(DuckContext& duck, ComPtr<::IDigitalLocator>& locator
     {
         return false;
     }
+
+    locator.assign(loc);
+    return true;
+}
+
+
+//-----------------------------------------------------------------------------
+// Create an IDigitalLocator object for ISDB-S parameters
+//-----------------------------------------------------------------------------
+
+bool ts::CreateLocatorISDBS(DuckContext& duck, ComPtr<::IDigitalLocator>& locator, const ModulationArgs& params, Report& report)
+{
+    ComPtr<::IISDBSLocator> loc(CLSID_ISDBSLocator, ::IID_IISDBSLocator, report);
+
+    if (loc.isNull() ||
+        !CheckModVar(params.inner_fec, u"FEC", InnerFECEnum, report) ||
+        !CheckModVar(params.polarity, u"polarity", PolarizationEnum, report) ||
+        !PUT(loc, CarrierFrequency, long(params.frequency.value() / 1000)) ||  // frequency in kHz
+        !PUT(loc, SignalPolarisation, ::Polarisation(params.polarity.value())) ||
+        !PUT(loc, InnerFEC, ::BDA_FEC_VITERBI) ||
+        !PUT(loc, InnerFECRate, ::BinaryConvolutionCodeRate(params.inner_fec.value())) ||
+        !PUT(loc, SymbolRate, long(params.symbol_rate.value())))
+    {
+        return false;
+    }
+
+    // Pending questions:
+    // - No way to set params.inversion in IISDBSLocator
 
     locator.assign(loc);
     return true;

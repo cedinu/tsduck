@@ -30,18 +30,18 @@
 #include "tsDCCDepartingRequestDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"dcc_departing_request_descriptor"
+#define MY_CLASS ts::DCCDepartingRequestDescriptor
 #define MY_DID ts::DID_ATSC_DCC_DEPARTING
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DCCDepartingRequestDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::DCCDepartingRequestDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::DCCDepartingRequestDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,12 @@ ts::DCCDepartingRequestDescriptor::DCCDepartingRequestDescriptor() :
     dcc_departing_request_type(0),
     dcc_departing_request_text()
 {
-    _is_valid = true;
+}
+
+void ts::DCCDepartingRequestDescriptor::clearContent()
+{
+    dcc_departing_request_type = 0;
+    dcc_departing_request_text.clear();
 }
 
 ts::DCCDepartingRequestDescriptor::DCCDepartingRequestDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -86,7 +91,7 @@ void ts::DCCDepartingRequestDescriptor::deserialize(DuckContext& duck, const Des
 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2;
 
     if (_is_valid) {
         dcc_departing_request_type = *data++;
@@ -102,8 +107,12 @@ void ts::DCCDepartingRequestDescriptor::deserialize(DuckContext& duck, const Des
 
 void ts::DCCDepartingRequestDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
+    const std::string margin(indent, ' ');
+
     if (size >= 2) {
-        display.duck().out() << UString::Format(u"%*sDCC departing request type: 0x%X (%d)", {indent, u"", data[0], data[0]}) << std::endl;
+        strm << margin << UString::Format(u"DCC departing request type: 0x%X (%d)", {data[0], data[0]}) << std::endl;
         const size_t len = data[1];
         data += 2; size -= 2;
         ATSCMultipleString::Display(display, u"DCC departing request text: ", indent, data, size, len);
@@ -127,10 +136,8 @@ void ts::DCCDepartingRequestDescriptor::buildXML(DuckContext& duck, xml::Element
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DCCDepartingRequestDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DCCDepartingRequestDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(dcc_departing_request_type, u"dcc_departing_request_type", true) &&
-        dcc_departing_request_text.fromXML(duck, element, u"dcc_departing_request_text", false);
+    return element->getIntAttribute<uint8_t>(dcc_departing_request_type, u"dcc_departing_request_type", true) &&
+           dcc_departing_request_text.fromXML(duck, element, u"dcc_departing_request_text", false);
 }

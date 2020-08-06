@@ -30,21 +30,21 @@
 #include "tsIBPDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"IBP_descriptor"
+#define MY_CLASS ts::IBPDescriptor
 #define MY_DID ts::DID_IBP
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::IBPDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::IBPDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::IBPDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::IBPDescriptor::IBPDescriptor() :
@@ -53,18 +53,19 @@ ts::IBPDescriptor::IBPDescriptor() :
     identical_gop(false),
     max_gop_length(0)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::IBPDescriptor::IBPDescriptor(DuckContext& duck, const Descriptor& desc) :
     IBPDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::IBPDescriptor::clearContent()
+{
+    closed_gop = false;
+    identical_gop = false;
+    max_gop_length = 0;
 }
 
 
@@ -91,7 +92,7 @@ void ts::IBPDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 2;
 
     if (_is_valid) {
         closed_gop = (data[0] & 0x80) != 0;
@@ -107,7 +108,8 @@ void ts::IBPDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 
 void ts::IBPDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 2) {
@@ -141,11 +143,9 @@ void ts::IBPDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::IBPDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::IBPDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(closed_gop, u"closed_gop", true) &&
-        element->getBoolAttribute(identical_gop, u"identical_gop", true) &&
-        element->getIntAttribute<uint16_t>(max_gop_length, u"max_gop_length", true, 0, 0x0001, 0x3FFF);
+    return element->getBoolAttribute(closed_gop, u"closed_gop", true) &&
+           element->getBoolAttribute(identical_gop, u"identical_gop", true) &&
+           element->getIntAttribute<uint16_t>(max_gop_length, u"max_gop_length", true, 0, 0x0001, 0x3FFF);
 }

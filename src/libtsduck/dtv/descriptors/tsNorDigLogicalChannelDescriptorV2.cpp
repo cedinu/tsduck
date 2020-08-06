@@ -30,18 +30,18 @@
 #include "tsNorDigLogicalChannelDescriptorV2.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"nordig_logical_channel_descriptor_v2"
+#define MY_CLASS ts::NorDigLogicalChannelDescriptorV2
 #define MY_DID ts::DID_NORDIG_CHAN_NUM_V2
 #define MY_PDS ts::PDS_NORDIG
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::NorDigLogicalChannelDescriptorV2, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::NorDigLogicalChannelDescriptorV2, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::NorDigLogicalChannelDescriptorV2::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,6 @@ ts::NorDigLogicalChannelDescriptorV2::NorDigLogicalChannelDescriptorV2() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, MY_PDS),
     entries()
 {
-    _is_valid = true;
 }
 
 ts::NorDigLogicalChannelDescriptorV2::NorDigLogicalChannelDescriptorV2(DuckContext& duck, const Descriptor& desc) :
@@ -76,6 +75,11 @@ ts::NorDigLogicalChannelDescriptorV2::ChannelList::ChannelList(uint8_t id, const
 {
 }
 
+void ts::NorDigLogicalChannelDescriptorV2::clearContent()
+{
+    entries.clear();
+}
+
 
 //----------------------------------------------------------------------------
 // Serialization
@@ -86,7 +90,7 @@ void ts::NorDigLogicalChannelDescriptorV2::serialize(DuckContext& duck, Descript
     ByteBlockPtr bbp(serializeStart());
     for (auto it1 = entries.begin(); it1 != entries.end(); ++it1) {
         bbp->appendUInt8(it1->channel_list_id);
-        bbp->append(duck.toDVBWithByteLength(it1->channel_list_name));
+        bbp->append(duck.encodedWithByteLength(it1->channel_list_name));
         if (!SerializeLanguageCode(*bbp, it1->country_code)) {
             desc.invalidate();
             return;
@@ -109,13 +113,13 @@ void ts::NorDigLogicalChannelDescriptorV2::deserialize(DuckContext& duck, const 
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    _is_valid = desc.isValid() && desc.tag() == tag();
     entries.clear();
 
     while (_is_valid && size >= 2) {
         ChannelList clist(data[0]);
         data++; size--;
-        clist.channel_list_name = duck.fromDVBWithByteLength(data, size);
+        duck.decodeWithByteLength(clist.channel_list_name, data, size);
         _is_valid = size >= 4;
         if (_is_valid) {
             clist.country_code = DeserializeLanguageCode(data);
@@ -138,13 +142,14 @@ void ts::NorDigLogicalChannelDescriptorV2::deserialize(DuckContext& duck, const 
 
 void ts::NorDigLogicalChannelDescriptorV2::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 2) {
         const uint8_t id = data[0];
         data++; size--;
-        const UString name(display.duck().fromDVBWithByteLength(data, size));
+        const UString name(duck.decodedWithByteLength(data, size));
         strm << margin << UString::Format(u"- Channel list id: 0x%X (%d), name: \"%s\"", {id, id, name});
         if (size < 3) {
             strm << std::endl;
@@ -200,35 +205,26 @@ void ts::NorDigLogicalChannelDescriptorV2::buildXML(DuckContext& duck, xml::Elem
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::NorDigLogicalChannelDescriptorV2::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::NorDigLogicalChannelDescriptorV2::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector xclists;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(xclists, u"channel_list");
+    bool ok = element->getChildren(xclists, u"channel_list");
 
-    for (size_t i1 = 0; _is_valid && i1 < xclists.size(); ++i1) {
+    for (size_t i1 = 0; ok && i1 < xclists.size(); ++i1) {
         ChannelList clist;
         xml::ElementVector xsrv;
-        _is_valid =
-            xclists[i1]->getIntAttribute<uint8_t>(clist.channel_list_id, u"id", true) &&
-            xclists[i1]->getAttribute(clist.channel_list_name, u"name", true) &&
-            xclists[i1]->getAttribute(clist.country_code, u"country_code", true, UString(), 3, 3) &&
-            xclists[i1]->getChildren(xsrv, u"service");
-        for (size_t i2 = 0; _is_valid && i2 < xsrv.size(); ++i2) {
+        ok = xclists[i1]->getIntAttribute<uint8_t>(clist.channel_list_id, u"id", true) &&
+             xclists[i1]->getAttribute(clist.channel_list_name, u"name", true) &&
+             xclists[i1]->getAttribute(clist.country_code, u"country_code", true, UString(), 3, 3) &&
+             xclists[i1]->getChildren(xsrv, u"service");
+        for (size_t i2 = 0; ok && i2 < xsrv.size(); ++i2) {
             Service srv;
-            _is_valid =
-                xsrv[i2]->getIntAttribute<uint16_t>(srv.service_id, u"service_id", true) &&
-                xsrv[i2]->getIntAttribute<uint16_t>(srv.lcn, u"logical_channel_number", true, 0, 0x0000, 0x03FF) &&
-                xsrv[i2]->getBoolAttribute(srv.visible, u"visible_service", false, true);
-            if (_is_valid) {
-                clist.services.push_back(srv);
-            }
+            ok = xsrv[i2]->getIntAttribute<uint16_t>(srv.service_id, u"service_id", true) &&
+                 xsrv[i2]->getIntAttribute<uint16_t>(srv.lcn, u"logical_channel_number", true, 0, 0x0000, 0x03FF) &&
+                 xsrv[i2]->getBoolAttribute(srv.visible, u"visible_service", false, true);
+            clist.services.push_back(srv);
         }
-        if (_is_valid) {
-            entries.push_back(clist);
-        }
+        entries.push_back(clist);
     }
+    return ok;
 }

@@ -30,17 +30,17 @@
 #include "tsMaximumBitrateDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"maximum_bitrate_descriptor"
+#define MY_CLASS ts::MaximumBitrateDescriptor
 #define MY_DID ts::DID_MAX_BITRATE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MaximumBitrateDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MaximumBitrateDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MaximumBitrateDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -51,13 +51,17 @@ ts::MaximumBitrateDescriptor::MaximumBitrateDescriptor(uint32_t mbr) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     maximum_bitrate(mbr)
 {
-    _is_valid = true;
 }
 
 ts::MaximumBitrateDescriptor::MaximumBitrateDescriptor(DuckContext& duck, const Descriptor& desc) :
     MaximumBitrateDescriptor(0)
 {
     deserialize(duck, desc);
+}
+
+void ts::MaximumBitrateDescriptor::clearContent()
+{
+    maximum_bitrate = 0;
 }
 
 
@@ -79,7 +83,7 @@ void ts::MaximumBitrateDescriptor::serialize(DuckContext& duck, Descriptor& desc
 
 void ts::MaximumBitrateDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 3;
 
     if (_is_valid) {
         maximum_bitrate = GetUInt24(desc.payload()) & 0x003FFFFF;
@@ -93,7 +97,8 @@ void ts::MaximumBitrateDescriptor::deserialize(DuckContext& duck, const Descript
 
 void ts::MaximumBitrateDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 3) {
@@ -120,15 +125,10 @@ void ts::MaximumBitrateDescriptor::buildXML(DuckContext& duck, xml::Element* roo
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MaximumBitrateDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MaximumBitrateDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     uint32_t mbr = 0;
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(mbr, u"maximum_bitrate", true, 0, 0, 0x003FFFFF * BITRATE_UNIT);
-
-    if (_is_valid) {
-        maximum_bitrate = mbr / BITRATE_UNIT;
-    }
+    bool ok = element->getIntAttribute<uint32_t>(mbr, u"maximum_bitrate", true, 0, 0, 0x003FFFFF * BITRATE_UNIT);
+    maximum_bitrate = mbr / BITRATE_UNIT;
+    return ok;
 }

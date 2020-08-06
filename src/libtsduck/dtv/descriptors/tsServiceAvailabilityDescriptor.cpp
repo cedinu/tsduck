@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"service_availability_descriptor"
+#define MY_CLASS ts::ServiceAvailabilityDescriptor
 #define MY_DID ts::DID_SERVICE_AVAIL
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ServiceAvailabilityDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ServiceAvailabilityDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ServiceAvailabilityDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,12 @@ ts::ServiceAvailabilityDescriptor::ServiceAvailabilityDescriptor() :
     availability(false),
     cell_ids()
 {
-    _is_valid = true;
+}
+
+void ts::ServiceAvailabilityDescriptor::clearContent()
+{
+    availability = false;
+    cell_ids.clear();
 }
 
 ts::ServiceAvailabilityDescriptor::ServiceAvailabilityDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -84,7 +89,7 @@ void ts::ServiceAvailabilityDescriptor::serialize(DuckContext& duck, Descriptor&
 
 void ts::ServiceAvailabilityDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() % 2 == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 2 == 1;
     cell_ids.clear();
 
     if (_is_valid) {
@@ -106,7 +111,8 @@ void ts::ServiceAvailabilityDescriptor::deserialize(DuckContext& duck, const Des
 
 void ts::ServiceAvailabilityDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -140,21 +146,17 @@ void ts::ServiceAvailabilityDescriptor::buildXML(DuckContext& duck, xml::Element
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceAvailabilityDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ServiceAvailabilityDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    cell_ids.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getBoolAttribute(availability, u"availability", true) &&
         element->getChildren(children, u"cell", 0, MAX_CELLS);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         uint16_t id = 0;
-        _is_valid = children[i]->getIntAttribute<uint16_t>(id, u"id", true);
-        if (_is_valid) {
-            cell_ids.push_back(id);
-        }
+        ok = children[i]->getIntAttribute<uint16_t>(id, u"id", true);
+        cell_ids.push_back(id);
     }
+    return ok;
 }

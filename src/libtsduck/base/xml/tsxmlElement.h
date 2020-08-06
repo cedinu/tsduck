@@ -197,27 +197,49 @@ namespace ts {
             //!
             //! Add a new text inside this node.
             //! @param [in] text Text string to add.
+            //! @param [in] onlyNotEmpty When true, do not add the text if the string is empty.
             //! @return New child element or null on error.
             //!
-            Text* addText(const UString& text);
+            Text* addText(const UString& text, bool onlyNotEmpty = false);
 
             //!
             //! Add a new text containing hexadecimal data inside this node.
             //! @param [in] data Address of binary data.
             //! @param [in] size Size in bytes of binary data.
-            //! @return New child element or null on error.
+            //! @param [in] onlyNotEmpty When true, do not add the child element if the data is empty.
+            //! @return New child element or null on error or empty data.
             //!
-            Text* addHexaText(const void* data, size_t size);
+            Text* addHexaText(const void* data, size_t size, bool onlyNotEmpty = false);
 
             //!
             //! Add a new text containing hexadecimal data inside this node.
             //! @param [in] data Binary data.
-            //! @return New child element or null on error.
+            //! @param [in] onlyNotEmpty When true, do not add the child element if the data is empty.
+            //! @return New child element or null on error or empty data.
             //!
-            Text* addHexaText(const ByteBlock& data)
+            Text* addHexaText(const ByteBlock& data, bool onlyNotEmpty = false)
             {
-                return addHexaText(data.data(), data.size());
+                return addHexaText(data.data(), data.size(), onlyNotEmpty);
             }
+
+            //!
+            //! Add a new child element containing an hexadecimal data text.
+            //! @param [in] name Name of the child element to search.
+            //! @param [in] data Address of binary data.
+            //! @param [in] size Size in bytes of binary data.
+            //! @param [in] onlyNotEmpty When true, do not add the child element if the data is empty.
+            //! @return New child element or null on error or empty data.
+            //!
+            Text* addHexaTextChild(const UString& name, const void* data, size_t size, bool onlyNotEmpty = false);
+
+            //!
+            //! Add a new child element containing an hexadecimal data text.
+            //! @param [in] name Name of the child element to search.
+            //! @param [in] data Binary data.
+            //! @param [in] onlyNotEmpty When true, do not add the child element if the data is empty.
+            //! @return New child element or null on error or empty data.
+            //!
+            Text* addHexaTextChild(const UString& name, const ByteBlock& data, bool onlyNotEmpty = false);
 
             //!
             //! Check if an attribute exists in the element.
@@ -341,6 +363,16 @@ namespace ts {
             void setDateTimeAttribute(const UString& name, const Time& value)
             {
                 refAttribute(name).setDateTime(value);
+            }
+
+            //!
+            //! Set a date (xithout hours) attribute of an XML element.
+            //! @param [in] name Attribute name.
+            //! @param [in] value Attribute value.
+            //!
+            void setDateAttribute(const UString& name, const Time& value)
+            {
+                refAttribute(name).setDate(value);
             }
 
             //!
@@ -604,6 +636,16 @@ namespace ts {
             //! @return True on success, false on error.
             //!
             bool getDateTimeAttribute(Time& value, const UString& name, bool required = false, const Time& defValue = Time()) const;
+
+            //!
+            //! Get a date (without hours) attribute of an XML element.
+            //! @param [out] value Returned value of the attribute.
+            //! @param [in] name Name of the attribute.
+            //! @param [in] required If true, generate an error if the attribute is not found.
+            //! @param [in] defValue Default value to return if the attribute is not present.
+            //! @return True on success, false on error.
+            //!
+            bool getDateAttribute(Time& value, const UString& name, bool required = false, const Time& defValue = Time()) const;
 
             //!
             //! Get a time attribute of an XML element in "hh:mm:ss" format.

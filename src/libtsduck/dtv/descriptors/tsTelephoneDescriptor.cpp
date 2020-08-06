@@ -30,18 +30,18 @@
 #include "tsTelephoneDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
-#include "tsDVBCharsetSingleByte.h"
+#include "tsDVBCharTableSingleByte.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"telephone_descriptor"
+#define MY_CLASS ts::TelephoneDescriptor
 #define MY_DID ts::DID_TELEPHONE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::TelephoneDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::TelephoneDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::TelephoneDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -58,13 +58,23 @@ ts::TelephoneDescriptor::TelephoneDescriptor() :
     national_area_code(),
     core_number()
 {
-    _is_valid = true;
 }
 
 ts::TelephoneDescriptor::TelephoneDescriptor(DuckContext& duck, const Descriptor& desc) :
     TelephoneDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::TelephoneDescriptor::clearContent()
+{
+    foreign_availability = false;
+    connection_type = 0;
+    country_prefix.clear();
+    international_area_code.clear();
+    operator_code.clear();
+    national_area_code.clear();
+    core_number.clear();
 }
 
 
@@ -75,11 +85,11 @@ ts::TelephoneDescriptor::TelephoneDescriptor(DuckContext& duck, const Descriptor
 void ts::TelephoneDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 {
     // ETSI EN 300 468 says that encoding shall be done using ISO/IEC 8859-1.
-    const ByteBlock bb_country_prefix(DVBCharsetSingleByte::ISO_8859_1.encoded(country_prefix));
-    const ByteBlock bb_international_area_code(DVBCharsetSingleByte::ISO_8859_1.encoded(international_area_code));
-    const ByteBlock bb_operator_code(DVBCharsetSingleByte::ISO_8859_1.encoded(operator_code));
-    const ByteBlock bb_national_area_code(DVBCharsetSingleByte::ISO_8859_1.encoded(national_area_code));
-    const ByteBlock bb_core_number(DVBCharsetSingleByte::ISO_8859_1.encoded(core_number));
+    const ByteBlock bb_country_prefix(DVBCharTableSingleByte::RAW_ISO_8859_1.encoded(country_prefix));
+    const ByteBlock bb_international_area_code(DVBCharTableSingleByte::RAW_ISO_8859_1.encoded(international_area_code));
+    const ByteBlock bb_operator_code(DVBCharTableSingleByte::RAW_ISO_8859_1.encoded(operator_code));
+    const ByteBlock bb_national_area_code(DVBCharTableSingleByte::RAW_ISO_8859_1.encoded(national_area_code));
+    const ByteBlock bb_core_number(DVBCharTableSingleByte::RAW_ISO_8859_1.encoded(core_number));
 
     // Check that all string length match constraints.
     if (bb_country_prefix.size() > MAX_COUNTRY_PREFIX_LENGTH ||
@@ -120,7 +130,7 @@ void ts::TelephoneDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 3;
 
     if (_is_valid) {
         foreign_availability = (data[0] & 0x20) != 0;
@@ -135,11 +145,11 @@ void ts::TelephoneDescriptor::deserialize(DuckContext& duck, const Descriptor& d
         // ETSI EN 300 468 says that encoding shall be done using ISO/IEC 8859-1.
         _is_valid =
             size == country_len + inter_len + oper_len + nat_len + core_len &&
-            DVBCharsetSingleByte::ISO_8859_1.decode(country_prefix, data, country_len) &&
-            DVBCharsetSingleByte::ISO_8859_1.decode(international_area_code, data + country_len, inter_len) &&
-            DVBCharsetSingleByte::ISO_8859_1.decode(operator_code, data + country_len + inter_len, oper_len) &&
-            DVBCharsetSingleByte::ISO_8859_1.decode(national_area_code, data + country_len + inter_len + oper_len, nat_len) &&
-            DVBCharsetSingleByte::ISO_8859_1.decode(core_number, data + country_len + inter_len + oper_len + nat_len, core_len);
+            DVBCharTableSingleByte::RAW_ISO_8859_1.decode(country_prefix, data, country_len) &&
+            DVBCharTableSingleByte::RAW_ISO_8859_1.decode(international_area_code, data + country_len, inter_len) &&
+            DVBCharTableSingleByte::RAW_ISO_8859_1.decode(operator_code, data + country_len + inter_len, oper_len) &&
+            DVBCharTableSingleByte::RAW_ISO_8859_1.decode(national_area_code, data + country_len + inter_len + oper_len, nat_len) &&
+            DVBCharTableSingleByte::RAW_ISO_8859_1.decode(core_number, data + country_len + inter_len + oper_len + nat_len, core_len);
     }
 }
 
@@ -150,7 +160,8 @@ void ts::TelephoneDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 
 void ts::TelephoneDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 3) {
@@ -165,23 +176,23 @@ void ts::TelephoneDescriptor::DisplayDescriptor(TablesDisplay& display, DID did,
         data += 3; size -= 3;
 
         UString str;
-        if (size >= country_len && DVBCharsetSingleByte::ISO_8859_1.decode(str, data, country_len)) {
+        if (size >= country_len && DVBCharTableSingleByte::RAW_ISO_8859_1.decode(str, data, country_len)) {
             data += country_len; size -= country_len;
             strm << margin << "Country prefix: \"" << str << "\"" << std::endl;
 
-            if (size >= inter_len && DVBCharsetSingleByte::ISO_8859_1.decode(str, data, inter_len)) {
+            if (size >= inter_len && DVBCharTableSingleByte::RAW_ISO_8859_1.decode(str, data, inter_len)) {
                 data += inter_len; size -= inter_len;
                 strm << margin << "International area code: \"" << str << "\"" << std::endl;
 
-                if (size >= oper_len && DVBCharsetSingleByte::ISO_8859_1.decode(str, data, oper_len)) {
+                if (size >= oper_len && DVBCharTableSingleByte::RAW_ISO_8859_1.decode(str, data, oper_len)) {
                     data += oper_len; size -= oper_len;
                     strm << margin << "Operator code: \"" << str << "\"" << std::endl;
 
-                    if (size >= nat_len && DVBCharsetSingleByte::ISO_8859_1.decode(str, data, nat_len)) {
+                    if (size >= nat_len && DVBCharTableSingleByte::RAW_ISO_8859_1.decode(str, data, nat_len)) {
                         data += nat_len; size -= nat_len;
                         strm << margin << "National area code: \"" << str << "\"" << std::endl;
 
-                        if (size >= core_len && DVBCharsetSingleByte::ISO_8859_1.decode(str, data, core_len)) {
+                        if (size >= core_len && DVBCharTableSingleByte::RAW_ISO_8859_1.decode(str, data, core_len)) {
                             data += core_len; size -= core_len;
                             strm << margin << "Core number: \"" << str << "\"" << std::endl;
                         }
@@ -215,15 +226,13 @@ void ts::TelephoneDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TelephoneDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TelephoneDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(foreign_availability, u"foreign_availability", true) &&
-        element->getIntAttribute<uint8_t>(connection_type, u"connection_type", true, 0, 0x00, 0x1F) &&
-        element->getAttribute(country_prefix, u"country_prefix", false, UString(), 0, MAX_COUNTRY_PREFIX_LENGTH) &&
-        element->getAttribute(international_area_code, u"international_area_code", false, UString(), 0, MAX_INTERNATIONAL_AREA_CODE_LENGTH) &&
-        element->getAttribute(operator_code, u"operator_code", false, UString(), 0, MAX_OPERATOR_CODE_LENGTH) &&
-        element->getAttribute(national_area_code, u"national_area_code", false, UString(), 0, MAX_NATIONAL_AREA_CODE_LENGTH) &&
-        element->getAttribute(core_number, u"core_number", false, UString(), 0, MAX_CORE_NUMBER_LENGTH);
+    return  element->getBoolAttribute(foreign_availability, u"foreign_availability", true) &&
+            element->getIntAttribute<uint8_t>(connection_type, u"connection_type", true, 0, 0x00, 0x1F) &&
+            element->getAttribute(country_prefix, u"country_prefix", false, UString(), 0, MAX_COUNTRY_PREFIX_LENGTH) &&
+            element->getAttribute(international_area_code, u"international_area_code", false, UString(), 0, MAX_INTERNATIONAL_AREA_CODE_LENGTH) &&
+            element->getAttribute(operator_code, u"operator_code", false, UString(), 0, MAX_OPERATOR_CODE_LENGTH) &&
+            element->getAttribute(national_area_code, u"national_area_code", false, UString(), 0, MAX_NATIONAL_AREA_CODE_LENGTH) &&
+            element->getAttribute(core_number, u"core_number", false, UString(), 0, MAX_CORE_NUMBER_LENGTH);
 }

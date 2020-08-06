@@ -30,18 +30,18 @@
 #include "tsDCCArrivingRequestDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"dcc_arriving_request_descriptor"
+#define MY_CLASS ts::DCCArrivingRequestDescriptor
 #define MY_DID ts::DID_ATSC_DCC_ARRIVING
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DCCArrivingRequestDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::DCCArrivingRequestDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::DCCArrivingRequestDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,12 @@ ts::DCCArrivingRequestDescriptor::DCCArrivingRequestDescriptor() :
     dcc_arriving_request_type(0),
     dcc_arriving_request_text()
 {
-    _is_valid = true;
+}
+
+void ts::DCCArrivingRequestDescriptor::clearContent()
+{
+    dcc_arriving_request_type = 0;
+    dcc_arriving_request_text.clear();
 }
 
 ts::DCCArrivingRequestDescriptor::DCCArrivingRequestDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -86,7 +91,7 @@ void ts::DCCArrivingRequestDescriptor::deserialize(DuckContext& duck, const Desc
 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2;
 
     if (_is_valid) {
         dcc_arriving_request_type = *data++;
@@ -102,12 +107,17 @@ void ts::DCCArrivingRequestDescriptor::deserialize(DuckContext& duck, const Desc
 
 void ts::DCCArrivingRequestDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
+    const std::string margin(indent, ' ');
+
     if (size >= 2) {
-        display.duck().out() << UString::Format(u"%*sDCC arriving request type: 0x%X (%d)", {indent, u"", data[0], data[0]}) << std::endl;
+        strm << margin << UString::Format(u"DCC arriving request type: 0x%X (%d)", {data[0], data[0]}) << std::endl;
         const size_t len = data[1];
         data += 2; size -= 2;
         ATSCMultipleString::Display(display, u"DCC arriving request text: ", indent, data, size, len);
     }
+
     display.displayExtraData(data, size, indent);
 }
 
@@ -127,10 +137,8 @@ void ts::DCCArrivingRequestDescriptor::buildXML(DuckContext& duck, xml::Element*
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DCCArrivingRequestDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DCCArrivingRequestDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(dcc_arriving_request_type, u"dcc_arriving_request_type", true) &&
-        dcc_arriving_request_text.fromXML(duck, element, u"dcc_arriving_request_text", false);
+    return element->getIntAttribute<uint8_t>(dcc_arriving_request_type, u"dcc_arriving_request_type", true) &&
+           dcc_arriving_request_text.fromXML(duck, element, u"dcc_arriving_request_text", false);
 }

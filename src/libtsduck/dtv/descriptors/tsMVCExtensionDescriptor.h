@@ -55,7 +55,7 @@ namespace ts {
         uint8_t  temporal_id_end;               //!< 3 bits
         bool     no_sei_nal_unit_present;       //!< 1 bit
         bool     no_prefix_nal_unit_present;    //!< 1 bit
-            
+
         //!
         //! Default constructor.
         //!
@@ -71,11 +71,12 @@ namespace ts {
         // Inherited methods
         virtual void serialize(DuckContext&, Descriptor&) const override;
         virtual void deserialize(DuckContext&, const Descriptor&) override;
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
     };
 }

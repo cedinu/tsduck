@@ -28,11 +28,17 @@
 //----------------------------------------------------------------------------
 
 #include "tshlsOutputPlugin.h"
+#include "tsPluginRepository.h"
 #include "tsOneShotPacketizer.h"
 #include "tsPAT.h"
 #include "tsPMT.h"
 #include "tsSysUtils.h"
 TSDUCK_SOURCE;
+
+TS_REGISTER_OUTPUT_PLUGIN(u"hls", ts::hls::OutputPlugin);
+
+// A dummy storage value to force inclusion of this module when using the static library.
+const int ts::hls::OutputPlugin::REFERENCE = 0;
 
 #define DEFAULT_OUT_DURATION      10  // Default segment target duration for output streams.
 #define DEFAULT_OUT_LIVE_DURATION  5  // Default segment target duration for output live streams.
@@ -279,7 +285,7 @@ bool ts::hls::OutputPlugin::closeCurrentSegment(bool endOfStream)
 
     // Get the segment file name and size (to be inserted in the playlist).
     const UString segName(_segmentFile.getFileName());
-    const PacketCounter segPackets = _segmentFile.getWriteCount();
+    const PacketCounter segPackets = _segmentFile.writePacketsCount();
 
     // Close the TS file.
     if (!_segmentFile.close(*tsp)) {
@@ -415,7 +421,7 @@ void ts::hls::OutputPlugin::handleTable(SectionDemux& demux, const BinaryTable& 
 
     // If we need to packetize the table, do it now.
     if (packets != nullptr) {
-        OneShotPacketizer pzer(table.sourcePID());
+        OneShotPacketizer pzer(duck, table.sourcePID());
         pzer.addTable(table);
         pzer.getPackets(*packets);
     }
@@ -451,7 +457,7 @@ bool ts::hls::OutputPlugin::writePackets(const TSPacket* pkt, size_t packetCount
         }
 
         // Write the packet in the segment file.
-        if (!_segmentFile.write(p, 1, *tsp)) {
+        if (!_segmentFile.writePackets(p, nullptr, 1, *tsp)) {
             return false;
         }
     }
@@ -480,7 +486,7 @@ bool ts::hls::OutputPlugin::send(const TSPacket* pkt, const TSPacketMetadata* pk
         bool renew = false;
         if (_fixedSegmentSize > 0) {
             // Each segment shall have a fixed size.
-            renew = _segmentFile.getWriteCount() >= _fixedSegmentSize;
+            renew = _segmentFile.writePacketsCount() >= _fixedSegmentSize;
         }
         else if (!_segClosePending) {
             if (pkt_data[i].hasAnyLabel(_close_labels)) {
@@ -489,7 +495,7 @@ bool ts::hls::OutputPlugin::send(const TSPacket* pkt, const TSPacketMetadata* pk
             }
             else if (_pcrAnalyzer.bitrateIsValid()) {
                 // The segment file shall be closed when the estimated duration exceeds the target duration.
-                _segClosePending = PacketInterval(_pcrAnalyzer.bitrate188(), _segmentFile.getWriteCount()) >= _targetDuration * MilliSecPerSec;
+                _segClosePending = PacketInterval(_pcrAnalyzer.bitrate188(), _segmentFile.writePacketsCount()) >= _targetDuration * MilliSecPerSec;
             }
         }
 

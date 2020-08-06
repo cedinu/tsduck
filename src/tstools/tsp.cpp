@@ -53,24 +53,21 @@ const ts::StaticReferencesDVB dependenciesForStaticLib;
 //  Command line options
 //----------------------------------------------------------------------------
 
-class TSPOptions: public ts::ArgsWithPlugins
-{
-    TS_NOBUILD_NOCOPY(TSPOptions);
-public:
-    TSPOptions(int argc, char *argv[]);
-    virtual ~TSPOptions();
+namespace {
+    class TSPOptions: public ts::ArgsWithPlugins
+    {
+        TS_NOBUILD_NOCOPY(TSPOptions);
+    public:
+        TSPOptions(int argc, char *argv[]);
 
-    // Option values
-    ts::DuckContext     duck;             // TSDuck context
-    int                 list_proc_flags;  // List processors, mask of PluginRepository::ListFlag.
-    ts::AsyncReportArgs log_args;         // Asynchronous logger arguments.
-    ts::TSProcessorArgs tsp_args;         // TS processing arguments.
-};
+        // Option values
+        ts::DuckContext     duck;             // TSDuck context
+        int                 list_proc_flags;  // List processors, mask of PluginRepository::ListFlag.
+        ts::AsyncReportArgs log_args;         // Asynchronous logger arguments.
+        ts::TSProcessorArgs tsp_args;         // TS processing arguments.
+    };
+}
 
-// Destructor.
-TSPOptions::~TSPOptions() {}
-
-// Constructor.
 TSPOptions::TSPOptions(int argc, char *argv[]) :
     ts::ArgsWithPlugins(0, 1, 0, UNLIMITED_COUNT, 0, 1),
     duck(this),
@@ -85,6 +82,11 @@ TSPOptions::TSPOptions(int argc, char *argv[]) :
               u"    [-P processor-name [processor-options]] ... \\\n"
               u"    [-O output-name [output-options]]");
 
+    duck.defineArgsForCAS(*this);
+    duck.defineArgsForCharset(*this);
+    duck.defineArgsForHFBand(*this);
+    duck.defineArgsForPDS(*this);
+    duck.defineArgsForStandards(*this);
     log_args.defineArgs(*this);
     tsp_args.defineArgs(*this);
 
@@ -96,6 +98,7 @@ TSPOptions::TSPOptions(int argc, char *argv[]) :
 
     // Load option values.
     list_proc_flags = present(u"list-processors") ? intValue<int>(u"list-processors", ts::PluginRepository::LIST_ALL) : 0;
+    duck.loadArgs(*this);
     log_args.loadArgs(duck, *this);
     tsp_args.loadArgs(duck, *this);
 

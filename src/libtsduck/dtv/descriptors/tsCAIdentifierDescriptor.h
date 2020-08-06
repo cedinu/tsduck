@@ -54,10 +54,9 @@ namespace ts {
 
         //!
         //! Constructor using a variable-length argument list.
-        //! @param [in] casid Variable-length list of CA system ids. All arguments are @c int, not @c uint16_t,
-        //! since integer literals are @c int by default. The end of the argument list must be marked by -1.
+        //! @param [in] casids Variable-length list of CA system ids.
         //!
-        CAIdentifierDescriptor(int casid, ...);
+        CAIdentifierDescriptor(std::initializer_list<uint16_t> casids);
 
         //!
         //! Constructor from a binary descriptor
@@ -69,11 +68,12 @@ namespace ts {
         // Inherited methods
         virtual void serialize(DuckContext&, Descriptor&) const override;
         virtual void deserialize(DuckContext&, const Descriptor&) override;
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
     };
 }

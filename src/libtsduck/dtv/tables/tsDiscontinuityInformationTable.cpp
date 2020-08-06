@@ -30,39 +30,43 @@
 #include "tsDiscontinuityInformationTable.h"
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"discontinuity_information_table"
+#define MY_CLASS ts::DiscontinuityInformationTable
 #define MY_TID ts::TID_DIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::DiscontinuityInformationTable, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::DiscontinuityInformationTable, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::DiscontinuityInformationTable::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::DiscontinuityInformationTable::DiscontinuityInformationTable(bool tr) :
     AbstractTable(MY_TID, MY_XML_NAME, MY_STD),
     transition(tr)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary table
-//----------------------------------------------------------------------------
 
 ts::DiscontinuityInformationTable::DiscontinuityInformationTable(DuckContext& duck, const BinaryTable& table) :
     DiscontinuityInformationTable()
 {
     deserialize(duck, table);
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::DiscontinuityInformationTable::clearContent()
+{
+    transition = false;
 }
 
 
@@ -103,7 +107,8 @@ void ts::DiscontinuityInformationTable::serializeContent(DuckContext& duck, Bina
 
 void ts::DiscontinuityInformationTable::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
@@ -130,9 +135,7 @@ void ts::DiscontinuityInformationTable::buildXML(DuckContext& duck, xml::Element
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DiscontinuityInformationTable::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DiscontinuityInformationTable::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(transition, u"transition", true);
+    return element->getBoolAttribute(transition, u"transition", true);
 }

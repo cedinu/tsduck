@@ -30,35 +30,34 @@
 #include "tsComponentNameDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"component_name_descriptor"
+#define MY_CLASS ts::ComponentNameDescriptor
 #define MY_DID ts::DID_ATSC_COMPONENT_NAME
 #define MY_PDS ts::PDS_ATSC
-#define MY_STD ts::STD_ATSC
+#define MY_STD ts::Standards::ATSC
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ComponentNameDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ComponentNameDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::ComponentNameDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::ComponentNameDescriptor::ComponentNameDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     component_name_string()
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::ComponentNameDescriptor::clearContent()
+{
+    component_name_string.clear();
+}
 
 ts::ComponentNameDescriptor::ComponentNameDescriptor(DuckContext& duck, const Descriptor& desc) :
     ComponentNameDescriptor()
@@ -88,7 +87,7 @@ void ts::ComponentNameDescriptor::deserialize(DuckContext& duck, const Descripto
     component_name_string.clear();
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && component_name_string.deserialize(duck, data, size);
+    _is_valid = desc.isValid() && desc.tag() == tag() && component_name_string.deserialize(duck, data, size);
 }
 
 
@@ -104,7 +103,7 @@ void ts::ComponentNameDescriptor::DisplayDescriptor(TablesDisplay& display, DID 
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::ComponentNameDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -112,14 +111,7 @@ void ts::ComponentNameDescriptor::buildXML(DuckContext& duck, xml::Element* root
     component_name_string.toXML(duck, root, u"component_name_string", true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::ComponentNameDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ComponentNameDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        component_name_string.fromXML(duck, element, u"component_name_string", false);
+    return component_name_string.fromXML(duck, element, u"component_name_string", false);
 }

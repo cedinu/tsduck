@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsReportBuffer.h"
 #include "tsUDPReceiver.h"
@@ -77,8 +76,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(cutoff, ts::CutoffPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"cutoff", ts::CutoffPlugin);
 
 
 //----------------------------------------------------------------------------

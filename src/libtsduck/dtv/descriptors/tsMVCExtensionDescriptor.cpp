@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"MVC_extension_descriptor"
+#define MY_CLASS ts::MVCExtensionDescriptor
 #define MY_DID ts::DID_MVC_EXT
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MVCExtensionDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MVCExtensionDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::MVCExtensionDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -61,7 +61,20 @@ ts::MVCExtensionDescriptor::MVCExtensionDescriptor() :
     no_sei_nal_unit_present(false),
     no_prefix_nal_unit_present(false)
 {
-    _is_valid = true;
+}
+
+void ts::MVCExtensionDescriptor::clearContent()
+{
+    average_bitrate = 0;
+    maximum_bitrate = 0;
+    view_association_not_present = false;
+    base_view_is_left_eyeview = false;
+    view_order_index_min = 0;
+    view_order_index_max = 0;
+    temporal_id_start = 0;
+    temporal_id_end = 0;
+    no_sei_nal_unit_present = false;
+    no_prefix_nal_unit_present = false;
 }
 
 ts::MVCExtensionDescriptor::MVCExtensionDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -101,7 +114,7 @@ void ts::MVCExtensionDescriptor::deserialize(DuckContext& duck, const Descriptor
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 8;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 8;
 
     if (_is_valid) {
         average_bitrate = GetUInt16(data);
@@ -125,7 +138,8 @@ void ts::MVCExtensionDescriptor::deserialize(DuckContext& duck, const Descriptor
 
 void ts::MVCExtensionDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 8) {
@@ -167,18 +181,16 @@ void ts::MVCExtensionDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MVCExtensionDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MVCExtensionDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint16_t>(average_bitrate, u"average_bitrate", true) &&
-        element->getIntAttribute<uint16_t>(maximum_bitrate, u"maximum_bitrate", true) &&
-        element->getBoolAttribute(view_association_not_present, u"view_association_not_present", true) &&
-        element->getBoolAttribute(base_view_is_left_eyeview, u"base_view_is_left_eyeview", true) &&
-        element->getIntAttribute<uint16_t>(view_order_index_min, u"view_order_index_min", true, 0, 0x0000, 0x03FF) &&
-        element->getIntAttribute<uint16_t>(view_order_index_max, u"view_order_index_max", true, 0, 0x0000, 0x03FF) &&
-        element->getIntAttribute<uint8_t>(temporal_id_start, u"temporal_id_start", true, 0, 0x00, 0x07) &&
-        element->getIntAttribute<uint8_t>(temporal_id_end, u"temporal_id_end", true, 0, 0x00, 0x07) &&
-        element->getBoolAttribute(no_sei_nal_unit_present, u"no_sei_nal_unit_present", true) &&
-        element->getBoolAttribute(no_prefix_nal_unit_present, u"no_prefix_nal_unit_present", true);
+    return  element->getIntAttribute<uint16_t>(average_bitrate, u"average_bitrate", true) &&
+            element->getIntAttribute<uint16_t>(maximum_bitrate, u"maximum_bitrate", true) &&
+            element->getBoolAttribute(view_association_not_present, u"view_association_not_present", true) &&
+            element->getBoolAttribute(base_view_is_left_eyeview, u"base_view_is_left_eyeview", true) &&
+            element->getIntAttribute<uint16_t>(view_order_index_min, u"view_order_index_min", true, 0, 0x0000, 0x03FF) &&
+            element->getIntAttribute<uint16_t>(view_order_index_max, u"view_order_index_max", true, 0, 0x0000, 0x03FF) &&
+            element->getIntAttribute<uint8_t>(temporal_id_start, u"temporal_id_start", true, 0, 0x00, 0x07) &&
+            element->getIntAttribute<uint8_t>(temporal_id_end, u"temporal_id_end", true, 0, 0x00, 0x07) &&
+            element->getBoolAttribute(no_sei_nal_unit_present, u"no_sei_nal_unit_present", true) &&
+            element->getBoolAttribute(no_prefix_nal_unit_present, u"no_prefix_nal_unit_present", true);
 }

@@ -29,9 +29,29 @@
 
 #include "tsStaticReferencesDVB.h"
 #include "tsTables.h"
-#include "tsDVBCharsetSingleByte.h"
-#include "tsDVBCharsetUTF16.h"
-#include "tsDVBCharsetUTF8.h"
+
+#include "tsDVBCharTableSingleByte.h"
+#include "tsDVBCharTableUTF16.h"
+#include "tsDVBCharTableUTF8.h"
+#include "tsARIBCharset.h"
+#include "tsDumpCharset.h"
+
+#include "tsDropOutputPlugin.h"
+#include "tsNullInputPlugin.h"
+#include "tsFileInputPlugin.h"
+#include "tsFileOutputPlugin.h"
+#include "tsFilePacketPlugin.h"
+#include "tsForkInputPlugin.h"
+#include "tsForkOutputPlugin.h"
+#include "tsForkPacketPlugin.h"
+#include "tsIPInputPlugin.h"
+#include "tsIPOutputPlugin.h"
+#include "tsDektecInputPlugin.h"
+#include "tsDektecOutputPlugin.h"
+#include "tshlsInputPlugin.h"
+#include "tshlsOutputPlugin.h"
+#include "tsSRTInputPlugin.h"
+#include "tsSRTOutputPlugin.h"
 TSDUCK_SOURCE;
 
 // Macros to generate a unique symbol name.
@@ -53,11 +73,32 @@ ts::StaticReferencesDVB::StaticReferencesDVB() :
 {
     _refs.reserve(100);
 
-    // References to all object files containing DVB character sets.
+    // References to all object files containing character sets.
 
-    REF_OBJECT(DVBCharsetSingleByte::ISO_6937);
-    REF_OBJECT(DVBCharsetUTF16::UNICODE);
-    REF_OBJECT(DVBCharsetUTF8::UTF_8);
+    REF_OBJECT(DVBCharTableSingleByte::DVB_ISO_6937);
+    REF_OBJECT(DVBCharTableUTF16::DVB_UNICODE);
+    REF_OBJECT(DVBCharTableUTF8::DVB_UTF_8);
+    REF_OBJECT(ARIBCharset::B24);
+    REF_OBJECT(DumpCharset::DUMP);
+
+    // Reference to some plugins which are statically registered.
+
+    REF_OBJECT(DropOutputPlugin::REFERENCE);
+    REF_OBJECT(NullInputPlugin::REFERENCE);
+    REF_OBJECT(FileInputPlugin::REFERENCE);
+    REF_OBJECT(FileOutputPlugin::REFERENCE);
+    REF_OBJECT(FilePacketPlugin::REFERENCE);
+    REF_OBJECT(ForkInputPlugin::REFERENCE);
+    REF_OBJECT(ForkOutputPlugin::REFERENCE);
+    REF_OBJECT(ForkPacketPlugin::REFERENCE);
+    REF_OBJECT(IPInputPlugin::REFERENCE);
+    REF_OBJECT(IPOutputPlugin::REFERENCE);
+    REF_OBJECT(DektecInputPlugin::REFERENCE);
+    REF_OBJECT(DektecOutputPlugin::REFERENCE);
+    REF_OBJECT(hls::InputPlugin::REFERENCE);
+    REF_OBJECT(hls::OutputPlugin::REFERENCE);
+    REF_OBJECT(SRTInputPlugin::REFERENCE);
+    REF_OBJECT(SRTOutputPlugin::REFERENCE);
 
     // References to all DVB tables and descriptors.
     // The file tsRefType.h is automatically generated.

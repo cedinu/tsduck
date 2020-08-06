@@ -58,43 +58,40 @@ TS_MAIN(MainCode);
 // Command line options
 //----------------------------------------------------------------------------
 
-class ScanOptions: public ts::Args
-{
-    TS_NOBUILD_NOCOPY(ScanOptions);
-public:
-    ScanOptions(int argc, char *argv[]);
-    virtual ~ScanOptions();
+namespace {
+    class ScanOptions: public ts::Args
+    {
+        TS_NOBUILD_NOCOPY(ScanOptions);
+    public:
+        ScanOptions(int argc, char *argv[]);
 
-    ts::DuckContext   duck;
-    ts::TunerArgs     tuner_args;
-    bool              uhf_scan;
-    bool              vhf_scan;
-    bool              nit_scan;
-    bool              no_offset;
-    bool              use_best_quality;
-    bool              use_best_strength;
-    uint32_t          first_channel;
-    uint32_t          last_channel;
-    int32_t           first_offset;
-    int32_t           last_offset;
-    int               min_strength;
-    int               min_quality;
-    bool              show_modulation;
-    bool              list_services;
-    bool              global_services;
-    ts::MilliSecond   psi_timeout;
-    const ts::HFBand* hfband;
-    ts::UString       channel_file;
-    bool              update_channel_file;
-    bool              default_channel_file;
-};
+        ts::DuckContext   duck;
+        ts::TunerArgs     tuner_args;
+        bool              uhf_scan;
+        bool              vhf_scan;
+        bool              nit_scan;
+        bool              no_offset;
+        bool              use_best_quality;
+        bool              use_best_strength;
+        uint32_t          first_channel;
+        uint32_t          last_channel;
+        int32_t           first_offset;
+        int32_t           last_offset;
+        int               min_strength;
+        int               min_quality;
+        bool              show_modulation;
+        bool              list_services;
+        bool              global_services;
+        ts::MilliSecond   psi_timeout;
+        const ts::HFBand* hfband;
+        ts::UString       channel_file;
+        bool              update_channel_file;
+        bool              default_channel_file;
+    };
+}
 
-// Destructor.
-ScanOptions::~ScanOptions() {}
-
-// Constructor.
 ScanOptions::ScanOptions(int argc, char *argv[]) :
-    Args(u"Scan a DVB network", u"[options]"),
+    Args(u"Scan a DTV network frequencies and services", u"[options]"),
     duck(this),
     tuner_args(false, true),
     uhf_scan(false),
@@ -119,7 +116,27 @@ ScanOptions::ScanOptions(int argc, char *argv[]) :
     default_channel_file(false)
 {
     duck.defineArgsForHFBand(*this);
+    duck.defineArgsForCharset(*this);
     tuner_args.defineArgs(*this);
+
+    setIntro(u"There are three mutually exclusive types of network scanning. "
+             u"Exactly one of the following options shall be specified: "
+             u"--nit-scan, --uhf-band, --vhf-band.");
+
+    option(u"nit-scan", 'n');
+    help(u"nit-scan",
+         u"Tuning parameters for a reference transport stream must be present (frequency or channel reference). "
+         u"The NIT is read on the specified frequency and a full scan of the corresponding network is performed.");
+
+    option(u"uhf-band", 'u');
+    help(u"uhf-band",
+         u"Perform a complete UHF-band scanning (DVB-T, ISDB-T or ATSC). "
+         u"Use the predefined UHF frequency layout of the specified region (see option --hf-band-region). "
+         u"By default, scan the center frequency of each channel only. "
+         u"Use option --use-offsets to scan all predefined offsets in each channel.");
+
+    option(u"vhf-band", 'v');
+    help(u"vhf-band", u"Perform a complete VHF-band scanning. See also option --uhf-band.");
 
     option(u"best-quality");
     help(u"best-quality",
@@ -169,7 +186,7 @@ ScanOptions::ScanOptions(int argc, char *argv[]) :
          u"Minimum signal strength percentage. Frequencies with lower signal "
          u"strength are ignored (default: " + ts::UString::Decimal(DEFAULT_MIN_STRENGTH) + u"%).");
 
-    option(u"no-offset", 'n');
+    option(u"no-offset");
     help(u"no-offset",
          u"For UHF/VHF-band scanning, scan only the central frequency of each channel. "
          u"This is now the default. Specify option --use-offsets to scan all offsets.");
@@ -195,17 +212,6 @@ ScanOptions::ScanOptions(int argc, char *argv[]) :
     help(u"show-modulation",
          u"Display modulation parameters when possible. Note that some tuners "
          u"cannot report correct modulation parameters, making this option useless.");
-
-    option(u"uhf-band", 'u');
-    help(u"uhf-band",
-         u"Perform a complete DVB-T or ATSC UHF-band scanning. Do not use the NIT.\n\n"
-         u"If tuning parameters are present (frequency or channel reference), the NIT is "
-         u"read on the specified frequency and a full scan of the corresponding network is "
-         u"performed. By default, without specific frequency, an UHF-band scanning is performed.");
-
-    option(u"vhf-band", 'v');
-    help(u"vhf-band",
-         u"Perform a complete DVB-T or ATSC VHF-band scanning. See also --uhf-band.");
 
     option(u"save-channels", 0, STRING);
     help(u"save-channels", u"filename",
@@ -234,14 +240,13 @@ ScanOptions::ScanOptions(int argc, char *argv[]) :
     // Type of scanning
     uhf_scan = present(u"uhf-band");
     vhf_scan = present(u"vhf-band");
-    nit_scan = tuner_args.hasModulationArgs();
+    nit_scan = present(u"nit-scan");
 
-    if (nit_scan + uhf_scan + vhf_scan > 1) {
-        error(u"tuning parameters (NIT scan), --uhf-band and --vhf-band are mutually exclusive.");
+    if (nit_scan + uhf_scan + vhf_scan != 1) {
+        error(u"specify exactly one of --nit-scan, --uhf-band or --vhf-band");
     }
-    if (!uhf_scan && !vhf_scan && !nit_scan) {
-        // Default is UHF scan.
-        uhf_scan = true;
+    if (nit_scan && !tuner_args.hasModulationArgs()) {
+        error(u"specify the characteristics of the reference TS with --nit-scan");
     }
 
     // Type of HF band to use.
@@ -370,7 +375,11 @@ OffsetScanner::OffsetScanner(ScanOptions& opt, ts::Tuner& tuner, uint32_t channe
 
     // If signal was found, select best offset
     if (_signal_found) {
-        if (_opt.use_best_quality && _best_quality > 0) {
+        if (_opt.no_offset) {
+            // No offset search, the best and only offset is zero.
+            _best_offset = 0;
+        }
+        else if (_opt.use_best_quality && _best_quality > 0) {
             // Signal quality indicator is valid, use offset with best signal quality
             _best_offset = _best_quality_offset;
         }
@@ -433,7 +442,11 @@ bool OffsetScanner::tryOffset(int32_t offset)
     // Double-check that the signal was locked.
     bool ok = _tuner.signalLocked(_opt);
 
-    if (ok) {
+    // If we get a signal and we wee need to scan offsets, check signal strength and quality.
+    // Note that if we don't scan offsets, there is no need to consider signal strength
+    // and quality, just use the central offset.
+    if (ok && !_opt.no_offset) {
+
         // Get signal quality & strength
         const int strength = _tuner.signalStrength(_opt);
         const int quality = _tuner.signalQuality(_opt);
@@ -647,13 +660,13 @@ void ScanContext::nitScan()
     // Process each TS descriptor list in the NIT.
     for (auto it = nit->transports.begin(); it != nit->transports.end(); ++it) {
 
-        // Descriptor list for this TS.
+        const ts::TransportStreamId& tsid(it->first);
         const ts::DescriptorList& dlist(it->second.descs);
 
         for (size_t i = 0; i < dlist.count(); ++i) {
             // Try to get delivery system information from current descriptor
             ts::ModulationArgs params;
-            if (params.fromDeliveryDescriptor(*dlist[i])) {
+            if (params.fromDeliveryDescriptor(_opt.duck, *dlist[i], tsid.transport_stream_id)) {
                 // Got a delivery descriptor, this is the description of one transponder.
                 // Tune to this transponder.
                 _opt.debug(u"* tuning to " + params.toPluginOptions(true));

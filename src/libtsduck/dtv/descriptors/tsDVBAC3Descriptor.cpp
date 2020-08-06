@@ -31,43 +31,42 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"DVB_AC3_descriptor"
 #define MY_XML_NAME_LEGACY u"AC3_descriptor"
+#define MY_CLASS ts::DVBAC3Descriptor
 #define MY_DID ts::DID_AC3
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBAC3Descriptor, MY_XML_NAME);
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBAC3Descriptor, MY_XML_NAME_LEGACY);
-TS_ID_DESCRIPTOR_FACTORY(ts::DVBAC3Descriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::DVBAC3Descriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
-
-// For compatibility:
-TS_XML_DESCRIPTOR_FACTORY(ts::DVBAC3Descriptor, u"AC3_descriptor");
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor, MY_XML_NAME_LEGACY);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::DVBAC3Descriptor::DVBAC3Descriptor() :
-    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
+    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0, MY_XML_NAME_LEGACY),
     component_type(),
     bsid(),
     mainid(),
     asvc(),
     additional_info()
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::DVBAC3Descriptor::clearContent()
+{
+    component_type.clear();
+    bsid.clear();
+    mainid.clear();
+    asvc.clear();
+    additional_info.clear();
+}
 
 ts::DVBAC3Descriptor::DVBAC3Descriptor(DuckContext& duck, const Descriptor& desc) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
@@ -139,12 +138,12 @@ void ts::DVBAC3Descriptor::serialize(DuckContext& duck, Descriptor& desc) const
 
 void ts::DVBAC3Descriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 1;
 
-    component_type.reset();
-    bsid.reset();
-    mainid.reset();
-    asvc.reset();
+    component_type.clear();
+    bsid.clear();
+    mainid.clear();
+    asvc.clear();
     additional_info.clear();
 
     if (_is_valid) {
@@ -168,7 +167,7 @@ void ts::DVBAC3Descriptor::deserialize(DuckContext& duck, const Descriptor& desc
             asvc = *data;
             data++; size--;
         }
-        additional_info.copy (data, size);
+        additional_info.copy(data, size);
     }
 }
 
@@ -179,7 +178,8 @@ void ts::DVBAC3Descriptor::deserialize(DuckContext& duck, const Descriptor& desc
 
 void ts::DVBAC3Descriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -205,14 +205,11 @@ void ts::DVBAC3Descriptor::DisplayDescriptor(TablesDisplay& display, DID did, co
             data++; size--;
             strm << margin << UString::Format(u"Associated to: 0x%X", {asvc}) << std::endl;
         }
-        if (size > 0) {
-            strm << margin << "Additional information:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            data += size; size = 0;
-        }
+        display.displayPrivateData(u"Additional information", data, size, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 
@@ -226,9 +223,7 @@ void ts::DVBAC3Descriptor::buildXML(DuckContext& duck, xml::Element* root) const
     root->setOptionalIntAttribute(u"bsid", bsid, true);
     root->setOptionalIntAttribute(u"mainid", mainid, true);
     root->setOptionalIntAttribute(u"asvc", asvc, true);
-    if (!additional_info.empty()) {
-        root->addElement(u"additional_info")->addHexaText(additional_info);
-    }
+    root->addHexaTextChild(u"additional_info", additional_info, true);
 }
 
 
@@ -236,13 +231,11 @@ void ts::DVBAC3Descriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DVBAC3Descriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DVBAC3Descriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element, MY_XML_NAME_LEGACY) &&
-        element->getOptionalIntAttribute(component_type, u"component_type") &&
-        element->getOptionalIntAttribute(bsid, u"bsid") &&
-        element->getOptionalIntAttribute(mainid, u"mainid") &&
-        element->getOptionalIntAttribute(asvc, u"asvc") &&
-        element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 8);
+    return element->getOptionalIntAttribute(component_type, u"component_type") &&
+           element->getOptionalIntAttribute(bsid, u"bsid") &&
+           element->getOptionalIntAttribute(mainid, u"mainid") &&
+           element->getOptionalIntAttribute(asvc, u"asvc") &&
+           element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 8);
 }

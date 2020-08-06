@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsContinuityAnalyzer.h"
 TSDUCK_SOURCE;
@@ -62,8 +61,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(continuity, ts::ContinuityPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"continuity", ts::ContinuityPlugin);
 
 
 //----------------------------------------------------------------------------

@@ -34,14 +34,15 @@
 
 #pragma once
 #include "tsAbstractDefinedByStandards.h"
-#include "tsDuckContext.h"
-#include "tsSection.h"
-#include "tsUString.h"
 #include "tsTablesPtr.h"
 #include "tsTLVSyntax.h"
 #include "tsxml.h"
 
 namespace ts {
+
+    class DuckContext;
+    class Section;
+
     //!
     //! Representation of MPEG PSI/SI tables in binary form (ie. list of sections).
     //! @ingroup mpeg
@@ -70,7 +71,7 @@ namespace ts {
         //! @param [in] mode The sections are either shared (ts::SHARE) between the
         //! two tables or duplicated (ts::COPY).
         //!
-        BinaryTable(const BinaryTable& table, CopyShare mode);
+        BinaryTable(const BinaryTable& table, ShareMode mode);
 
         //!
         //! Move constructor.
@@ -291,7 +292,7 @@ namespace ts {
         //! @param [in] index Index of the section to get.
         //! @return A safe pointer to the section or a null pointer if the specified section is not present.
         //!
-        const SectionPtr& sectionAt(size_t index) const;
+        const SectionPtr sectionAt(size_t index) const;
 
         //!
         //! Check if this is a table with one short section.

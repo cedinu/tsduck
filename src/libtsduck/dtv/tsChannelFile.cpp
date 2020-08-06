@@ -135,7 +135,7 @@ ts::ChannelFile::ServicePtr ts::ChannelFile::TransportStream::serviceByName(cons
 // Add a service in a transport stream.
 //----------------------------------------------------------------------------
 
-bool ts::ChannelFile::TransportStream::addService(const ServicePtr& srv, CopyShare copy, bool replace)
+bool ts::ChannelFile::TransportStream::addService(const ServicePtr& srv, ShareMode copy, bool replace)
 {
     // Filter out null pointer.
     if (srv.isNull()) {
@@ -147,7 +147,7 @@ bool ts::ChannelFile::TransportStream::addService(const ServicePtr& srv, CopySha
         assert(!_services[i].isNull());
         if (_services[i]->id == srv->id) {
             if (replace) {
-                _services[i] = copy == SHARE ? srv : new Service(*srv);
+                _services[i] = copy == ShareMode::SHARE ? srv : new Service(*srv);
                 CheckNonNull(_services[i].pointer());
                 return true;
             }
@@ -158,7 +158,7 @@ bool ts::ChannelFile::TransportStream::addService(const ServicePtr& srv, CopySha
     }
 
     // Add new service.
-    _services.push_back(copy == SHARE ? srv : new Service(*srv));
+    _services.push_back(copy == ShareMode::SHARE ? srv : new Service(*srv));
     CheckNonNull(_services.back().pointer());
     return true;
 }
@@ -289,7 +289,6 @@ bool ts::ChannelFile::serviceToTuning(ModulationArgs& tune, const DeliverySystem
         return true;
     }
     else {
-        tune.reset();
         return false;
     }
 }
@@ -302,6 +301,8 @@ bool ts::ChannelFile::searchService(NetworkPtr& net,
                                     bool strict,
                                     Report& report) const
 {
+    report.debug(u"searching channel \"%s\" for delivery systems %s in %s", {name, delsys, fileDescription()});
+
     // Clear output parameters.
     net.clear();
     ts.clear();
@@ -309,17 +310,21 @@ bool ts::ChannelFile::searchService(NetworkPtr& net,
 
     // Loop through all networks.
     for (size_t inet = 0; inet < _networks.size(); ++inet) {
+
         const NetworkPtr& pnet(_networks[inet]);
         assert(!pnet.isNull());
+
         // Inspect this network, loop through all transport stream.
         for (size_t its = 0; its < pnet->tsCount(); ++its) {
             const TransportStreamPtr& pts(pnet->tsByIndex(its));
             assert(!pts.isNull());
             // Check if this TS has an acceptable delivery system.
             // If the input delsys is empty, accept any delivery system.
-            if (delsys.empty() || (pts->tune.delivery_system.set() && delsys.find(pts->tune.delivery_system.value()) != delsys.end())) {
+            if (delsys.empty() || (pts->tune.delivery_system.set() && delsys.contains(pts->tune.delivery_system.value()))) {
+                report.debug(u"searching channel \"%s\" in TS id 0x%X, delivery system %s", {name, pts->id, DeliverySystemEnum.name(pts->tune.delivery_system.value(DS_UNDEFINED))});
                 srv = pts->serviceByName(name, strict);
                 if (!srv.isNull()) {
+                    report.debug(u"found channel \"%s\" in TS id 0x%X", {name, pts->id});
                     net = pnet;
                     ts = pts;
                     return true;
@@ -329,13 +334,18 @@ bool ts::ChannelFile::searchService(NetworkPtr& net,
     }
 
     // Channel not found.
-    if (_fileName.empty()) {
-        report.error(u"channel \"%s\" not found in channel database", {name});
-    }
-    else {
-        report.error(u"channel \"%s\" not found in file %s", {name, _fileName});
-    }
+    report.error(u"channel \"%s\" not found in %s", {name, fileDescription()});
     return false;
+}
+
+
+//----------------------------------------------------------------------------
+// Get a description of the file from which the channel database was loaded.
+//----------------------------------------------------------------------------
+
+ts::UString ts::ChannelFile::fileDescription() const
+{
+    return _fileName.empty() ? u"channel database" : _fileName;
 }
 
 
@@ -470,14 +480,14 @@ bool ts::ChannelFile::parseDocument(const xml::Document& doc)
                             success;
 
                         // Add the service in the transport stream.
-                        ts->addService(srv, SHARE, true);
+                        ts->addService(srv, ShareMode::SHARE, true);
                     }
                     else if (ts->tune.hasModulationArgs()) {
                         // Tuner parameters already set.
                         doc.report().error(u"Invalid <%s> at line %d, at most one set of tuner parameters is allowed in <ts>", {e->name(), e->lineNumber()});
                         success = false;
                     }
-                    else if (!fromXML(ts->tune, e, net->type)) {
+                    else if (!fromXML(ts->tune, e, net->type, tsid)) {
                         doc.report().error(u"Invalid <%s> at line %d", {e->name(), e->lineNumber()});
                         success = false;
                     }
@@ -585,7 +595,7 @@ bool ts::ChannelFile::generateDocument(xml::Document& doc) const
 // Convert modulation parameters from XML.
 //----------------------------------------------------------------------------
 
-bool ts::ChannelFile::fromXML(ModulationArgs& mod, const xml::Element* elem, TunerType tunerType)
+bool ts::ChannelFile::fromXML(ModulationArgs& mod, const xml::Element* elem, TunerType tunerType, uint16_t ts_id)
 {
     // Clear parameter area.
     mod.reset();
@@ -640,6 +650,26 @@ bool ts::ChannelFile::fromXML(ModulationArgs& mod, const xml::Element* elem, Tun
             elem->getVariableIntAttribute<uint64_t>(mod.frequency, u"frequency", true) &&
             elem->getVariableIntEnumAttribute(mod.modulation, ModulationEnum, u"modulation", false, VSB_8) &&
             elem->getOptionalIntEnumAttribute(mod.inversion, SpectralInversionEnum, u"inversion");
+    }
+    else if (elem->name().similar(u"isdbt")) {
+        mod.delivery_system = DS_ISDB_T;
+        return
+            elem->getVariableIntAttribute<uint64_t>(mod.frequency, u"frequency", true) &&
+            elem->getOptionalIntEnumAttribute(mod.bandwidth, BandWidthEnum, u"bandwidth") &&
+            elem->getOptionalIntEnumAttribute(mod.transmission_mode, TransmissionModeEnum, u"transmission") &&
+            elem->getOptionalIntEnumAttribute(mod.guard_interval, GuardIntervalEnum, u"guard") &&
+            elem->getOptionalIntEnumAttribute(mod.inversion, SpectralInversionEnum, u"inversion");
+    }
+    else if (elem->name().similar(u"isdbs")) {
+        mod.delivery_system = DS_ISDB_S;
+        mod.stream_id = ts_id;
+        return
+            elem->getOptionalIntAttribute<size_t>(mod.satellite_number, u"satellite", 0, 3) &&
+            elem->getVariableIntAttribute<uint64_t>(mod.frequency, u"frequency", true) &&
+            elem->getVariableIntAttribute<uint32_t>(mod.symbol_rate, u"symbolrate", false, 27500000) &&
+            elem->getOptionalIntEnumAttribute(mod.inner_fec, InnerFECEnum, u"FEC") &&
+            elem->getOptionalIntEnumAttribute(mod.inversion, SpectralInversionEnum, u"inversion") &&
+            elem->getOptionalIntEnumAttribute(mod.polarity, PolarizationEnum, u"polarity");
     }
     else {
         // Not a valid modulation parameters node.
@@ -744,8 +774,41 @@ ts::xml::Element* ts::ChannelFile::toXML(const ModulationArgs& mod, xml::Element
             }
             return e;
         }
-        case TT_ISDB_S:
-        case TT_ISDB_T:
+        case TT_ISDB_T: {
+            xml::Element* e = parent->addElement(u"isdbt");
+            e->setOptionalIntAttribute(u"frequency", mod.frequency, false);
+            if (mod.bandwidth != BW_AUTO) {
+                e->setOptionalEnumAttribute(BandWidthEnum, u"bandwidth", mod.bandwidth);
+            }
+            if (mod.transmission_mode != TM_AUTO) {
+                e->setOptionalEnumAttribute(TransmissionModeEnum, u"transmission", mod.transmission_mode);
+            }
+            if (mod.guard_interval != GUARD_AUTO) {
+                e->setOptionalEnumAttribute(GuardIntervalEnum, u"guard", mod.guard_interval);
+            }
+            if (mod.inversion != SPINV_AUTO) {
+                e->setOptionalEnumAttribute(SpectralInversionEnum, u"inversion", mod.inversion);
+            }
+            return e;
+        }
+        case TT_ISDB_S: {
+            xml::Element* e = parent->addElement(u"isdbs");
+            if (mod.satellite_number != 0) {
+                e->setOptionalIntAttribute(u"satellite", mod.satellite_number, false);
+            }
+            e->setOptionalIntAttribute(u"frequency", mod.frequency, false);
+            e->setOptionalIntAttribute(u"symbolrate", mod.symbol_rate, false);
+            if (mod.polarity != POL_AUTO) {
+                e->setOptionalEnumAttribute(PolarizationEnum, u"polarity", mod.polarity);
+            }
+            if (mod.inversion != SPINV_AUTO) {
+                e->setOptionalEnumAttribute(SpectralInversionEnum, u"inversion", mod.inversion);
+            }
+            if (mod.inner_fec != FEC_AUTO) {
+                e->setOptionalEnumAttribute(InnerFECEnum, u"FEC", mod.inner_fec);
+            }
+            return e;
+        }
         case TT_ISDB_C:
         case TT_UNDEFINED:
         default: {

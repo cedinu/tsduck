@@ -41,6 +41,7 @@
 namespace ts {
     //!
     //! Representation of a Time Offset Table (TOT)
+    //! @see ETSI EN 300 468, 5.2.6
     //! @ingroup table
     //!
     class TSDUCKDLL TOT : public AbstractTable
@@ -96,14 +97,15 @@ namespace ts {
         static UString timeOffsetFormat(int minutes);
 
         // Inherited methods
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
         DeclareDisplaySection();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void serializeContent(DuckContext&, BinaryTable&) const override;
         virtual void deserializeContent(DuckContext&, const BinaryTable&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
 
     private:
         // Add descriptors, filling regions from local_time_offset_descriptor's.

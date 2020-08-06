@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsT2MIDemux.h"
 #include "tsT2MIDescriptor.h"
@@ -91,8 +90,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(t2mi, ts::T2MIPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"t2mi", ts::T2MIPlugin);
 
 
 //----------------------------------------------------------------------------
@@ -357,7 +355,7 @@ void ts::T2MIPlugin::handleTSPacket(T2MIDemux& demux, const T2MIPacket& t2mi, co
         }
         else {
             // Write the packet to output file.
-            _abort = _abort || !_outfile.write(&ts, 1, *tsp);
+            _abort = _abort || !_outfile.writePackets(&ts, nullptr, 1, *tsp);
         }
     }
 }

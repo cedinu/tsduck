@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"copyright_descriptor"
+#define MY_CLASS ts::CopyrightDescriptor
 #define MY_DID ts::DID_COPYRIGHT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CopyrightDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CopyrightDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::CopyrightDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,12 @@ ts::CopyrightDescriptor::CopyrightDescriptor() :
     copyright_identifier(0),
     additional_copyright_info()
 {
-    _is_valid = true;
+}
+
+void ts::CopyrightDescriptor::clearContent()
+{
+    copyright_identifier = 0;
+    additional_copyright_info.clear();
 }
 
 ts::CopyrightDescriptor::CopyrightDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -87,7 +92,7 @@ void ts::CopyrightDescriptor::deserialize(DuckContext& duck, const Descriptor& d
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4;
 
     if (_is_valid) {
         copyright_identifier = GetUInt32(data);
@@ -102,24 +107,19 @@ void ts::CopyrightDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 
 void ts::CopyrightDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
         // Sometimes, the copyright identifier is made of ASCII characters. Try to display them.
         strm << margin << UString::Format(u"Copyright identifier: 0x%X", {GetUInt32(data)});
-        display.duck().displayIfASCII(data, 4, u" (\"", u"\")");
-        strm << std::endl;
-        data += 4; size -= 4;
-        // Additional binary info.
-        if (size > 0) {
-            strm << margin << "Additional copyright info:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            data += size; size = 0;
-        }
+        duck.displayIfASCII(data, 4, u" (\"", u"\")") << std::endl;
+        display.displayPrivateData(u"Additional copyright info", data + 4, size - 4, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }
 
 
@@ -130,9 +130,7 @@ void ts::CopyrightDescriptor::DisplayDescriptor(TablesDisplay& display, DID did,
 void ts::CopyrightDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
     root->setIntAttribute(u"copyright_identifier", copyright_identifier, true);
-    if (!additional_copyright_info.empty()) {
-        root->addElement(u"additional_copyright_info")->addHexaText(additional_copyright_info);
-    }
+    root->addHexaTextChild(u"additional_copyright_info", additional_copyright_info, true);
 }
 
 
@@ -140,10 +138,8 @@ void ts::CopyrightDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CopyrightDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CopyrightDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(copyright_identifier, u"copyright_identifier", true) &&
-        element->getHexaTextChild(additional_copyright_info, u"additional_copyright_info", false, 0, MAX_DESCRIPTOR_SIZE - 6);
+    return element->getIntAttribute<uint32_t>(copyright_identifier, u"copyright_identifier", true) &&
+           element->getHexaTextChild(additional_copyright_info, u"additional_copyright_info", false, 0, MAX_DESCRIPTOR_SIZE - 6);
 }

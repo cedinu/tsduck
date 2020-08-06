@@ -30,21 +30,21 @@
 #include "tsNPTReferenceDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"NPT_reference_descriptor"
+#define MY_CLASS ts::NPTReferenceDescriptor
 #define MY_DID ts::DID_NPT_REFERENCE
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::NPTReferenceDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::NPTReferenceDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::NPTReferenceDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::NPTReferenceDescriptor::NPTReferenceDescriptor() :
@@ -56,19 +56,14 @@ ts::NPTReferenceDescriptor::NPTReferenceDescriptor() :
     scale_numerator(0),
     scale_denominator(0)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::NPTReferenceDescriptor::NPTReferenceDescriptor(DuckContext& duck, const Descriptor& desc) :
     NPTReferenceDescriptor()
 {
     deserialize(duck, desc);
 }
+
 
 
 //----------------------------------------------------------------------------
@@ -140,7 +135,7 @@ void ts::NPTReferenceDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 
 void ts::NPTReferenceDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 18;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 18;
 
     if (_is_valid) {
         const uint8_t* data = desc.payload();
@@ -153,6 +148,16 @@ void ts::NPTReferenceDescriptor::deserialize(DuckContext& duck, const Descriptor
     }
 }
 
+void ts::NPTReferenceDescriptor::clearContent()
+{
+    post_discontinuity = false;
+    content_id = 0;
+    STC_reference = 0;
+    NPT_reference = 0;
+    scale_numerator = 0;
+    scale_denominator = 0;
+}
+
 
 //----------------------------------------------------------------------------
 // Static method to display a descriptor.
@@ -160,7 +165,8 @@ void ts::NPTReferenceDescriptor::deserialize(DuckContext& duck, const Descriptor
 
 void ts::NPTReferenceDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 18) {
@@ -197,14 +203,12 @@ void ts::NPTReferenceDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::NPTReferenceDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::NPTReferenceDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getBoolAttribute(post_discontinuity, u"post_discontinuity", false, false) &&
-        element->getIntAttribute<uint8_t>(content_id, u"content_id", false, 0x7F, 0x00, 0x7F) &&
-        element->getIntAttribute<uint64_t>(STC_reference, u"STC_reference", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
-        element->getIntAttribute<uint64_t>(NPT_reference, u"NPT_reference", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
-        element->getIntAttribute<uint16_t>(scale_numerator, u"scale_numerator", true) &&
-        element->getIntAttribute<uint16_t>(scale_denominator, u"scale_denominator", true);
+    return element->getBoolAttribute(post_discontinuity, u"post_discontinuity", false, false) &&
+           element->getIntAttribute<uint8_t>(content_id, u"content_id", false, 0x7F, 0x00, 0x7F) &&
+           element->getIntAttribute<uint64_t>(STC_reference, u"STC_reference", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
+           element->getIntAttribute<uint64_t>(NPT_reference, u"NPT_reference", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
+           element->getIntAttribute<uint16_t>(scale_numerator, u"scale_numerator", true) &&
+           element->getIntAttribute<uint16_t>(scale_denominator, u"scale_denominator", true);
 }

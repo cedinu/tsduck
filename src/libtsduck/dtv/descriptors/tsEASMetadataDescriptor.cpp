@@ -30,18 +30,18 @@
 #include "tsEASMetadataDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"EAS_metadata_descriptor"
+#define MY_CLASS ts::EASMetadataDescriptor
 #define MY_DID ts::DID_EAS_METADATA
 #define MY_TID ts::TID_SCTE18_EAS
-#define MY_STD ts::STD_SCTE
+#define MY_STD ts::Standards::SCTE
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::EASMetadataDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::EASMetadataDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::EASMetadataDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,13 +53,18 @@ ts::EASMetadataDescriptor::EASMetadataDescriptor() :
     fragment_number(1),
     XML_fragment()
 {
-    _is_valid = true;
 }
 
 ts::EASMetadataDescriptor::EASMetadataDescriptor(DuckContext& duck, const Descriptor& desc) :
     EASMetadataDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::EASMetadataDescriptor::clearContent()
+{
+    fragment_number = 1;
+    XML_fragment.clear();
 }
 
 
@@ -89,7 +94,7 @@ void ts::EASMetadataDescriptor::deserialize(DuckContext& duck, const Descriptor&
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 2;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2;
 
     if (_is_valid) {
         fragment_number = data[0];
@@ -105,7 +110,8 @@ void ts::EASMetadataDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::EASMetadataDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 2) {
@@ -126,9 +132,7 @@ void ts::EASMetadataDescriptor::DisplayDescriptor(TablesDisplay& display, DID di
 void ts::EASMetadataDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
     root->setIntAttribute(u"fragment_number", fragment_number, false);
-    if (!XML_fragment.empty()) {
-        root->addText(XML_fragment);
-    }
+    root->addText(XML_fragment, true);
 }
 
 
@@ -136,10 +140,8 @@ void ts::EASMetadataDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::EASMetadataDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::EASMetadataDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(fragment_number, u"fragment_number", false, 1, 1, 255) &&
-        element->getText(XML_fragment, false, 0, 253);
+    return element->getIntAttribute<uint8_t>(fragment_number, u"fragment_number", false, 1, 1, 255) &&
+           element->getText(XML_fragment, false, 0, 253);
 }

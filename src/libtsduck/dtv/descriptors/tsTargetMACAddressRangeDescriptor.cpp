@@ -30,18 +30,18 @@
 #include "tsTargetMACAddressRangeDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"target_MAC_address_range_descriptor"
+#define MY_CLASS ts::TargetMACAddressRangeDescriptor
 #define MY_DID ts::DID_INT_MAC_ADDR_RANGE
 #define MY_TID ts::TID_INT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::TargetMACAddressRangeDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::TargetMACAddressRangeDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::TargetMACAddressRangeDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,7 +52,11 @@ ts::TargetMACAddressRangeDescriptor::TargetMACAddressRangeDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     ranges()
 {
-    _is_valid = true;
+}
+
+void ts::TargetMACAddressRangeDescriptor::clearContent()
+{
+    ranges.clear();
 }
 
 ts::TargetMACAddressRangeDescriptor::TargetMACAddressRangeDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -92,7 +96,7 @@ void ts::TargetMACAddressRangeDescriptor::deserialize(DuckContext& duck, const D
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size % 12 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size % 12 == 0;
     ranges.clear();
 
     if (_is_valid) {
@@ -110,7 +114,8 @@ void ts::TargetMACAddressRangeDescriptor::deserialize(DuckContext& duck, const D
 
 void ts::TargetMACAddressRangeDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 12) {
@@ -143,22 +148,16 @@ void ts::TargetMACAddressRangeDescriptor::buildXML(DuckContext& duck, xml::Eleme
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TargetMACAddressRangeDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TargetMACAddressRangeDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    ranges.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"range", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"range", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Range range;
-        _is_valid =
-            children[i]->getMACAttribute(range.MAC_addr_low, u"MAC_addr_low", true) &&
-            children[i]->getMACAttribute(range.MAC_addr_high, u"MAC_addr_high", true);
-        if (_is_valid) {
-            ranges.push_back(range);
-        }
+        ok = children[i]->getMACAttribute(range.MAC_addr_low, u"MAC_addr_low", true) &&
+             children[i]->getMACAttribute(range.MAC_addr_high, u"MAC_addr_high", true);
+        ranges.push_back(range);
     }
+    return ok;
 }

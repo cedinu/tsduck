@@ -76,7 +76,7 @@ namespace ts {
     //!
     class TSDUCKDLL CyclingPacketizer: public Packetizer, private SectionProviderInterface
     {
-        TS_NOCOPY(CyclingPacketizer);
+        TS_NOBUILD_NOCOPY(CyclingPacketizer);
     public:
         //!
         //! Specify where stuffing applies.
@@ -89,12 +89,14 @@ namespace ts {
 
         //!
         //! Default constructor.
+        //! @param [in] duck TSDuck execution context. The reference is kept inside the packetizer.
         //! @param [in] pid PID for generated TS packets.
         //! @param [in] policy TS packet stuffing policy at end of packet.
         //! @param [in] bitrate Output bitrate, zero if undefined.
         //! Useful only when using specific repetition rates for sections
+        //! @param [in] report Optional address of a Report object for debug and trace messages.
         //!
-        CyclingPacketizer(PID pid = PID_NULL, StuffingPolicy policy = AT_END, BitRate bitrate = 0);
+        CyclingPacketizer(const DuckContext& duck, PID pid = PID_NULL, StuffingPolicy policy = AT_END, BitRate bitrate = 0, Report* report = nullptr);
 
         //!
         //! Destructor
@@ -151,8 +153,9 @@ namespace ts {
         void addSections(const SectionPtrVector& sections, MilliSecond repetition_rate = 0);
 
         //!
-        //! Add all sections of a table into the packetizer.
-        //! The contents of the sections are shared.
+        //! Add all sections of a binary table into the packetizer.
+        //! The contents of the sections are shared. If the table is not complete (there are
+        //! missing sections), the sections which are present are individually added.
         //! @param [in] table A binary table to packetize.
         //! @param [in] repetition_rate Repetition rate of the sections in milliseconds.
         //! If zero, simply packetize sections one after the other.
@@ -160,8 +163,7 @@ namespace ts {
         void addTable(const BinaryTable& table, MilliSecond repetition_rate = 0);
 
         //!
-        //! Add all sections of a table into the packetizer.
-        //! The contents of the sections are shared.
+        //! Add all sections of a typed table into the packetizer.
         //! @param [in,out] duck TSDuck execution context.
         //! @param [in] table A table to packetize.
         //! @param [in] repetition_rate Repetition rate of the sections in milliseconds.
@@ -224,13 +226,13 @@ namespace ts {
             SectionCounter last_cycle;  // Cycle index of last time the section was sent
 
             // Constructor
-            SectionDesc(const SectionPtr& sec, MilliSecond rep) :
-                section(sec), repetition(rep), last_packet(0), due_packet(0), last_cycle(0)
-            {
-            }
+            SectionDesc(const SectionPtr& sec, MilliSecond rep);
+
+            // Check if this section shall be inserted after some other one.
+            bool insertAfter(const SectionDesc& other) const;
 
             // Display the internal state, mainly for debug.
-            std::ostream& display(std::ostream&) const;
+            std::ostream& display(const DuckContext&, std::ostream&) const;
         };
 
         // Safe pointer for SectionDesc (not thread-safe)
@@ -252,8 +254,7 @@ namespace ts {
 
         static const SectionCounter UNDEFINED = ~SectionCounter(0);
 
-        // Insert a scheduled section in the list, sorted by due_packet,
-        // after other sections with the same due_packet.
+        // Insert a scheduled section in the list, sorted by due_packet.
         void addScheduledSection(const SectionDescPtr&);
 
         // Remove all sections with the specified tid/tid_ext in the specified list.

@@ -48,24 +48,24 @@ ts::PluginThread::PluginThread(Report* report, const UString& appName, PluginTyp
 
     // Create the plugin instance object
     switch (type) {
-        case INPUT_PLUGIN: {
-            NewInputProfile allocator = PluginRepository::Instance()->getInput(_name, *report);
+        case PluginType::INPUT: {
+            PluginRepository::InputPluginFactory allocator = PluginRepository::Instance()->getInput(_name, *report);
             if (allocator != nullptr) {
                 _shlib = allocator(this);
                 shellOpt = u" -I";
             }
             break;
         }
-        case OUTPUT_PLUGIN: {
-            NewOutputProfile allocator = PluginRepository::Instance()->getOutput(_name, *report);
+        case PluginType::OUTPUT: {
+            PluginRepository::OutputPluginFactory allocator = PluginRepository::Instance()->getOutput(_name, *report);
             if (allocator != nullptr) {
                 _shlib = allocator(this);
                 shellOpt = u" -O";
             }
             break;
         }
-        case PROCESSOR_PLUGIN: {
-            NewProcessorProfile allocator = PluginRepository::Instance()->getProcessor(_name, *report);
+        case PluginType::PROCESSOR: {
+            PluginRepository::ProcessorPluginFactory allocator = PluginRepository::Instance()->getProcessor(_name, *report);
             if (allocator != nullptr) {
                 _shlib = allocator(this);
                shellOpt = u" -P";
@@ -80,9 +80,10 @@ ts::PluginThread::PluginThread(Report* report, const UString& appName, PluginTyp
         // Error message already displayed.
         return;
     }
-    else {
-        _shlib->setShell(appName + shellOpt);
-    }
+
+    // Configure plugin object.
+    _shlib->setShell(appName + shellOpt);
+    _shlib->setMaxSeverity(report->maxSeverity());
 
     // Submit the plugin arguments for analysis.
     // Do not process argument redirection, already done at tsp command level.
@@ -113,7 +114,23 @@ ts::PluginThread::~PluginThread()
 
 
 //----------------------------------------------------------------------------
-// Invoked by shared library to log messages. Inherited from Report (via TSP).
+// Implementation of TSP interface.
+//----------------------------------------------------------------------------
+
+ts::UString ts::PluginThread::pluginName() const
+{
+    return _name;
+}
+
+ts::Plugin* ts::PluginThread::plugin() const
+{
+    return _shlib;
+}
+
+
+//----------------------------------------------------------------------------
+// Invoked by the plugin shared library to log messages.
+// Inherited from Report via TSP.
 //----------------------------------------------------------------------------
 
 void ts::PluginThread::writeLog(int severity, const UString& msg)

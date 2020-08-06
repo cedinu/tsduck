@@ -30,18 +30,18 @@
 #include "tsEASInbandDetailsChannelDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"EAS_inband_details_channel_descriptor"
+#define MY_CLASS ts::EASInbandDetailsChannelDescriptor
 #define MY_DID ts::DID_EAS_INBAND_DETAILS
 #define MY_TID ts::TID_SCTE18_EAS
-#define MY_STD ts::STD_SCTE
+#define MY_STD ts::Standards::SCTE
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::EASInbandDetailsChannelDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::EASInbandDetailsChannelDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::EASInbandDetailsChannelDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,12 @@ ts::EASInbandDetailsChannelDescriptor::EASInbandDetailsChannelDescriptor() :
     details_RF_channel(0),
     details_program_number(0)
 {
-    _is_valid = true;
+}
+
+void ts::EASInbandDetailsChannelDescriptor::clearContent()
+{
+    details_RF_channel = 0;
+    details_program_number = 0;
 }
 
 ts::EASInbandDetailsChannelDescriptor::EASInbandDetailsChannelDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -85,7 +90,7 @@ void ts::EASInbandDetailsChannelDescriptor::deserialize(DuckContext& duck, const
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 3;
 
     if (_is_valid) {
         details_RF_channel= GetUInt8(data);
@@ -100,7 +105,8 @@ void ts::EASInbandDetailsChannelDescriptor::deserialize(DuckContext& duck, const
 
 void ts::EASInbandDetailsChannelDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 3) {
@@ -113,7 +119,7 @@ void ts::EASInbandDetailsChannelDescriptor::DisplayDescriptor(TablesDisplay& dis
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::EASInbandDetailsChannelDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -122,15 +128,8 @@ void ts::EASInbandDetailsChannelDescriptor::buildXML(DuckContext& duck, xml::Ele
     root->setIntAttribute(u"details_program_number", details_program_number, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::EASInbandDetailsChannelDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::EASInbandDetailsChannelDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(details_RF_channel, u"details_RF_channel", true) &&
-        element->getIntAttribute<uint16_t>(details_program_number, u"details_program_number", true);
+    return element->getIntAttribute<uint8_t>(details_RF_channel, u"details_RF_channel", true) &&
+           element->getIntAttribute<uint16_t>(details_program_number, u"details_program_number", true);
 }

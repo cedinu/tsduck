@@ -34,17 +34,17 @@
 #include "tsHEVCVideoDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"HEVC_video_descriptor"
+#define MY_CLASS ts::HEVCVideoDescriptor
 #define MY_DID ts::DID_HEVC_VIDEO
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::HEVCVideoDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::HEVCVideoDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::HEVCVideoDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -70,7 +70,26 @@ ts::HEVCVideoDescriptor::HEVCVideoDescriptor() :
     temporal_id_min(),
     temporal_id_max()
 {
-    _is_valid = true;
+}
+
+void ts::HEVCVideoDescriptor::clearContent()
+{
+    profile_space = 0;
+    tier = false;
+    profile_idc = 0;
+    profile_compatibility_indication = 0;
+    progressive_source = false;
+    interlaced_source = false;
+    non_packed_constraint = false;
+    frame_only_constraint = false;
+    copied_44bits = 0;
+    level_idc = 0;
+    HEVC_still_present = false;
+    HEVC_24hr_picture_present = false;
+    sub_pic_hrd_params_not_present = true;
+    HDR_WCG_idc = 3;
+    temporal_id_min.clear();
+    temporal_id_max.clear();
 }
 
 ts::HEVCVideoDescriptor::HEVCVideoDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -119,7 +138,7 @@ void ts::HEVCVideoDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
 
 void ts::HEVCVideoDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && (desc.payloadSize() == 13 || desc.payloadSize() == 15);
+    _is_valid = desc.isValid() && desc.tag() == tag() && (desc.payloadSize() == 13 || desc.payloadSize() == 15);
 
     if (_is_valid) {
         const uint8_t* data = desc.payload();
@@ -139,8 +158,8 @@ void ts::HEVCVideoDescriptor::deserialize(DuckContext& duck, const Descriptor& d
         HEVC_24hr_picture_present = (data[12] & 0x20) != 0;
         sub_pic_hrd_params_not_present = (data[12] & 0x10) != 0;
         HDR_WCG_idc = data[12] & 0x03;
-        temporal_id_min.reset();
-        temporal_id_max.reset();
+        temporal_id_min.clear();
+        temporal_id_max.clear();
         if (temporal) {
             _is_valid = desc.payloadSize() >= 15;
             if (_is_valid) {
@@ -158,7 +177,8 @@ void ts::HEVCVideoDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 
 void ts::HEVCVideoDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 13) {
@@ -240,10 +260,9 @@ void ts::HEVCVideoDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::HEVCVideoDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::HEVCVideoDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(profile_space, u"profile_space", true, 0, 0x00, 0x03) &&
         element->getBoolAttribute(tier, u"tier_flag", true) &&
         element->getIntAttribute<uint8_t>(profile_idc, u"profile_idc", true, 0, 0x00, 0x1F) &&
@@ -263,8 +282,9 @@ void ts::HEVCVideoDescriptor::fromXML(DuckContext& duck, const xml::Element* ele
         element->getOptionalIntAttribute<uint8_t>(temporal_id_min, u"temporal_id_min", 0x00, 0x07) &&
         element->getOptionalIntAttribute<uint8_t>(temporal_id_max, u"temporal_id_max", 0x00, 0x07);
 
-    if (_is_valid  && temporal_id_min.set() + temporal_id_max.set() == 1) {
-        _is_valid = false;
-        element->report().error(u"line %d: in <%s>, attributes 'temporal_id_min' and 'temporal_id_max' must be both present or both omitted", {element->lineNumber(), _xml_name});
+    if (ok && temporal_id_min.set() + temporal_id_max.set() == 1) {
+        element->report().error(u"line %d: in <%s>, attributes 'temporal_id_min' and 'temporal_id_max' must be both present or both omitted", {element->lineNumber(), element->name()});
+        ok = false;
     }
+    return ok;
 }

@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsSCTE35.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"splice_DTMF_descriptor"
+#define MY_CLASS ts::SpliceDTMFDescriptor
 #define MY_DID ts::DID_SPLICE_DTMF
 #define MY_TID ts::TID_SCTE35_SIT
-#define MY_STD ts::STD_SCTE
+#define MY_STD ts::Standards::SCTE
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::SpliceDTMFDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::SpliceDTMFDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::SpliceDTMFDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +55,13 @@ ts::SpliceDTMFDescriptor::SpliceDTMFDescriptor() :
     preroll(0),
     DTMF()
 {
-    _is_valid = true;
+}
+
+void ts::SpliceDTMFDescriptor::clearContent()
+{
+    identifier = SPLICE_ID_CUEI;
+    preroll = 0;
+    DTMF.clear();
 }
 
 ts::SpliceDTMFDescriptor::SpliceDTMFDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -71,7 +77,7 @@ ts::SpliceDTMFDescriptor::SpliceDTMFDescriptor(DuckContext& duck, const Descript
 
 void ts::SpliceDTMFDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 {
-    const ByteBlock binDTMF(duck.toDVB(DTMF));
+    const ByteBlock binDTMF(duck.encoded(DTMF));
     if (_is_valid && binDTMF.size() <= DTMF_MAX_SIZE) {
         ByteBlockPtr bbp(serializeStart());
         bbp->appendUInt32(identifier);
@@ -95,7 +101,7 @@ void ts::SpliceDTMFDescriptor::deserialize(DuckContext& duck, const Descriptor& 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 6;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 6;
 
     if (_is_valid) {
         identifier = GetUInt32(data);
@@ -103,7 +109,7 @@ void ts::SpliceDTMFDescriptor::deserialize(DuckContext& duck, const Descriptor& 
         const size_t len = (GetUInt8(data + 5) >> 5) & 0x07;
         _is_valid = len + 6 == size;
         if (_is_valid) {
-            DTMF = duck.fromDVB(data + 6, len);
+            duck.decode(DTMF, data + 6, len);
         }
     }
 }
@@ -115,12 +121,13 @@ void ts::SpliceDTMFDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 
 void ts::SpliceDTMFDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 6) {
         strm << margin << UString::Format(u"Identifier: 0x%X", {GetUInt32(data)});
-        display.duck().displayIfASCII(data, 4, u" (\"", u"\")");
+        duck.displayIfASCII(data, 4, u" (\"", u"\")");
         strm << std::endl
              << margin << UString::Format(u"Pre-roll: %d x 1/10 second", {GetUInt8(data + 4)})
              << std::endl;
@@ -130,7 +137,7 @@ void ts::SpliceDTMFDescriptor::DisplayDescriptor(TablesDisplay& display, DID did
         if (len > size) {
             len = size;
         }
-        strm << margin << "DTMF: \"" << display.duck().fromDVB(data, len) << "\"" << std::endl;
+        strm << margin << "DTMF: \"" << duck.decoded(data, len) << "\"" << std::endl;
         data += len; size -= len;
     }
 
@@ -154,11 +161,9 @@ void ts::SpliceDTMFDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SpliceDTMFDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SpliceDTMFDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
-        element->getIntAttribute<uint8_t>(preroll, u"preroll", true) &&
-        element->getAttribute(DTMF, u"DTMF", true, u"", 0, DTMF_MAX_SIZE);
+    return element->getIntAttribute<uint32_t>(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
+           element->getIntAttribute<uint8_t>(preroll, u"preroll", true) &&
+           element->getAttribute(DTMF, u"DTMF", true, u"", 0, DTMF_MAX_SIZE);
 }

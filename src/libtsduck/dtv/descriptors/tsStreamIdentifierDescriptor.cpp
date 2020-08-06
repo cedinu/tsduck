@@ -26,42 +26,38 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a stream_identifier_descriptor.
-//
-//----------------------------------------------------------------------------
 
 #include "tsStreamIdentifierDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIBuffer.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"stream_identifier_descriptor"
+#define MY_CLASS ts::StreamIdentifierDescriptor
 #define MY_DID ts::DID_STREAM_ID
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::StreamIdentifierDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::StreamIdentifierDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::StreamIdentifierDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::StreamIdentifierDescriptor::StreamIdentifierDescriptor(uint8_t ctag) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     component_tag(ctag)
 {
-    _is_valid = true;
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
+void ts::StreamIdentifierDescriptor::clearContent()
+{
+    component_tag = 0;
+}
 
 ts::StreamIdentifierDescriptor::StreamIdentifierDescriptor(DuckContext& duck, const Descriptor& desc) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
@@ -75,25 +71,14 @@ ts::StreamIdentifierDescriptor::StreamIdentifierDescriptor(DuckContext& duck, co
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::StreamIdentifierDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::StreamIdentifierDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(component_tag);
-    serializeEnd(desc, bbp);
+    buf.putUInt8(component_tag);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::StreamIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::StreamIdentifierDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 1;
-
-    if (_is_valid) {
-        component_tag = GetUInt8(desc.payload());
-    }
+    component_tag = buf.getUInt8();
 }
 
 
@@ -103,20 +88,20 @@ void ts::StreamIdentifierDescriptor::deserialize(DuckContext& duck, const Descri
 
 void ts::StreamIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
+    const std::string margin(indent, ' ');
+    PSIBuffer buf(duck, data, size);
 
-    if (size >= 1) {
-        uint8_t id = data[0];
-        data += 1; size -= 1;
-        strm << UString::Format(u"%*sComponent tag: %d (0x%X)", {indent, u"", id, id}) << std::endl;
+    if (buf.remainingReadBytes() >= 1) {
+        strm << margin << UString::Format(u"Component tag: %d (0x%<X)", {buf.getUInt8()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
+    display.displayExtraData(buf, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::StreamIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -124,14 +109,7 @@ void ts::StreamIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* r
     root->setIntAttribute(u"component_tag", component_tag, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::StreamIdentifierDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::StreamIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(component_tag, u"component_tag", true);
+    return element->getIntAttribute<uint8_t>(component_tag, u"component_tag", true);
 }

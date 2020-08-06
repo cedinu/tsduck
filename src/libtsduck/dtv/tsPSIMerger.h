@@ -37,6 +37,7 @@
 #include "tsCerrReport.h"
 #include "tsCyclingPacketizer.h"
 #include "tsVariable.h"
+#include "tsEnumUtils.h"
 #include "tsPAT.h"
 #include "tsCAT.h"
 #include "tsSDT.h"
@@ -198,4 +199,5 @@ namespace ts {
         }
     };
 }
-TS_FLAGS_OPERATORS(ts::PSIMerger::Options)
+
+TS_ENABLE_BITMASK_OPERATORS(ts::PSIMerger::Options);

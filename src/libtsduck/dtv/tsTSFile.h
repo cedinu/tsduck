@@ -33,15 +33,23 @@
 //----------------------------------------------------------------------------
 
 #pragma once
-#include "tsTSPacket.h"
-#include "tsReport.h"
+#include "tsTSPacketStream.h"
+#include "tsAbstractReadStreamInterface.h"
+#include "tsAbstractWriteStreamInterface.h"
+#include "tsEnumUtils.h"
 
 namespace ts {
+
+    class TSPacketMetadata;
+
     //!
     //! Transport stream file, input and/or output.
     //! @ingroup mpeg
     //!
-    class TSDUCKDLL TSFile
+    class TSDUCKDLL TSFile :
+        public TSPacketStream,
+        protected AbstractReadStreamInterface,
+        protected AbstractWriteStreamInterface
     {
     public:
         //!
@@ -71,16 +79,18 @@ namespace ts {
         //!
         //! Open the file for read.
         //! @param [in] filename File name. If empty, use standard input.
-        //! Must be a regular file if @a repeat_count is not 1 or if
-        //! @a start_offset is not zero.
+        //! Must be a regular file if @a start_offset is not zero.
+        //! If @a repeat_count is not 1 and the file is not a regular one,
+        //! the file is closed and reopened instead of being rewound.
         //! @param [in] repeat_count Reading packets loops back after end of
         //! file until all repeat are done. If zero, infinitely repeat.
         //! @param [in] start_offset Offset in bytes from the beginning of the file
         //! where to start reading packets at each iteration.
         //! @param [in,out] report Where to report errors.
+        //! @param [in] format Expected format of the TS file.
         //! @return True on success, false on error.
         //!
-        bool openRead(const UString& filename, size_t repeat_count, uint64_t start_offset, Report& report);
+        bool openRead(const UString& filename, size_t repeat_count, uint64_t start_offset, Report& report, TSPacketFormat format = TSPacketFormat::AUTODETECT);
 
         //!
         //! Open the file for read in rewindable mode.
@@ -90,23 +100,26 @@ namespace ts {
         //! @param [in] start_offset Offset in bytes from the beginning of the file
         //! where to start reading packets.
         //! @param [in,out] report Where to report errors.
+        //! @param [in] format Expected format of the TS file.
         //! @return True on success, false on error.
         //! @see rewind()
         //! @see seek()
         //!
-        bool openRead(const UString& filename, uint64_t start_offset, Report& report);
+        bool openRead(const UString& filename, uint64_t start_offset, Report& report, TSPacketFormat format = TSPacketFormat::AUTODETECT);
 
         //!
         //! Flags for open().
         //!
         enum OpenFlags {
-            NONE      = 0x0000,   //!< No option, do not open the file.
-            READ      = 0x0001,   //!< Read the file.
-            WRITE     = 0x0002,   //!< Write the file.
-            APPEND    = 0x0004,   //!< Append packets to an existing file.
-            KEEP      = 0x0008,   //!< Keep previous file with same name. Fail if it already exists.
-            SHARED    = 0x0010,   //!< Write open with shared read for other processes. Windows only. Always shared on Unix.
-            TEMPORARY = 0x0020,   //!< Temporary file, deleted on close, not always visible in the file system.
+            NONE        = 0x0000,   //!< No option, do not open the file.
+            READ        = 0x0001,   //!< Read the file.
+            WRITE       = 0x0002,   //!< Write the file.
+            APPEND      = 0x0004,   //!< Append packets to an existing file.
+            KEEP        = 0x0008,   //!< Keep previous file with same name. Fail if it already exists.
+            SHARED      = 0x0010,   //!< Write open with shared read for other processes. Windows only. Always shared on Unix.
+            TEMPORARY   = 0x0020,   //!< Temporary file, deleted on close, not always visible in the file system.
+            REOPEN      = 0x0040,   //!< Close and reopen the file instead of rewind to start of file when looping on input file.
+            REOPEN_SPEC = 0x0080,   //!< Force REOPEN when the file is not a regular file.
         };
 
         //!
@@ -116,27 +129,16 @@ namespace ts {
         //! If @a filename is empty, @a flags cannot contain both READ and WRITE.
         //! @param [in] flags Bit mask of open flags.
         //! @param [in,out] report Where to report errors.
+        //! @param [in] format Format of the TS file.
         //! @return True on success, false on error.
         //!
-        virtual bool open(const UString& filename, OpenFlags flags, Report& report);
+        virtual bool open(const UString& filename, OpenFlags flags, Report& report, TSPacketFormat format = TSPacketFormat::AUTODETECT);
 
         //!
         //! Check if the file is open.
         //! @return True if the file is open.
         //!
         bool isOpen() const { return _is_open; }
-
-        //!
-        //! Get the severity level for error reporting.
-        //! @return The severity level for error reporting.
-        //!
-        int getErrorSeverityLevel() const { return _severity; }
-
-        //!
-        //! Set the severity level for error reporting.
-        //! @param [in] level The severity level for error reporting. The default is Error.
-        //!
-        void setErrorSeverityLevel(int level) { _severity = level; }
 
         //!
         //! Get the file name.
@@ -157,27 +159,6 @@ namespace ts {
         //! @return True on success, false on error.
         //!
         bool close(Report& report);
-
-        //!
-        //! Read TS packets.
-        //! If the file file was opened with a @a repeat_count different from 1,
-        //! reading packets transparently loops back at end if file.
-        //! @param [out] buffer Address of reception packet buffer.
-        //! @param [in] max_packets Size of @a buffer in packets.
-        //! @param [in,out] report Where to report errors.
-        //! @return The actual number of read packets. Returning zero means
-        //! error or end of file repetition.
-        //!
-        size_t read(TSPacket* buffer, size_t max_packets, Report& report);
-
-        //!
-        //! Write TS packets to the file.
-        //! @param [in] buffer Address of first packet to write.
-        //! @param [in] packet_count Number of packets to write.
-        //! @param [in,out] report Where to report errors.
-        //! @return True on success, false on error.
-        //!
-        bool write(const TSPacket* buffer, size_t packet_count, Report& report);
 
         //!
         //! Abort any currenly read/write operation in progress.
@@ -205,41 +186,38 @@ namespace ts {
         //!
         bool seek(PacketCounter packet_index, Report& report);
 
-        //!
-        //! Get the number of read packets.
-        //! @return The number of read packets.
-        //!
-        PacketCounter getReadCount() const { return _total_read; }
-    
-        //!
-        //! Get the number of written packets.
-        //! @return The number of written packets.
-        //!
-        PacketCounter getWriteCount() const { return _total_write; }
+        // Override TSPacketStream implementation
+        virtual size_t readPackets(TSPacket* buffer, TSPacketMetadata* metadata, size_t max_packets, Report& report) override;
 
     protected:
-        UString       _filename;        //!< Input file name.
-        PacketCounter _total_read;      //!< Total read packets.
-        PacketCounter _total_write;     //!< Total written packets.
+        // Implementation of AbstractReadStreamInterface
+        virtual bool endOfStream() override;
+        virtual bool readStreamPartial(void* addr, size_t max_size, size_t& ret_size, Report& report) override;
+
+        // Implementation of AbstractWriteStreamInterface
+        virtual bool writeStream(const void* addr, size_t size, size_t& written_size, Report& report) override;
 
     private:
-        size_t        _repeat;        //!< Repeat count (0 means infinite)
-        size_t        _counter;       //!< Current repeat count
-        uint64_t      _start_offset;  //!< Initial byte offset in file
-        volatile bool _is_open;       //!< Check if file is actually open
-        OpenFlags     _flags;         //!< Flags which were specified at open
-        int           _severity;      //!< Severity level for error reporting
-        volatile bool _at_eof;        //!< End of file has been reached
-        volatile bool _aborted;       //!< Operation has been aborted, no operation available
-        bool          _rewindable;    //!< Opened in rewindable mode
+        UString       _filename;       //!< Input file name.
+        size_t        _repeat;         //!< Repeat count (0 means infinite)
+        size_t        _counter;        //!< Current repeat count
+        uint64_t      _start_offset;   //!< Initial byte offset in file
+        volatile bool _is_open;        //!< Check if file is actually open
+        OpenFlags     _flags;          //!< Flags which were specified at open
+        int           _severity;       //!< Severity level for error reporting
+        volatile bool _at_eof;         //!< End of file has been reached
+        volatile bool _aborted;        //!< Operation has been aborted, no operation available
+        bool          _rewindable;     //!< Opened in rewindable mode
+        bool          _regular;        //!< Is a regular file (ie. not a pipe or special device)
 #if defined(TS_WINDOWS)
-        ::HANDLE      _handle;        //!< File handle
+        ::HANDLE      _handle;         //!< File handle
 #else
-        int           _fd;            //!< File descriptor
+        int           _fd;             //!< File descriptor
 #endif
 
         // Internal methods
-        bool openInternal(Report& report);
+        bool openInternal(bool reopen, Report& report);
+        bool seekCheck(Report& report);
         bool seekInternal(uint64_t index, Report& report);
 
         // Inaccessible operations.
@@ -248,4 +226,4 @@ namespace ts {
     };
 }
 
-TS_FLAGS_OPERATORS(ts::TSFile::OpenFlags)
+TS_ENABLE_BITMASK_OPERATORS(ts::TSFile::OpenFlags);

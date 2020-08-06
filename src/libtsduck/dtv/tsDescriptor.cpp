@@ -34,7 +34,7 @@
 #include "tsDescriptor.h"
 #include "tsMemory.h"
 #include "tsAbstractDescriptor.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
@@ -74,15 +74,15 @@ ts::Descriptor::Descriptor(DID tag, const ByteBlock& data) :
     }
 }
 
-ts::Descriptor::Descriptor(const ByteBlockPtr& bbp, CopyShare mode) :
+ts::Descriptor::Descriptor(const ByteBlockPtr& bbp, ShareMode mode) :
     _data(nullptr)
 {
     if (!bbp.isNull() && bbp->size() >= 2 && bbp->size() < 258 && (*bbp)[1] == bbp->size() - 2) {
         switch (mode) {
-            case SHARE:
+            case ShareMode::SHARE:
                 _data = bbp;
                 break;
-            case COPY:
+            case ShareMode::COPY:
                 _data = new ByteBlock(*bbp);
                 break;
             default:
@@ -92,14 +92,14 @@ ts::Descriptor::Descriptor(const ByteBlockPtr& bbp, CopyShare mode) :
     }
 }
 
-ts::Descriptor::Descriptor(const Descriptor& desc, CopyShare mode) :
+ts::Descriptor::Descriptor(const Descriptor& desc, ShareMode mode) :
     _data(nullptr)
 {
     switch (mode) {
-        case SHARE:
+        case ShareMode::SHARE:
             _data = desc._data;
             break;
-        case COPY:
+        case ShareMode::COPY:
             _data = new ByteBlock(*desc._data);
             break;
         default:
@@ -254,7 +254,7 @@ ts::xml::Element* ts::Descriptor::toXML(DuckContext& duck, xml::Element* parent,
     // Try to generate a specialized XML structure.
     if (!forceGeneric) {
         // Do we know how to deserialize this descriptor?
-        TablesFactory::DescriptorFactory fac = TablesFactory::Instance()->getDescriptorFactory(edid(pds), tid);
+        PSIRepository::DescriptorFactory fac = PSIRepository::Instance()->getDescriptorFactory(edid(pds), tid);
         if (fac != nullptr) {
             // We know how to deserialize it.
             AbstractDescriptorPtr dp = fac();
@@ -295,13 +295,16 @@ bool ts::Descriptor::fromXML(DuckContext& duck, const xml::Element* node, TID ti
     }
 
     // If the table is specified and the XML descriptor is not allowed in this table, this is an error.
-    if (!TablesFactory::Instance()->isDescriptorAllowed(node->name(), tid)) {
-        node->report().error(u"<%s>, line %d, is not allowed here, must be in %s", {node->name(), node->lineNumber(), TablesFactory::Instance()->descriptorTables(node->name())});
+    if (!PSIRepository::Instance()->isDescriptorAllowed(node->name(), tid)) {
+        node->report().error(u"<%s>, line %d, is not allowed here, must be in %s", {
+                             node->name(),
+                             node->lineNumber(),
+                             PSIRepository::Instance()->descriptorTables(duck, node->name())});
         return false;
     }
 
     // Try to get the descriptor factory for that kind of XML tag.
-    const TablesFactory::DescriptorFactory fac = TablesFactory::Instance()->getDescriptorFactory(node->name());
+    const PSIRepository::DescriptorFactory fac = PSIRepository::Instance()->getDescriptorFactory(node->name());
     if (fac != nullptr) {
         // Create a descriptor instance of the right type.
         AbstractDescriptorPtr desc = fac();

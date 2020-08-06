@@ -105,26 +105,25 @@ namespace ts {
 
 
 //!
+//! @hideinitializer
 //! Export the TSDuck extension out of the shared library.
 //! All TSDuck extension shared libraries must invoke this macro once.
 //! The parameters are the same as the ts::DuckExtension constructor.
 //!
 //! Sample usage, from one source file inside the extension library:
 //! @code
-//! TS_DECLARE_EXTENSION(u"foo", u"Manipulate FOO tables", {u"fooinject", u"fooextract"}, {u"foogen"});
+//! TS_REGISTER_EXTENSION(u"foo", u"Manipulate FOO tables", {u"fooinject", u"fooextract"}, {u"foogen"});
 //! @endcode
 //!
-#define TS_DECLARE_EXTENSION(...)                                                \
+#define TS_REGISTER_EXTENSION(...)                                               \
     namespace {                                                                  \
         const ts::DuckExtension _TSDuckExtensionId(__VA_ARGS__);                 \
     }                                                                            \
     extern "C" {                                                                 \
-        /** @cond nodoxygen */                                                   \
         TS_PUSH_WARNING()                                                        \
         TS_LLVM_NOWARNING(missing-variable-declarations)                         \
         TS_DLL_EXPORT                                                            \
         ts::DuckExtension::ConstPointer TSDuckExtensionId = &_TSDuckExtensionId; \
         TS_POP_WARNING()                                                         \
-        /** @endcond */                                                          \
     }                                                                            \
     typedef int TS_UNIQUE_NAME(unused_to_allow_semicolon)

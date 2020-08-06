@@ -26,22 +26,22 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a data_broadcast_id_descriptor for system software update
-//  (data_broadcast_id 0x000A).
-//
-//----------------------------------------------------------------------------
 
 #include "tsSSUDataBroadcastIdDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
-#define MY_XML_NAME u""   // No XML conversion.
+// This is not a fully registered descriptor. This is just a specific case of data_broadcast_id_descriptor.
+// It has no specific XML representation. It cannot be converted from XML because it has no specific
+// syntax. It can be converted to XML, as a <data_broadcast_id_descriptor>.
+
+#define MY_XML_NAME u"data_broadcast_id_descriptor"
 #define MY_DID ts::DID_DATA_BROADCAST_ID
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
 
 //----------------------------------------------------------------------------
@@ -53,14 +53,12 @@ ts::SSUDataBroadcastIdDescriptor::SSUDataBroadcastIdDescriptor() :
     entries(),
     private_data()
 {
-    _is_valid = true;
 }
 
 ts::SSUDataBroadcastIdDescriptor::SSUDataBroadcastIdDescriptor (uint32_t oui, uint8_t update_type) :
     SSUDataBroadcastIdDescriptor()
 {
     entries.push_back(Entry(oui, update_type));
-    _is_valid = true;
 }
 
 ts::SSUDataBroadcastIdDescriptor::SSUDataBroadcastIdDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -69,11 +67,19 @@ ts::SSUDataBroadcastIdDescriptor::SSUDataBroadcastIdDescriptor(DuckContext& duck
     deserialize(duck, desc);
 }
 
+void ts::SSUDataBroadcastIdDescriptor::clearContent()
+{
+    entries.clear();
+    private_data.clear();
+}
+
 ts::SSUDataBroadcastIdDescriptor::SSUDataBroadcastIdDescriptor(DuckContext& duck, const DataBroadcastIdDescriptor& desc) :
     SSUDataBroadcastIdDescriptor()
 {
-    _is_valid = desc.isValid() && desc.data_broadcast_id == 0x000A;
-    if (_is_valid) {
+    if (!desc.isValid() || desc.data_broadcast_id != 0x000A) {
+        invalidate();
+    }
+    else {
         // Convert using serialization / deserialization.
         Descriptor bin;
         desc.serialize(duck, bin);
@@ -129,7 +135,7 @@ void ts::SSUDataBroadcastIdDescriptor::serialize(DuckContext& duck, Descriptor& 
 
 void ts::SSUDataBroadcastIdDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() >= 3 && GetUInt16 (desc.payload()) == 0x000A;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 3 && GetUInt16 (desc.payload()) == 0x000A;
     entries.clear();
     private_data.clear();
 
@@ -169,13 +175,13 @@ void ts::SSUDataBroadcastIdDescriptor::deserialize(DuckContext& duck, const Desc
 // XML serialization
 //----------------------------------------------------------------------------
 
-ts::xml::Element* ts::SSUDataBroadcastIdDescriptor::toXML(DuckContext& duck, xml::Element* parent) const
+void ts::SSUDataBroadcastIdDescriptor::buildXML(DuckContext& duck, xml::Element* parent) const
 {
     // There is no specific representation of this descriptor.
     // Convert to a data_broadcast_id_descriptor.
     DataBroadcastIdDescriptor desc;
     toDataBroadcastIdDescriptor(duck, desc);
-    return desc.toXML(duck, parent);
+    desc.buildXML(duck, parent);
 }
 
 
@@ -183,12 +189,12 @@ ts::xml::Element* ts::SSUDataBroadcastIdDescriptor::toXML(DuckContext& duck, xml
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SSUDataBroadcastIdDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SSUDataBroadcastIdDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     // There is no specific representation of this descriptor.
     // We cannot be called since there is no registration in the XML factory.
     element->report().error(u"Internal error, there is no XML representation for SSUDataBroadcastIdDescriptor");
-    _is_valid = false;
+    return false;
 }
 
 

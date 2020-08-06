@@ -38,7 +38,6 @@
 #include "tsDektec.h"
 TSDUCK_SOURCE;
 
-const ts::LNB&    ts::ModulationArgs::DEFAULT_LNB(ts::LNB::Universal);
 const ts::UString ts::ModulationArgs::DEFAULT_ISDBT_LAYERS(u"ABC"); // all layers
 
 #if defined(TS_NEED_STATIC_CONST_DEFINITIONS)
@@ -71,6 +70,7 @@ constexpr ts::PLSMode           ts::ModulationArgs::DEFAULT_PLS_MODE;
 constexpr int                   ts::ModulationArgs::DEFAULT_SB_SUBCHANNEL_ID;
 constexpr int                   ts::ModulationArgs::DEFAULT_SB_SEGMENT_COUNT;
 constexpr int                   ts::ModulationArgs::DEFAULT_SB_SEGMENT_INDEX;
+constexpr uint32_t              ts::ModulationArgs::DEFAULT_STREAM_ID;
 #endif
 
 
@@ -118,6 +118,7 @@ ts::ModulationArgs::ModulationArgs(bool allow_short_options) :
     layer_c_modulation(),
     layer_c_segment_count(),
     layer_c_time_interleaving(),
+    stream_id(),
     _allow_short_options(allow_short_options)
 {
 }
@@ -129,45 +130,46 @@ ts::ModulationArgs::ModulationArgs(bool allow_short_options) :
 
 void ts::ModulationArgs::reset()
 {
-    delivery_system.reset();
-    frequency.reset();
-    polarity.reset();
-    lnb.reset();
-    inversion.reset();
-    symbol_rate.reset();
-    inner_fec.reset();
-    satellite_number.reset();
-    modulation.reset();
-    bandwidth.reset();
-    fec_hp.reset();
-    fec_lp.reset();
-    transmission_mode.reset();
-    guard_interval.reset();
-    hierarchy.reset();
-    pilots.reset();
-    roll_off.reset();
-    plp.reset();
-    isi.reset();
-    pls_code.reset();
-    pls_mode.reset();
-    sound_broadcasting.reset();
-    sb_subchannel_id.reset();
-    sb_segment_count.reset();
-    sb_segment_index.reset();
-    isdbt_layers.reset();
-    isdbt_partial_reception.reset();
-    layer_a_fec.reset();
-    layer_a_modulation.reset();
-    layer_a_segment_count.reset();
-    layer_a_time_interleaving.reset();
-    layer_b_fec.reset();
-    layer_b_modulation.reset();
-    layer_b_segment_count.reset();
-    layer_b_time_interleaving.reset();
-    layer_c_fec.reset();
-    layer_c_modulation.reset();
-    layer_c_segment_count.reset();
-    layer_c_time_interleaving.reset();
+    delivery_system.clear();
+    frequency.clear();
+    polarity.clear();
+    lnb.clear();
+    inversion.clear();
+    symbol_rate.clear();
+    inner_fec.clear();
+    satellite_number.clear();
+    modulation.clear();
+    bandwidth.clear();
+    fec_hp.clear();
+    fec_lp.clear();
+    transmission_mode.clear();
+    guard_interval.clear();
+    hierarchy.clear();
+    pilots.clear();
+    roll_off.clear();
+    plp.clear();
+    isi.clear();
+    pls_code.clear();
+    pls_mode.clear();
+    sound_broadcasting.clear();
+    sb_subchannel_id.clear();
+    sb_segment_count.clear();
+    sb_segment_index.clear();
+    isdbt_layers.clear();
+    isdbt_partial_reception.clear();
+    layer_a_fec.clear();
+    layer_a_modulation.clear();
+    layer_a_segment_count.clear();
+    layer_a_time_interleaving.clear();
+    layer_b_fec.clear();
+    layer_b_modulation.clear();
+    layer_b_segment_count.clear();
+    layer_b_time_interleaving.clear();
+    layer_c_fec.clear();
+    layer_c_modulation.clear();
+    layer_c_segment_count.clear();
+    layer_c_time_interleaving.clear();
+    stream_id.clear();
 }
 
 
@@ -216,7 +218,8 @@ bool ts::ModulationArgs::hasModulationArgs() const
         layer_c_fec.set() ||
         layer_c_modulation.set() ||
         layer_c_segment_count.set() ||
-        layer_c_time_interleaving.set();
+        layer_c_time_interleaving.set() ||
+        stream_id.set();
 }
 
 
@@ -246,7 +249,7 @@ void ts::ModulationArgs::setDefaultValues()
             polarity.setDefault(DEFAULT_POLARITY);
             symbol_rate.setDefault(DEFAULT_SYMBOL_RATE_DVBS);
             inner_fec.setDefault(DEFAULT_INNER_FEC);
-            lnb.setDefault(DEFAULT_LNB);
+            lnb.setDefault(LNB(u"", NULLREP));
             satellite_number.setDefault(DEFAULT_SATELLITE_NUMBER);
             break;
         case DS_DVB_T2:
@@ -285,7 +288,7 @@ void ts::ModulationArgs::setDefaultValues()
         case DS_ISDB_S:
             frequency.setDefault(0);
             polarity.setDefault(DEFAULT_POLARITY);
-            lnb.setDefault(DEFAULT_LNB);
+            lnb.setDefault(LNB(u"", NULLREP));
             satellite_number.setDefault(DEFAULT_SATELLITE_NUMBER);
             inversion.setDefault(DEFAULT_INVERSION);
             symbol_rate.setDefault(DEFAULT_SYMBOL_RATE_ISDBS);
@@ -315,6 +318,11 @@ void ts::ModulationArgs::setDefaultValues()
         default:
             // Unsupported so far.
             break;
+    }
+
+    // Erase unused values.
+    if (delivery_system.set() && delivery_system.value() != DS_DVB_S2) {
+        roll_off.clear();
     }
 }
 
@@ -640,7 +648,7 @@ bool ts::ModulationArgs::convertToDektecModulation(int& modulation_type, int& pa
 // Fill modulation parameters from a delivery system descriptor.
 //----------------------------------------------------------------------------
 
-bool ts::ModulationArgs::fromDeliveryDescriptor(const Descriptor& desc)
+bool ts::ModulationArgs::fromDeliveryDescriptor(DuckContext& duck, const Descriptor& desc, uint16_t ts_id)
 {
     // Completely clear previous content.
     reset();
@@ -657,6 +665,11 @@ bool ts::ModulationArgs::fromDeliveryDescriptor(const Descriptor& desc)
 
     switch (desc.tag()) {
         case DID_SAT_DELIVERY: {
+            // DVB or ISDB satellite delivery network.
+            // The descriptor can be used in either DVB or ISDB context. It has the same size
+            // in both cases but a slightly different binary layout and semantics of fields.
+            // There is no way to distinguish a DVB and an ISDB version without context.
+            const bool isDVB = (duck.standards() & Standards::ISDB) == Standards::NONE;
             // TODO: Check S2_satellite_delivery_system_descriptor to get multistream id and PLS code. What about PLS mode?
             status = size >= 11;
             if (status) {
@@ -670,52 +683,88 @@ bool ts::ModulationArgs::fromDeliveryDescriptor(const Descriptor& desc)
                     case 3: polarity = POL_RIGHT; break;
                     default: assert(false);
                 }
-                // Inner FEC.
-                switch (data[10] & 0x0F) {
-                    case 1:  inner_fec = FEC_1_2; break;
-                    case 2:  inner_fec = FEC_2_3; break;
-                    case 3:  inner_fec = FEC_3_4; break;
-                    case 4:  inner_fec = FEC_5_6; break;
-                    case 5:  inner_fec = FEC_7_8; break;
-                    case 6:  inner_fec = FEC_8_9; break;
-                    case 7:  inner_fec = FEC_3_5; break;
-                    case 8:  inner_fec = FEC_4_5; break;
-                    case 9:  inner_fec = FEC_9_10; break;
-                    case 15: inner_fec = FEC_NONE; break;
-                    default: inner_fec = FEC_AUTO; break;
+                if (isDVB) {
+                    // DVB-S/S2 variant.
+                    // Inner FEC.
+                    switch (data[10] & 0x0F) {
+                        case 1:  inner_fec = FEC_1_2; break;
+                        case 2:  inner_fec = FEC_2_3; break;
+                        case 3:  inner_fec = FEC_3_4; break;
+                        case 4:  inner_fec = FEC_5_6; break;
+                        case 5:  inner_fec = FEC_7_8; break;
+                        case 6:  inner_fec = FEC_8_9; break;
+                        case 7:  inner_fec = FEC_3_5; break;
+                        case 8:  inner_fec = FEC_4_5; break;
+                        case 9:  inner_fec = FEC_9_10; break;
+                        case 15: inner_fec = FEC_NONE; break;
+                        default: inner_fec = FEC_AUTO; break;
+                    }
+                    // Modulation type.
+                    switch (data[6] & 0x03) {
+                        case 0: modulation = QAM_AUTO; break;
+                        case 1: modulation = QPSK; break;
+                        case 2: modulation = PSK_8; break;
+                        case 3: modulation = QAM_16; break;
+                        default: assert(false);
+                    }
+                    // Modulation system.
+                    switch ((data[6] >> 2) & 0x01) {
+                        case 0:
+                            delivery_system = DS_DVB_S;
+                            roll_off.clear();
+                            break;
+                        case 1:
+                            delivery_system = DS_DVB_S2;
+                            // Roll off.
+                            switch ((data[6] >> 3) & 0x03) {
+                                case 0: roll_off = ROLLOFF_35; break;
+                                case 1: roll_off = ROLLOFF_25; break;
+                                case 2: roll_off = ROLLOFF_20; break;
+                                case 3: roll_off = ROLLOFF_AUTO; break;
+                                default: assert(false);
+                            }
+                            break;
+                        default:
+                            assert(false);
+                    }
                 }
-                // Modulation type.
-                switch (data[6] & 0x03) {
-                    case 0: modulation = QAM_AUTO; break;
-                    case 1: modulation = QPSK; break;
-                    case 2: modulation = PSK_8; break;
-                    case 3: modulation = QAM_16; break;
-                    default: assert(false);
-                }
-                // Modulation system.
-                switch ((data[6] >> 2) & 0x01) {
-                    case 0:
-                        delivery_system = DS_DVB_S;
-                        roll_off = ROLLOFF_AUTO;
-                        break;
-                    case 1:
-                        delivery_system = DS_DVB_S2;
-                        // Roll off.
-                        switch ((data[6] >> 3) & 0x03) {
-                            case 0: roll_off = ROLLOFF_35; break;
-                            case 1: roll_off = ROLLOFF_25; break;
-                            case 2: roll_off = ROLLOFF_20; break;
-                            case 3: roll_off = ROLLOFF_AUTO; break;
-                            default: assert(false);
-                        }
-                        break;
-                    default:
-                        assert(false);
+                else {
+                    // ISDB variant.
+                    delivery_system = DS_ISDB_S;
+                    roll_off.clear();
+                    // The TS id is used in ISDB-S multi-stream encapsulation.
+                    stream_id = ts_id;
+                    // Inner FEC.
+                    switch (data[10] & 0x0F) {
+                        case 1:  inner_fec = FEC_1_2; break;
+                        case 2:  inner_fec = FEC_2_3; break;
+                        case 3:  inner_fec = FEC_3_4; break;
+                        case 4:  inner_fec = FEC_5_6; break;
+                        case 5:  inner_fec = FEC_7_8; break;
+                        // 8  = ISDB-S system (refer to TMCC signal)
+                        // 9  = 2.6GHz band digital satellite sound broadcasting
+                        // 10 = Advanced narrow-band CS digital broadcasting
+                        // Don't really know how to translate this...
+                        case 15: inner_fec = FEC_NONE; break;
+                        default: inner_fec = FEC_AUTO; break;
+                    }
+                    // Modulation type.
+                    switch (data[6] & 0x03) {
+                        case 0: modulation = QAM_AUTO; break;
+                        case 1: modulation = QPSK; break;
+                        // ??? case 8: modulation = PSK_8; break;
+                        // 8  = "ISDB-S system (refer to TMCC signal)", TC8PSK?, is this the same as PSK_8?
+                        // 9  = 2.6GHz band digital satellite sound broadcasting
+                        // 10 = Advanced narrow-band CS digital broadcasting
+                        // Don't really know how to translate this...
+                        default: modulation.clear(); break;
+                    }
                 }
             }
             break;
         }
         case DID_CABLE_DELIVERY: {
+            // DVB cable delivery network.
             status = size >= 11;
             if (status) {
                 delivery_system = DS_DVB_C;
@@ -746,6 +795,7 @@ bool ts::ModulationArgs::fromDeliveryDescriptor(const Descriptor& desc)
             break;
         }
         case DID_TERREST_DELIVERY:  {
+            // DVB terrestrial delivery network.
             status = size >= 11;
             if (status) {
                 uint64_t freq = GetUInt32(data);
@@ -810,6 +860,31 @@ bool ts::ModulationArgs::fromDeliveryDescriptor(const Descriptor& desc)
             }
             break;
         }
+        case DID_ISDB_TERRES_DELIV:  {
+            // ISDB terrestrial delivery network.
+            status = size >= 4;
+            if (status) {
+                const uint8_t guard = (data[1] >> 2) & 0x03;
+                const uint8_t transm = data[1] & 0x03;
+                delivery_system = DS_ISDB_T;
+                // The frequency in the descriptor is in units of 1/7 MHz.
+                frequency = (1000000 * uint64_t(GetUInt16(data + 2))) / 7;
+                switch (transm) {
+                    case 0:  transmission_mode = TM_2K; break;
+                    case 1:  transmission_mode = TM_8K; break;
+                    case 2:  transmission_mode = TM_4K; break;
+                    default: transmission_mode = TM_AUTO; break;
+                }
+                switch (guard) {
+                    case 0:  guard_interval = GUARD_1_32; break;
+                    case 1:  guard_interval = GUARD_1_16; break;
+                    case 2:  guard_interval = GUARD_1_8; break;
+                    case 3:  guard_interval = GUARD_1_4; break;
+                    default: guard_interval = GUARD_AUTO; break;
+                }
+            }
+            break;
+        }
         default: {
             // Not a valid delivery descriptor.
             status = false;
@@ -829,10 +904,10 @@ ts::UString ts::ModulationArgs::shortDescription(DuckContext& duck, int strength
 {
     // Strength and quality as a string.
     UString qual_string;
-    if (strength >= 0) {
+    if (strength > 0) {
         qual_string = UString::Format(u"strength: %d%%", {strength});
     }
-    if (quality >= 0) {
+    if (quality > 0) {
         if (!qual_string.empty()) {
             qual_string += u", ";
         }
@@ -1008,8 +1083,8 @@ void ts::ModulationArgs::display(std::ostream& strm, const ts::UString& margin, 
             if ((verbose || delivery_system != DS_DVB_S) && roll_off.set() && roll_off != ROLLOFF_AUTO) {
                 strm << margin << "Roll-off: " << RollOffEnum.name(roll_off.value()) << std::endl;
             }
-            if (verbose) {
-                strm << margin << "LNB: " << UString(lnb.value(DEFAULT_LNB)) << std::endl;
+            if (verbose && lnb.set()) {
+                strm << margin << "LNB: " << lnb.value() << std::endl;
             }
             if (verbose) {
                 strm << margin << "Satellite number: " << satellite_number.value(DEFAULT_SATELLITE_NUMBER) << std::endl;
@@ -1026,11 +1101,14 @@ void ts::ModulationArgs::display(std::ostream& strm, const ts::UString& margin, 
             if (symbol_rate.set() && symbol_rate != 0) {
                 strm << margin << "Symbol rate: " << UString::Decimal(symbol_rate.value()) << " symb/s" << std::endl;
             }
+            if (stream_id.set()) {
+                strm << margin << "Innert transport stream id: " << stream_id.value() << std::endl;
+            }
             if (inner_fec.set() && inner_fec != ts::FEC_AUTO) {
                 strm << margin << "FEC inner: " << InnerFECEnum.name(inner_fec.value()) << std::endl;
             }
-            if (verbose) {
-                strm << margin << "LNB: " << UString(lnb.value(DEFAULT_LNB)) << std::endl;
+            if (verbose && lnb.set()) {
+                strm << margin << "LNB: " << lnb.value() << std::endl;
             }
             if (verbose) {
                 strm << margin << "Satellite number: " << satellite_number.value(DEFAULT_SATELLITE_NUMBER) << std::endl;
@@ -1164,15 +1242,16 @@ ts::UString ts::ModulationArgs::toPluginOptions(bool no_local) const
             opt += UString::Format(u" --symbol-rate %'d"
                                    u" --fec-inner %s"
                                    u" --polarity %s"
-                                   u" --modulation %s"
-                                   u" --pilots %s"
-                                   u" --roll-off %s", {
+                                   u" --modulation %s", {
                                    symbol_rate.value(DEFAULT_SYMBOL_RATE_DVBS),
                                    InnerFECEnum.name(inner_fec.value(DEFAULT_INNER_FEC)),
                                    PolarizationEnum.name(polarity.value(DEFAULT_POLARITY)),
-                                   ModulationEnum.name(modulation.value(DEFAULT_MODULATION_DVBS)),
-                                   PilotEnum.name(pilots.value(DEFAULT_PILOTS)),
-                                   RollOffEnum.name(roll_off.value(DEFAULT_ROLL_OFF))});
+                                   ModulationEnum.name(modulation.value(DEFAULT_MODULATION_DVBS))});
+            if (delivery_system == DS_DVB_S2) {
+                opt += UString::Format(u" --pilots %s --roll-off %s", {
+                                       PilotEnum.name(pilots.value(DEFAULT_PILOTS)),
+                                       RollOffEnum.name(roll_off.value(DEFAULT_ROLL_OFF))});
+            }
             if (isi.set() && isi != DEFAULT_ISI) {
                 opt += UString::Format(u" --isi %d", {isi.value()});
             }
@@ -1182,8 +1261,11 @@ ts::UString ts::ModulationArgs::toPluginOptions(bool no_local) const
             if (pls_mode.set() && pls_mode != DEFAULT_PLS_MODE) {
                 opt += UString::Format(u" --pls-mode %s", {PLSModeEnum.name(pls_mode.value())});
             }
-            if (!no_local) {
-                opt += UString::Format(u" --lnb %s --satellite-number %d", {UString(lnb.value(DEFAULT_LNB)), satellite_number.value()});
+            if (!no_local && lnb.set()) {
+                opt += UString::Format(u" --lnb %s", {lnb.value()});
+            }
+            if (!no_local && satellite_number.set()) {
+                opt += UString::Format(u" --satellite-number %d", {satellite_number.value()});
             }
             break;
         }
@@ -1192,8 +1274,14 @@ ts::UString ts::ModulationArgs::toPluginOptions(bool no_local) const
                                    symbol_rate.value(DEFAULT_SYMBOL_RATE_DVBS),
                                    InnerFECEnum.name(inner_fec.value(DEFAULT_INNER_FEC)),
                                    PolarizationEnum.name(polarity.value(DEFAULT_POLARITY))});
-            if (!no_local) {
-                opt += UString::Format(u" --lnb %s --satellite-number %d", {UString(lnb.value(DEFAULT_LNB)), satellite_number.value()});
+            if (stream_id.set() && stream_id != DEFAULT_STREAM_ID) {
+                opt += UString::Format(u" --stream-id %d", {stream_id.value()});
+            }
+            if (!no_local && lnb.set()) {
+                opt += UString::Format(u" --lnb %s", {lnb.value()});
+            }
+            if (!no_local && satellite_number.set()) {
+                opt += UString::Format(u" --satellite-number %d", {satellite_number.value()});
             }
             break;
         }
@@ -1276,7 +1364,6 @@ ts::UString ts::ModulationArgs::toPluginOptions(bool no_local) const
 bool ts::ModulationArgs::loadArgs(DuckContext& duck, Args& args)
 {
     bool status = true;
-    ModulationArgs::reset();
 
     // If delivery system is unspecified, will use the default one for the tuner.
     if (args.present(u"delivery-system")) {
@@ -1292,10 +1379,10 @@ bool ts::ModulationArgs::loadArgs(DuckContext& duck, Args& args)
         frequency = args.intValue<uint64_t>(u"frequency");
     }
     else if (args.present(u"uhf-channel")) {
-        frequency = duck.uhfBand()->frequency(args.intValue<uint32_t>(u"uhf-channel"));
+        frequency = duck.uhfBand()->frequency(args.intValue<uint32_t>(u"uhf-channel"), args.intValue<int32_t>(u"offset-count", 0));
     }
     else if (args.present(u"vhf-channel")) {
-        frequency = duck.vhfBand()->frequency(args.intValue<uint32_t>(u"vhf-channel"));
+        frequency = duck.vhfBand()->frequency(args.intValue<uint32_t>(u"vhf-channel"), args.intValue<int32_t>(u"offset-count", 0));
     }
 
     // Other individual tuning options
@@ -1404,13 +1491,15 @@ bool ts::ModulationArgs::loadArgs(DuckContext& duck, Args& args)
     if (args.present(u"isdbt-layer-c-time-interleaving")) {
         layer_c_time_interleaving = args.intValue<int>(u"isdbt-layer-c-time-interleaving");
     }
+    if (args.present(u"stream-id")) {
+        stream_id = args.intValue<uint32_t>(u"stream-id");
+    }
 
     // Local options (not related to transponder)
     if (args.present(u"lnb")) {
         UString s(args.value(u"lnb"));
-        LNB l(s);
+        LNB l(s, duck.report());
         if (!l.isValid()) {
-            args.error(u"invalid LNB description " + s);
             status = false;
         }
         else {
@@ -1421,6 +1510,10 @@ bool ts::ModulationArgs::loadArgs(DuckContext& duck, Args& args)
         satellite_number = args.intValue<size_t>(u"satellite-number");
     }
 
+    // Mark arguments as invalid is some errors were found.
+    if (!status) {
+        args.invalidate();
+    }
     return status;
 }
 
@@ -1444,13 +1537,12 @@ void ts::ModulationArgs::defineArgs(Args& args) const
               u"Polarity. The default is \"vertical\".");
 
     args.option(u"lnb", 0, Args::STRING);
-    args.help(u"lnb", u"low_freq[,high_freq,switch_freq]",
+    args.help(u"lnb", u"name",
               u"Used for satellite tuners only. "
-              u"Description of the LNB.  All frequencies are in MHz. "
-              u"low_freq and high_freq are the frequencies of the local oscillators. "
-              u"switch_freq is the limit between the low and high band. "
-              u"high_freq and switch_freq are used for dual-band LNB's only. "
-              u"The default is a universal LNB: low_freq = 9750 MHz, high_freq = 10600 MHz, switch_freq = 11700 MHz.");
+              u"Description of the LNB. The specified string is the name (or an alias for that name) "
+              u"of a preconfigured LNB in the configuration file tsduck.lnbs.xml. "
+              u"For compatibility, the legacy format 'low_freq[,high_freq,switch_freq]' is also accepted "
+              u"(all frequencies are in MHz). The default is a universal extended LNB.");
 
     args.option(u"spectral-inversion", 0, SpectralInversionEnum);
     args.help(u"spectral-inversion",
@@ -1628,6 +1720,13 @@ void ts::ModulationArgs::defineArgs(Args& args) const
               u"Possible values: 0 to 3. The default is automatically detected.");
     args.help(u"isdbt-layer-b-time-interleaving", u"Same as --isdbt-layer-a-time-interleaving for layer B.");
     args.help(u"isdbt-layer-c-time-interleaving", u"Same as --isdbt-layer-a-time-interleaving for layer C.");
+
+    args.option(u"stream-id", 0, Args::UINT16);
+    args.help(u"stream-id",
+              u"Used for ISDB-S tuners only. "
+              u"In the case of multi-stream broadcasting, specify the inner transport stream id. "
+              u"By default, use the first inner transport stream, if any is found. "
+              u"Warning: this option is supported on Linux only.");
 
     // UHF/VHF frequency bands options.
     args.option(u"uhf-channel", _allow_short_options ? 'u' : 0, Args::POSITIVE);

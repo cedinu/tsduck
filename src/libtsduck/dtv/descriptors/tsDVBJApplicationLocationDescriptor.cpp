@@ -30,22 +30,22 @@
 #include "tsDVBJApplicationLocationDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"dvb_j_application_location_descriptor"
+#define MY_CLASS ts::DVBJApplicationLocationDescriptor
 #define MY_DID ts::DID_AIT_DVBJ_APP_LOC
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::DVBJApplicationLocationDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::DVBJApplicationLocationDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::DVBJApplicationLocationDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::DVBJApplicationLocationDescriptor::DVBJApplicationLocationDescriptor() :
@@ -54,18 +54,19 @@ ts::DVBJApplicationLocationDescriptor::DVBJApplicationLocationDescriptor() :
     classpath_extension(),
     initial_class()
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::DVBJApplicationLocationDescriptor::DVBJApplicationLocationDescriptor(DuckContext& duck, const Descriptor& desc) :
     DVBJApplicationLocationDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::DVBJApplicationLocationDescriptor::clearContent()
+{
+    base_directory.clear();
+    classpath_extension.clear();
+    initial_class.clear();
 }
 
 
@@ -76,9 +77,9 @@ ts::DVBJApplicationLocationDescriptor::DVBJApplicationLocationDescriptor(DuckCon
 void ts::DVBJApplicationLocationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 {
     ByteBlockPtr bbp(serializeStart());
-    bbp->append(duck.toDVBWithByteLength(base_directory));
-    bbp->append(duck.toDVBWithByteLength(classpath_extension));
-    bbp->append(duck.toDVB(initial_class));
+    bbp->append(duck.encodedWithByteLength(base_directory));
+    bbp->append(duck.encodedWithByteLength(classpath_extension));
+    bbp->append(duck.encoded(initial_class));
     serializeEnd(desc, bbp);
 }
 
@@ -96,20 +97,20 @@ void ts::DVBJApplicationLocationDescriptor::deserialize(DuckContext& duck, const
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         const size_t len1 = data[0];
         data += 1; size -= 1;
         _is_valid = len1 + 1 <= size;
         if (_is_valid) {
-            base_directory = duck.fromDVB(data, len1);
+            duck.decode(base_directory, data, len1);
             const size_t len2 = data[len1];
             data += len1 + 1; size -= len1 + 1;
             _is_valid = len2 <= size;
             if (_is_valid) {
-                classpath_extension = duck.fromDVB(data, len2);
-                initial_class = duck.fromDVB(data + len2, size - len2);
+                duck.decode(classpath_extension, data, len2);
+                duck.decode(initial_class, data + len2, size - len2);
             }
         }
     }
@@ -122,17 +123,18 @@ void ts::DVBJApplicationLocationDescriptor::deserialize(DuckContext& duck, const
 
 void ts::DVBJApplicationLocationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
         size_t len = std::min<size_t>(data[0], size - 1);
-        strm << margin << "Base directory: \"" << display.duck().fromDVB(data + 1, len) << "\"" << std::endl;
+        strm << margin << "Base directory: \"" << duck.decoded(data + 1, len) << "\"" << std::endl;
         data += 1 + len; size -= 1 + len;
         if (size >= 1) {
             len = std::min<size_t>(data[0], size - 1);
-            strm << margin << "Classpath ext: \"" << display.duck().fromDVB(data + 1, len) << "\"" << std::endl
-                 << margin << "Initial class: \"" << display.duck().fromDVB(data + 1 + len, size - len - 1) << "\"" << std::endl;
+            strm << margin << "Classpath ext: \"" << duck.decoded(data + 1, len) << "\"" << std::endl
+                 << margin << "Initial class: \"" << duck.decoded(data + 1 + len, size - len - 1) << "\"" << std::endl;
             size = 0;
         }
     }
@@ -157,11 +159,9 @@ void ts::DVBJApplicationLocationDescriptor::buildXML(DuckContext& duck, xml::Ele
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::DVBJApplicationLocationDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DVBJApplicationLocationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(base_directory, u"base_directory", true) &&
-        element->getAttribute(classpath_extension, u"classpath_extension", true) &&
-        element->getAttribute(initial_class, u"initial_class", true);
+    return element->getAttribute(base_directory, u"base_directory", true) &&
+           element->getAttribute(classpath_extension, u"classpath_extension", true) &&
+           element->getAttribute(initial_class, u"initial_class", true);
 }

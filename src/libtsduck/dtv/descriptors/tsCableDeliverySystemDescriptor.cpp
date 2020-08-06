@@ -31,20 +31,20 @@
 #include "tsDescriptor.h"
 #include "tsBCD.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"cable_delivery_system_descriptor"
+#define MY_CLASS ts::CableDeliverySystemDescriptor
 #define MY_DID ts::DID_CABLE_DELIVERY
 
-TS_XML_DESCRIPTOR_FACTORY(ts::CableDeliverySystemDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::CableDeliverySystemDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::CableDeliverySystemDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::CableDeliverySystemDescriptor::CableDeliverySystemDescriptor() :
@@ -55,13 +55,21 @@ ts::CableDeliverySystemDescriptor::CableDeliverySystemDescriptor() :
     symbol_rate(0),
     FEC_inner(0)
 {
-    _is_valid = true;
 }
 
 
 //----------------------------------------------------------------------------
 // Constructor from a binary descriptor
 //----------------------------------------------------------------------------
+
+void ts::CableDeliverySystemDescriptor::clearContent()
+{
+    frequency = 0;
+    FEC_outer = 0;
+    modulation = 0;
+    symbol_rate = 0;
+    FEC_inner = 0;
+}
 
 ts::CableDeliverySystemDescriptor::CableDeliverySystemDescriptor(DuckContext& duck, const Descriptor& desc) :
     CableDeliverySystemDescriptor()
@@ -91,7 +99,7 @@ void ts::CableDeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor&
 
 void ts::CableDeliverySystemDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 11)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 11)) {
         return;
     }
 
@@ -158,15 +166,13 @@ void ts::CableDeliverySystemDescriptor::buildXML(DuckContext& duck, xml::Element
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::CableDeliverySystemDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::CableDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint64_t>(frequency, u"frequency", true) &&
-        element->getIntEnumAttribute<uint8_t>(FEC_outer, OuterFecNames, u"FEC_outer", false, 2) &&
-        element->getIntEnumAttribute<uint8_t>(modulation, ModulationNames, u"modulation", false, 1) &&
-        element->getIntAttribute<uint64_t>(symbol_rate, u"symbol_rate", true) &&
-        element->getIntEnumAttribute(FEC_inner, InnerFecNames, u"FEC_inner", true);
+    return element->getIntAttribute<uint64_t>(frequency, u"frequency", true) &&
+           element->getIntEnumAttribute<uint8_t>(FEC_outer, OuterFecNames, u"FEC_outer", false, 2) &&
+           element->getIntEnumAttribute<uint8_t>(modulation, ModulationNames, u"modulation", false, 1) &&
+           element->getIntAttribute<uint64_t>(symbol_rate, u"symbol_rate", true) &&
+           element->getIntEnumAttribute(FEC_inner, InnerFecNames, u"FEC_inner", true);
 }
 
 
@@ -176,7 +182,8 @@ void ts::CableDeliverySystemDescriptor::fromXML(DuckContext& duck, const xml::El
 
 void ts::CableDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 11) {

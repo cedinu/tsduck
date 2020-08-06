@@ -88,6 +88,15 @@ namespace ts {
         Time(int year, int month, int day, int hour, int minute, int second = 0, int millisecond = 0);
 
         //!
+        //! Clear the time value.
+        //! The time value becomes the Epoch.
+        //!
+        void clear()
+        {
+            _value = 0;
+        }
+
+        //!
         //! Operator Time + MilliSecond => Time.
         //! @param [in] duration A number of milliseconds.
         //! @return A @c Time object representing this object plus the
@@ -287,6 +296,18 @@ namespace ts {
         //! @throw ts::Time::TimeError In case of operating system time error.
         //!
         Time UTCToLocal() const;
+
+        //!
+        //! Convert a JST (Japan Standard Time) to UTC time.
+        //! @return A UTC time from this object time, interpreted as a JST time.
+        //!
+        Time JSTToUTC() const;
+
+        //!
+        //! Convert a UTC time to JST (Japan Standard Time).
+        //! @return A JST time from this object time, interpreted as a UTC time.
+        //!
+        Time UTCToJST() const;
 
         //!
         //! Flags indicating the list of time fields to display.

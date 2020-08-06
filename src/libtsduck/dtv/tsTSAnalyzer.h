@@ -378,6 +378,18 @@ namespace ts {
             //! @return The PID description.
             //!
             UString fullDescription(bool include_attributes) const;
+
+        private:
+            // Description of a few known PID's
+            struct KnownPID
+            {
+                const UChar* name;
+                bool optional;
+                bool sections;
+            };
+            typedef std::map<PID, KnownPID> KnownPIDMap;
+            static KnownPIDMap::value_type KPID(PID, const UChar* name, bool optional = true, bool sections = true);
+            static const KnownPIDMap KNOWN_PIDS;
         };
 
         //!
@@ -490,7 +502,7 @@ namespace ts {
         // If svp is not 0, we are in the PMT of the specified service.
         // If ps is not 0, we are in the description of this PID in a PMT.
         // If svp is 0, we are in the CAT.
-        void analyzeCADescriptor(const Descriptor& desc, ServiceContext* svp = nullptr, PIDContext* ps = nullptr);
+        void analyzeCADescriptor(const Descriptor& desc, ServiceContext* svp = nullptr, PIDContext* ps = nullptr, const UString& suffix = UString());
 
         // Implementation of TableHandlerInterface
         virtual void handleTable(SectionDemux&, const BinaryTable&) override;

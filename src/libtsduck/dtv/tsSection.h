@@ -71,7 +71,7 @@ namespace ts {
         //! @param [in] mode The section's data are either shared (ts::SHARE) between the
         //! two instances or duplicated (ts::COPY).
         //!
-        Section(const Section& other, CopyShare mode);
+        Section(const Section& other, ShareMode mode);
 
         //!
         //! Constructor from full binary content.
@@ -520,6 +520,24 @@ namespace ts {
         //! @param [in] recompute_crc If true, immediately recompute the CRC32 of the section.
         //!
         void setUInt16(size_t offset, uint16_t value, bool recompute_crc = true);
+
+        //!
+        //! Append binary data to the payload of the section.
+        //! @param [in] data Address of data to add to the payload.
+        //! @param [in] size Size in bytes of data to add to the payload.
+        //! @param [in] recompute_crc If true, immediately recompute the CRC32 of the section.
+        //!
+        void appendPayload(const void* data, size_t size, bool recompute_crc = true);
+
+        //!
+        //! Append binary data to the payload of the section.
+        //! @param [in] data Byte block to add to the payload.
+        //! @param [in] recompute_crc If true, immediately recompute the CRC32 of the section.
+        //!
+        void appendPayload(const ByteBlock& data, bool recompute_crc = true)
+        {
+            appendPayload(data.data(), data.size(), recompute_crc);
+        }
 
         //!
         //! Set the source PID.

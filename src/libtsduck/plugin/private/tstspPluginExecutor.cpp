@@ -39,6 +39,7 @@ TSDUCK_SOURCE;
 //----------------------------------------------------------------------------
 
 ts::tsp::PluginExecutor::PluginExecutor(const TSProcessorArgs& options,
+                                        const PluginEventHandlerRegistry& handlers,
                                         PluginType type,
                                         const PluginOptions& pl_options,
                                         const ThreadAttributes& attributes,
@@ -50,6 +51,7 @@ ts::tsp::PluginExecutor::PluginExecutor(const TSProcessorArgs& options,
     _buffer(nullptr),
     _metadata(nullptr),
     _suspended(false),
+    _handlers(handlers),
     _to_do(),
     _pkt_first(0),
     _pkt_cnt(0),
@@ -58,6 +60,10 @@ ts::tsp::PluginExecutor::PluginExecutor(const TSProcessorArgs& options,
     _restart(false),
     _restart_data()
 {
+    // Preset common default options.
+    if (plugin() != nullptr) {
+        plugin()->resetContext(options.duck_args);
+    }
 }
 
 ts::tsp::PluginExecutor::~PluginExecutor()
@@ -86,6 +92,28 @@ void ts::tsp::PluginExecutor::initBuffer(PacketBuffer* buffer,
     _tsp_aborting = aborted;
     _bitrate = bitrate;
     _tsp_bitrate = bitrate;
+}
+
+
+//----------------------------------------------------------------------------
+// Number of plugins in the chain. Inherited from TSP.
+//----------------------------------------------------------------------------
+
+size_t ts::tsp::PluginExecutor::pluginCount() const
+{
+    // Input plugin, all processor plugins, output plugin.
+    return _options.plugins.size() + 2;
+}
+
+
+//----------------------------------------------------------------------------
+// Signal a plugin event.
+//----------------------------------------------------------------------------
+
+void ts::tsp::PluginExecutor::signalPluginEvent(uint32_t event_code, Object* plugin_data) const
+{
+    const PluginEventContext ctx(event_code, pluginName(), pluginIndex(), pluginCount(), plugin(), plugin_data, bitrate(), pluginPackets(), totalPacketsInThread());
+    _handlers.callEventHandlers(ctx);
 }
 
 
@@ -122,7 +150,7 @@ bool ts::tsp::PluginExecutor::passPackets(size_t count, BitRate bitrate, bool in
     // Already done in waitWork() but force immediately.
     // Don't do that if current is output and next is input because
     // there is no propagation of packets from output back to input.
-    if (plugin()->type() != OUTPUT_PLUGIN) {
+    if (plugin()->type() != PluginType::OUTPUT) {
         aborted = aborted || next->_tsp_aborting;
     }
 
@@ -190,7 +218,7 @@ void ts::tsp::PluginExecutor::waitWork(size_t& pkt_first, size_t& pkt_cnt, BitRa
     // Force to abort our processor when the next one is aborting.
     // Don't do that if current is output and next is input because
     // there is no propagation of packets from output back to input.
-    aborted = plugin()->type() != OUTPUT_PLUGIN && next->_tsp_aborting;
+    aborted = plugin()->type() != PluginType::OUTPUT && next->_tsp_aborting;
 
     log(10, u"waitWork(pkt_first = %'d, pkt_cnt = %'d, bitrate = %'d, input_end = %s, aborted = %s, timeout = %s)",
         {pkt_first, pkt_cnt, bitrate, input_end, aborted, timeout});
@@ -282,6 +310,9 @@ bool ts::tsp::PluginExecutor::processPendingRestart()
 
     // First, stop the current execution.
     plugin()->stop();
+
+    // Reset the execution context to cleanup previous plugin-specific options or accumulated data.
+    plugin()->resetContext(_options.duck_args);
 
     // Redirect error messages from command line analysis to the remote tspcontrol.
     Report* previous_report = plugin()->redirectReport(&_restart_data->report);

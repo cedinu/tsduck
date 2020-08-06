@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsBCD.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"frequency_list_descriptor"
+#define MY_CLASS ts::FrequencyListDescriptor
 #define MY_DID ts::DID_FREQUENCY_LIST
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::FrequencyListDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::FrequencyListDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::FrequencyListDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -54,13 +54,18 @@ ts::FrequencyListDescriptor::FrequencyListDescriptor() :
     coding_type(0),
     frequencies()
 {
-    _is_valid = true;
 }
 
 ts::FrequencyListDescriptor::FrequencyListDescriptor(DuckContext& duck, const Descriptor& desc) :
     FrequencyListDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::FrequencyListDescriptor::clearContent()
+{
+    coding_type = 0;
+    frequencies.clear();
 }
 
 
@@ -133,7 +138,7 @@ void ts::FrequencyListDescriptor::deserialize(DuckContext& duck, const Descripto
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size % 4 == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size % 4 == 1;
     frequencies.clear();
 
     if (_is_valid) {
@@ -154,7 +159,8 @@ void ts::FrequencyListDescriptor::deserialize(DuckContext& duck, const Descripto
 
 void ts::FrequencyListDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -188,21 +194,17 @@ void ts::FrequencyListDescriptor::buildXML(DuckContext& duck, xml::Element* root
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::FrequencyListDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::FrequencyListDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    frequencies.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntEnumAttribute(coding_type, CodingTypeEnum, u"coding_type", true) &&
         element->getChildren(children, u"centre_frequency", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         uint64_t freq = 0;
-        _is_valid = children[i]->getIntAttribute<uint64_t>(freq, u"value", true);
-        if (_is_valid) {
-            frequencies.push_back(freq);
-        }
+        ok = children[i]->getIntAttribute<uint64_t>(freq, u"value", true);
+        frequencies.push_back(freq);
     }
+    return ok;
 }

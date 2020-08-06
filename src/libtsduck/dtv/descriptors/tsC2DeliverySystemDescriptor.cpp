@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"C2_delivery_system_descriptor"
+#define MY_CLASS ts::C2DeliverySystemDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_C2_DELIVERY
 
-TS_XML_DESCRIPTOR_FACTORY(ts::C2DeliverySystemDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::C2DeliverySystemDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::C2DeliverySystemDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -57,7 +57,16 @@ ts::C2DeliverySystemDescriptor::C2DeliverySystemDescriptor() :
     active_OFDM_symbol_duration(0),
     guard_interval(0)
 {
-    _is_valid = true;
+}
+
+void ts::C2DeliverySystemDescriptor::clearContent()
+{
+    plp_id = 0;
+    data_slice_id = 0;
+    C2_system_tuning_frequency = 0;
+    C2_system_tuning_frequency_type = 0;
+    active_OFDM_symbol_duration = 0;
+    guard_interval = 0;
 }
 
 ts::C2DeliverySystemDescriptor::C2DeliverySystemDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -93,7 +102,7 @@ void ts::C2DeliverySystemDescriptor::deserialize(DuckContext& duck, const Descri
 {
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 8 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 8 && data[0] == MY_EDID;
 
     if (_is_valid) {
         plp_id = data[1];
@@ -127,7 +136,8 @@ void ts::C2DeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& display, D
     // See ts::TablesDisplay::displayDescriptorData()
 
     if (size >= 7) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
 
         const uint8_t plp = data[0];
@@ -168,14 +178,12 @@ void ts::C2DeliverySystemDescriptor::buildXML(DuckContext& duck, xml::Element* r
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::C2DeliverySystemDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::C2DeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(plp_id, u"plp_id", true) &&
-        element->getIntAttribute<uint8_t>(data_slice_id, u"data_slice_id", true) &&
-        element->getIntAttribute<uint32_t>(C2_system_tuning_frequency, u"C2_system_tuning_frequency", true) &&
-        element->getIntAttribute<uint8_t>(C2_system_tuning_frequency_type, u"C2_system_tuning_frequency_type", true, 0, 0, 3) &&
-        element->getIntAttribute<uint8_t>(active_OFDM_symbol_duration, u"active_OFDM_symbol_duration", true, 0, 0, 7) &&
-        element->getIntEnumAttribute(guard_interval, C2GuardIntervalNames, u"guard_interval", true);
+    return  element->getIntAttribute<uint8_t>(plp_id, u"plp_id", true) &&
+            element->getIntAttribute<uint8_t>(data_slice_id, u"data_slice_id", true) &&
+            element->getIntAttribute<uint32_t>(C2_system_tuning_frequency, u"C2_system_tuning_frequency", true) &&
+            element->getIntAttribute<uint8_t>(C2_system_tuning_frequency_type, u"C2_system_tuning_frequency_type", true, 0, 0, 3) &&
+            element->getIntAttribute<uint8_t>(active_OFDM_symbol_duration, u"active_OFDM_symbol_duration", true, 0, 0, 7) &&
+            element->getIntEnumAttribute(guard_interval, C2GuardIntervalNames, u"guard_interval", true);
 }

@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"private_data_specifier_descriptor"
+#define MY_CLASS ts::PrivateDataSpecifierDescriptor
 #define MY_DID ts::DID_PRIV_DATA_SPECIF
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::PrivateDataSpecifierDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::PrivateDataSpecifierDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::PrivateDataSpecifierDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,13 +52,17 @@ ts::PrivateDataSpecifierDescriptor::PrivateDataSpecifierDescriptor(PDS pds_) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     pds(pds_)
 {
-    _is_valid = true;
 }
 
 ts::PrivateDataSpecifierDescriptor::PrivateDataSpecifierDescriptor(DuckContext& duck, const Descriptor& desc) :
     PrivateDataSpecifierDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::PrivateDataSpecifierDescriptor::clearContent()
+{
+    pds = 0;
 }
 
 
@@ -80,7 +84,7 @@ void ts::PrivateDataSpecifierDescriptor::serialize(DuckContext& duck, Descriptor
 
 void ts::PrivateDataSpecifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 4;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 4;
 
     if (_is_valid) {
         pds = GetUInt32 (desc.payload());
@@ -94,7 +98,8 @@ void ts::PrivateDataSpecifierDescriptor::deserialize(DuckContext& duck, const De
 
 void ts::PrivateDataSpecifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 4) {
@@ -121,9 +126,7 @@ void ts::PrivateDataSpecifierDescriptor::buildXML(DuckContext& duck, xml::Elemen
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::PrivateDataSpecifierDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::PrivateDataSpecifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntEnumAttribute(pds, PrivateDataSpecifierEnum, u"private_data_specifier", true);
+    return element->getIntEnumAttribute(pds, PrivateDataSpecifierEnum, u"private_data_specifier", true);
 }

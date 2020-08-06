@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"teletext_descriptor"
+#define MY_CLASS ts::TeletextDescriptor
 #define MY_DID ts::DID_TELETEXT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::TeletextDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::TeletextDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::TeletextDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -66,13 +66,17 @@ ts::TeletextDescriptor::TeletextDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
 }
 
 ts::TeletextDescriptor::TeletextDescriptor(DID tag, const UChar* xml_name, Standards standards, PDS pds) :
     AbstractDescriptor(tag, xml_name, standards, pds),
     entries()
 {
+}
+
+void ts::TeletextDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 ts::TeletextDescriptor::TeletextDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -111,7 +115,8 @@ uint8_t ts::TeletextDescriptor::Entry::magazineNumber() const
 
 void ts::TeletextDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 5) {
@@ -159,7 +164,7 @@ void ts::TeletextDescriptor::deserialize(DuckContext& duck, const Descriptor& de
 {
     entries.clear();
 
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag())) {
         return;
     }
 
@@ -198,22 +203,17 @@ void ts::TeletextDescriptor::buildXML(DuckContext& duck, xml::Element* root) con
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::TeletextDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::TeletextDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"teletext", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"teletext", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        _is_valid =
-            children[i]->getAttribute(entry.language_code, u"language_code", true, u"", 3, 3) &&
-            children[i]->getIntAttribute<uint8_t>(entry.teletext_type, u"teletext_type", true) &&
-            children[i]->getIntAttribute<uint16_t>(entry.page_number, u"page_number", true);
-        if (_is_valid) {
-            entries.push_back(entry);
-        }
+        ok = children[i]->getAttribute(entry.language_code, u"language_code", true, u"", 3, 3) &&
+             children[i]->getIntAttribute<uint8_t>(entry.teletext_type, u"teletext_type", true) &&
+             children[i]->getIntAttribute<uint16_t>(entry.page_number, u"page_number", true);
+        entries.push_back(entry);
     }
+    return ok;
 }

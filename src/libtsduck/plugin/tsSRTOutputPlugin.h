@@ -33,7 +33,7 @@
 //----------------------------------------------------------------------------
 
 #pragma once
-#include "tsPlugin.h"
+#include "tsOutputPlugin.h"
 #include "tsSRTSocket.h"
 
 namespace ts {
@@ -57,6 +57,11 @@ namespace ts {
         virtual bool stop(void) override;
         virtual bool isRealTime(void) override { return true; }
         virtual bool send(const TSPacket*, const TSPacketMetadata*, size_t) override;
+
+        //! @cond nodoxygen
+        // A dummy storage value to force inclusion of this module when using the static library.
+        static const int REFERENCE;
+        //! @endcond
 
     private:
         SocketAddress _local_addr;  // Local address.

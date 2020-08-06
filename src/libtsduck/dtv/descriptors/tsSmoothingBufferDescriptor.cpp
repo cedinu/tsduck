@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"smoothing_buffer_descriptor"
+#define MY_CLASS ts::SmoothingBufferDescriptor
 #define MY_DID ts::DID_SMOOTH_BUF
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::SmoothingBufferDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::SmoothingBufferDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::SmoothingBufferDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,7 +53,12 @@ ts::SmoothingBufferDescriptor::SmoothingBufferDescriptor() :
     sb_leak_rate(0),
     sb_size(0)
 {
-    _is_valid = true;
+}
+
+void ts::SmoothingBufferDescriptor::clearContent()
+{
+    sb_leak_rate = 0;
+    sb_size = 0;
 }
 
 ts::SmoothingBufferDescriptor::SmoothingBufferDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -85,7 +90,7 @@ void ts::SmoothingBufferDescriptor::deserialize(DuckContext& duck, const Descrip
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 6;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 6;
 
     if (_is_valid) {
         sb_leak_rate = GetUInt24(data) & 0x003FFFFF;
@@ -100,7 +105,8 @@ void ts::SmoothingBufferDescriptor::deserialize(DuckContext& duck, const Descrip
 
 void ts::SmoothingBufferDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 6) {
@@ -116,7 +122,7 @@ void ts::SmoothingBufferDescriptor::DisplayDescriptor(TablesDisplay& display, DI
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::SmoothingBufferDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -125,15 +131,8 @@ void ts::SmoothingBufferDescriptor::buildXML(DuckContext& duck, xml::Element* ro
     root->setIntAttribute(u"sb_size", sb_size, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::SmoothingBufferDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SmoothingBufferDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(sb_leak_rate, u"sb_leak_rate", true, 0, 0, 0x003FFFFF) &&
-        element->getIntAttribute<uint32_t>(sb_size, u"sb_size", true, 0, 0, 0x003FFFFF);
+    return element->getIntAttribute<uint32_t>(sb_leak_rate, u"sb_leak_rate", true, 0, 0, 0x003FFFFF) &&
+           element->getIntAttribute<uint32_t>(sb_size, u"sb_size", true, 0, 0, 0x003FFFFF);
 }

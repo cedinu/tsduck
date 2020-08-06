@@ -797,23 +797,23 @@ void ts::Args::getTristateValue(Tristate& value, const UChar* name, size_t index
     }
     if (index >= opt.values.size()) {
         // Option not present, meaning unspecified.
-        value = MAYBE;
+        value = Tristate::MAYBE;
     }
     else if (!opt.values[index].string.set()) {
         // Option present without value, meaning true.
-        value = TRUE;
+        value = Tristate::TRUE;
     }
     else if (!opt.values[index].string.value().toTristate(value)) {
         // Value present but not a valid tristate value. Should not occur if the
         // option was declared using TRISTATE type. So, this must be some string
         // option and we cannot decide the Tristate value.
-        value = MAYBE;
+        value = Tristate::MAYBE;
     }
 }
 
 ts::Tristate ts::Args::tristateValue(const UChar* name, size_t index) const
 {
-    Tristate value = MAYBE;
+    Tristate value = Tristate::MAYBE;
     getTristateValue(value, name, index);
     return value;
 }
@@ -988,28 +988,40 @@ bool ts::Args::analyze(const UString& app_name, const UStringVector& arguments, 
         raiseMaxSeverity(intValue(u"debug", Severity::Debug));
     }
 
+    // Display the analyzed command line. Do it outside the previous condition (checking for --debug) if the debug
+    // mode was set outside this analysis (typically debug mode set at command level and propagated to plugins).
+    if (debug()) {
+        debug(u"====> %s%s%s %s", {_shell, _shell.empty() ? u"" : u" ", _app_name.toQuoted(), UString::ToQuotedLine(_args)});
+    }
+
     // Process --help predefined option
     if ((_flags & NO_HELP) == 0 && present(u"help") && (search(u"help")->flags & IOPT_PREDEFINED) != 0) {
         processHelp();
-        return _is_valid = false;
+        _is_valid = false;
+        return false;
     }
 
     // Process --version predefined option
     if ((_flags & NO_VERSION) == 0 && present(u"version") && (search(u"version")->flags & IOPT_PREDEFINED) != 0) {
         processVersion();
-        return _is_valid = false;
+        _is_valid = false;
+        return false;
     }
 
     // Look for parameters/options number of occurences.
-    // Don't do that if command already proven wrong
+    // Don't do that if command already proven wrong.
     if (_is_valid) {
         for (auto it = _iopts.begin(); it != _iopts.end(); ++it) {
             const IOption& op(it->second);
-            if (op.value_count < op.min_occur) {
-                error(u"missing " + op.display() + (op.min_occur < 2 ? u"" : UString::Format(u", %d required", {op.min_occur})));
-            }
-            else if (op.value_count > op.max_occur) {
-                error(u"too many " + op.display() + (op.max_occur < 2 ? u"" : UString::Format(u", %d maximum", {op.max_occur})));
+            // Don't check number of occurences when the option has no value.
+            // Specifying such an option multiple times is the same as once.
+            if (op.type != NONE) {
+                if (op.value_count < op.min_occur) {
+                    error(u"missing " + op.display() + (op.min_occur < 2 ? u"" : UString::Format(u", %d required", {op.min_occur})));
+                }
+                else if (op.value_count > op.max_occur) {
+                    error(u"too many " + op.display() + (op.max_occur < 2 ? u"" : UString::Format(u", %d maximum", {op.max_occur})));
+                }
             }
         }
     }

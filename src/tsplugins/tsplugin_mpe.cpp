@@ -32,7 +32,6 @@
 //
 //----------------------------------------------------------------------------
 
-#include "tsPlugin.h"
 #include "tsPluginRepository.h"
 #include "tsMPEDemux.h"
 #include "tsMPEPacket.h"
@@ -100,8 +99,7 @@ namespace ts {
     };
 }
 
-TSPLUGIN_DECLARE_VERSION
-TSPLUGIN_DECLARE_PROCESSOR(mpe, ts::MPEPlugin)
+TS_REGISTER_PROCESSOR_PLUGIN(u"mpe", ts::MPEPlugin);
 
 
 //----------------------------------------------------------------------------

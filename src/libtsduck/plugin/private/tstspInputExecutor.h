@@ -34,7 +34,9 @@
 
 #pragma once
 #include "tstspPluginExecutor.h"
+#include "tsInputPlugin.h"
 #include "tsPCRAnalyzer.h"
+#include "tsMonotonic.h"
 #include "tsWatchDog.h"
 
 namespace ts {
@@ -51,12 +53,14 @@ namespace ts {
             //!
             //! Constructor.
             //! @param [in] options Command line options for tsp.
+            //! @param [in] handlers Registry of event handlers.
             //! @param [in] pl_options Command line options for this plugin.
             //! @param [in] attributes Creation attributes for the thread executing this plugin.
             //! @param [in,out] global_mutex Global mutex to synchronize access to the packet buffer.
             //! @param [in,out] report Where to report logs.
             //!
             InputExecutor(const TSProcessorArgs& options,
+                          const PluginEventHandlerRegistry& handlers,
                           const PluginOptions& pl_options,
                           const ThreadAttributes& attributes,
                           Mutex& global_mutex,
@@ -77,12 +81,9 @@ namespace ts {
             //!
             bool initAllBuffers(PacketBuffer* buffer, PacketMetadataBuffer* metadata);
 
-            //!
-            //! Access the shared library API.
-            //! Override ts::tsp::PluginExecutor::plugin() with a specialized returned class.
-            //! @return Address of the plugin interface.
-            //!
-            InputPlugin* plugin() {return _input;}
+            // Overridden methods.
+            virtual void setAbort() override;
+            virtual size_t pluginIndex() const override;
 
         private:
             InputPlugin* _input;                  // Plugin API
@@ -96,6 +97,7 @@ namespace ts {
             bool         _use_dts_analyzer;       // Use DTS analyzer, not PCR analyzer.
             WatchDog     _watchdog;               // Watchdog when plugin does not support receive timeout.
             bool         _use_watchdog;           // The watchdog shall be used.
+            Monotonic    _start_time;             // Creation time in a monotonic clock.
 
             // Inherited from Thread
             virtual void main() override;

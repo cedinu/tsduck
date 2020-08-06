@@ -28,9 +28,15 @@
 //----------------------------------------------------------------------------
 
 #include "tsIPInputPlugin.h"
+#include "tsPluginRepository.h"
 #include "tsIPUtils.h"
 #include "tsSysUtils.h"
 TSDUCK_SOURCE;
+
+TS_REGISTER_INPUT_PLUGIN(u"ip", ts::IPInputPlugin);
+
+// A dummy storage value to force inclusion of this module when using the static library.
+const int ts::IPInputPlugin::REFERENCE = 0;
 
 
 //----------------------------------------------------------------------------
@@ -38,7 +44,8 @@ TSDUCK_SOURCE;
 //----------------------------------------------------------------------------
 
 ts::IPInputPlugin::IPInputPlugin(TSP* tsp_) :
-    AbstractDatagramInputPlugin(tsp_, IP_MAX_PACKET_SIZE, u"Receive TS packets from UDP/IP, multicast or unicast", u"[options] [address:]port"),
+    AbstractDatagramInputPlugin(tsp_, IP_MAX_PACKET_SIZE, u"Receive TS packets from UDP/IP, multicast or unicast", u"[options] [address:]port",
+                                u"kernel", u"A kernel-provided time-stamp for the packet, when available (Linux only)"),
     _sock(*tsp_)
 {
     // Add UDP receiver common options.
@@ -107,9 +114,9 @@ bool ts::IPInputPlugin::setReceiveTimeout(MilliSecond timeout)
 // Datagram reception method.
 //----------------------------------------------------------------------------
 
-bool ts::IPInputPlugin::receiveDatagram(void* buffer, size_t buffer_size, size_t& ret_size)
+bool ts::IPInputPlugin::receiveDatagram(void* buffer, size_t buffer_size, size_t& ret_size, MicroSecond& timestamp)
 {
     SocketAddress sender;
     SocketAddress destination;
-    return _sock.receive(buffer, buffer_size, ret_size, sender, destination, tsp, *tsp);
+    return _sock.receive(buffer, buffer_size, ret_size, sender, destination, tsp, *tsp, &timestamp);
 }

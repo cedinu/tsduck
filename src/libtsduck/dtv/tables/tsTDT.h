@@ -39,6 +39,7 @@
 namespace ts {
     //!
     //! Representation of a Time & Date Table (TDT)
+    //! @see ETSI EN 300 468, 5.2.5
     //! @ingroup table
     //!
     class TSDUCKDLL TDT : public AbstractTable
@@ -61,13 +62,14 @@ namespace ts {
         TDT(DuckContext& duck, const BinaryTable& table);
 
         // Inherited methods
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
         DeclareDisplaySection();
 
     protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void serializeContent(DuckContext&, BinaryTable&) const override;
         virtual void deserializeContent(DuckContext&, const BinaryTable&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
     };
 }

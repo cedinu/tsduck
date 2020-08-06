@@ -58,7 +58,7 @@ ts::AbstractTablePlugin::AbstractTablePlugin(TSP* tsp_,
     _set_version(false),
     _new_version(0),
     _demux(duck, this),
-    _pzer(pid)
+    _pzer(duck, pid)
 {
     option(u"bitrate", 'b', POSITIVE);
     help(u"bitrate",
@@ -166,7 +166,7 @@ void ts::AbstractTablePlugin::handleTable(SectionDemux& demux, const BinaryTable
     }
 
     // Build a modifiable version of the table.
-    BinaryTable table(intable, SHARE);
+    BinaryTable table(intable, ShareMode::SHARE);
 
     // Call subclass to process the table.
     bool is_target = true;

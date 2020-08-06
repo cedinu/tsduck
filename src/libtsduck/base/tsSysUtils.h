@@ -35,6 +35,7 @@
 
 #pragma once
 #include "tsUString.h"
+#include "tsEnumUtils.h"
 #include "tsTime.h"
 #include "tsException.h"
 #include "tsCerrReport.h"
@@ -419,10 +420,47 @@ namespace ts {
     //! the pattern is not an error, it simply return no file name.
     //!
     template <class CONTAINER>
-    bool ExpandWildcard(CONTAINER& container, const UString& pattern)
+    inline bool ExpandWildcard(CONTAINER& container, const UString& pattern)
     {
         container.clear();
         return ExpandWildcardAndAppend(container, pattern);
+    }
+
+    //!
+    //! Search all files matching a specified wildcard pattern in a directory tree and append them into a container.
+    //!
+    //! @tparam CONTAINER A container class of @c UString as defined by the C++ Standard Template Library (STL).
+    //! @param [in,out] container A container of @c UString receiving the the names of all files matching the wildcard.
+    //! The names are appended at the end of the existing content of the container.
+    //! @param [in] root Root directory into which the files are searched.
+    //! @param [in] pattern A file path pattern with wildcards. The syntax of the wildcards is system-dependent.
+    //! @param [in] max_levels Maximum number of directory recursions. Since some operating systems allow
+    //! loops in the file system, it is a good idea to set some limit to avoid infinite recursion.
+    //! @param [in] skip_symlinks If true, do not recurse through symbolic links to directories.
+    //! @return True on success, false on error. Note that finding no file matching
+    //! the pattern is not an error, it simply return no file name.
+    //!
+    template <class CONTAINER>
+    bool SearchWildcardAndAppend(CONTAINER& container, const UString& root, const UString& pattern, size_t max_levels = 64, bool skip_symlinks = true);
+
+    //!
+    //! Search all files matching a specified wildcard pattern in a directory tree.
+    //!
+    //! @tparam CONTAINER A container class of @c UString as defined by the C++ Standard Template Library (STL).
+    //! @param [out] container A container of @c UString receiving the the names of all files matching the wildcard.
+    //! @param [in] root Root directory into which the files are searched.
+    //! @param [in] pattern A file path pattern with wildcards. The syntax of the wildcards is system-dependent.
+    //! @param [in] max_levels Maximum number of directory recursions. Since some operating systems allow
+    //! loops in the file system, it is a good idea to set some limit to avoid infinite recursion.
+    //! @param [in] skip_symlinks If true, do not recurse through symbolic links to directories.
+    //! @return True on success, false on error. Note that finding no file matching
+    //! the pattern is not an error, it simply return no file name.
+    //!
+    template <class CONTAINER>
+    inline bool SearchWildcard(CONTAINER& container, const UString& root, const UString& pattern, size_t max_levels = 64, bool skip_symlinks = true)
+    {
+        container.clear();
+        return SearchWildcardAndAppend(container, root, pattern, max_levels);
     }
 
     //!
@@ -430,8 +468,13 @@ namespace ts {
     //! @param [in] fileName Name of the file to search.
     //! If @a fileName is not found and does not contain any directory part, search this file
     //! in the following places:
-    //! - Directory of the current executable.
     //! - All directories in @c TSPLUGINS_PATH environment variable.
+    //! - Directory of the current executable.
+    //! - Directory ../etc/tsduck from current executable (UNIX only).
+    //! - Directory ../../etc/tsduck from current executable (UNIX only).
+    //! - Directory ../lib64/tsduck from current executable (64-bit UNIX only).
+    //! - Directory ../lib/tsduck from current executable (UNIX only).
+    //! - Directory ../share/tsduck from current executable (UNIX only).
     //! - All directories in @c LD_LIBRARY_PATH environment variable (UNIX only).
     //! - All directories in @c PATH (UNIX) or @c Path (Windows) environment variable.
     //! @return The path to an existing file or an empty string if not found.
@@ -466,9 +509,27 @@ namespace ts {
     //! @param [in] def Default value if the specified environment variable does not exist.
     //!
     template <class CONTAINER>
-    void GetEnvironmentPath(CONTAINER& container, const UString& name, const UString& def = UString())
+    inline void GetEnvironmentPath(CONTAINER& container, const UString& name, const UString& def = UString())
     {
         GetEnvironment(name, def).split(container, SearchPathSeparator, true, true);
+    }
+
+    //!
+    //! Get the value of an environment variable containing a search path.
+    //!
+    //! The search path is analyzed and split into individual directory names.
+    //!
+    //! @tparam CONTAINER A container class of @c UString as defined by the
+    //! C++ Standard Template Library (STL).
+    //! @param [in,out] container A container of @c UString receiving the directory names.
+    //! The directory names are appended to the container without erasing previous content.
+    //! @param [in] name Environment variable name.
+    //! @param [in] def Default value if the specified environment variable does not exist.
+    //!
+    template <class CONTAINER>
+    inline void GetEnvironmentPathAppend(CONTAINER& container, const UString& name, const UString& def = UString())
+    {
+        GetEnvironment(name, def).splitAppend(container, SearchPathSeparator, true, true);
     }
 
     //!
@@ -643,5 +704,5 @@ namespace ts {
     TSDUCKDLL UString ClassName(const std::type_info& info);
 }
 
-TS_FLAGS_OPERATORS(ts::ResolveSymbolicLinksFlags)
+TS_ENABLE_BITMASK_OPERATORS(ts::ResolveSymbolicLinksFlags);
 #include "tsSysUtilsTemplate.h"

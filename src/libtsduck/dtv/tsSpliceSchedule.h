@@ -89,11 +89,6 @@ namespace ts {
         SpliceSchedule();
 
         //!
-        //! Reset all fields to default initial values.
-        //!
-        void clear();
-
-        //!
         //! Display the splice insert command.
         //! @param [in,out] display Display engine.
         //! @param [in] indent Indentation width.
@@ -114,8 +109,10 @@ namespace ts {
         //!
         void serialize(ByteBlock& data) const;
 
+    protected:
         // Inherited methods
+        virtual void clearContent() override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual void fromXML(DuckContext&, const xml::Element*) override;
+        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
     };
 }

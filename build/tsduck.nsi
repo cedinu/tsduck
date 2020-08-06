@@ -28,7 +28,7 @@
 ;-----------------------------------------------------------------------------
 ;
 ;  NSIS script to build the TSDuck binary installer for Windows.
-;  Do not invoke NSIS directly, use Build-Installer.ps1.
+;  Do not invoke NSIS directly, use build-installer.ps1.
 ;
 ;  Required command-line definitions:
 ;  - Version : Product version.
@@ -58,7 +58,7 @@ Caption "TSDuck Installer"
 ; Directories.
 !define RootDir ".."
 !define InstallerDir "${RootDir}\installers"
-!define ProjectDir "${RootDir}\build\msvc"
+!define BinRoot "${BinDir}\.."
 
 VIProductVersion ${VersionInfo}
 VIAddVersionKey ProductName "TSDuck"
@@ -137,6 +137,14 @@ Section "Tools & Plugins" SectionTools
     Delete "$INSTDIR\bin\tsduck.xml"
     Delete "$INSTDIR\bin\tsduck.channels.xml"
     Delete "$INSTDIR\bin\tsduck.dvb.names"
+    Delete "$INSTDIR\bin\tsplugin_dektec.dll"
+    Delete "$INSTDIR\bin\tsplugin_drop.dll"
+    Delete "$INSTDIR\bin\tsplugin_file.dll"
+    Delete "$INSTDIR\bin\tsplugin_fork.dll"
+    Delete "$INSTDIR\bin\tsplugin_hls.dll"
+    Delete "$INSTDIR\bin\tsplugin_ip.dll"
+    Delete "$INSTDIR\bin\tsplugin_null.dll"
+    Delete "$INSTDIR\bin\tsplugin_srt.dll"
 
     ; Create folder for binaries
     CreateDirectory "$INSTDIR\bin"
@@ -194,23 +202,23 @@ Section /o "Development" SectionDevelopment
     CreateDirectory "$INSTDIR\lib"
     CreateDirectory "$INSTDIR\lib\Release-Win32"
     SetOutPath "$INSTDIR\lib\Release-Win32"
-    File "${ProjectDir}\Release-Win32\tsduck.lib"
-    File "${ProjectDir}\Release-Win32\tsduck.dll"
+    File "${BinRoot}\Release-Win32\tsduck.lib"
+    File "${BinRoot}\Release-Win32\tsduck.dll"
 
     CreateDirectory "$INSTDIR\lib\Release-Win64"
     SetOutPath "$INSTDIR\lib\Release-Win64"
-    File "${ProjectDir}\Release-x64\tsduck.lib"
-    File "${ProjectDir}\Release-x64\tsduck.dll"
+    File "${BinRoot}\Release-x64\tsduck.lib"
+    File "${BinRoot}\Release-x64\tsduck.dll"
 
     CreateDirectory "$INSTDIR\lib\Debug-Win32"
     SetOutPath "$INSTDIR\lib\Debug-Win32"
-    File "${ProjectDir}\Debug-Win32\tsduck.lib"
-    File "${ProjectDir}\Debug-Win32\tsduck.dll"
+    File "${BinRoot}\Debug-Win32\tsduck.lib"
+    File "${BinRoot}\Debug-Win32\tsduck.dll"
 
     CreateDirectory "$INSTDIR\lib\Debug-Win64"
     SetOutPath "$INSTDIR\lib\Debug-Win64"
-    File "${ProjectDir}\Debug-x64\tsduck.lib"
-    File "${ProjectDir}\Debug-x64\tsduck.dll"
+    File "${BinRoot}\Debug-x64\tsduck.lib"
+    File "${BinRoot}\Debug-x64\tsduck.dll"
 
     ; Visual Studio property files.
     SetOutPath "$INSTDIR"

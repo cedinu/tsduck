@@ -26,42 +26,33 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a bouquet_name_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsBouquetNameDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIBuffer.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"bouquet_name_descriptor"
+#define MY_CLASS ts::BouquetNameDescriptor
 #define MY_DID ts::DID_BOUQUET_NAME
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::BouquetNameDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::BouquetNameDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::BouquetNameDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::BouquetNameDescriptor::BouquetNameDescriptor(const UString& name_) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     name(name_)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::BouquetNameDescriptor::BouquetNameDescriptor(DuckContext& duck, const Descriptor& desc) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
@@ -70,33 +61,24 @@ ts::BouquetNameDescriptor::BouquetNameDescriptor(DuckContext& duck, const Descri
     deserialize(duck, desc);
 }
 
-
-//----------------------------------------------------------------------------
-// Serialization
-//----------------------------------------------------------------------------
-
-void ts::BouquetNameDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::BouquetNameDescriptor::clearContent()
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->append(duck.toDVB(name));
-    serializeEnd(desc, bbp);
+    name.clear();
 }
 
 
 //----------------------------------------------------------------------------
-// Deserialization
+// Binary serialization
 //----------------------------------------------------------------------------
 
-void ts::BouquetNameDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::BouquetNameDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag;
+    buf.putString(name);
+}
 
-    if (_is_valid) {
-        name.assign(duck.fromDVB(desc.payload(), desc.payloadSize()));
-    }
-    else {
-        name.clear();
-    }
+void ts::BouquetNameDescriptor::deserializePayload(PSIBuffer& buf)
+{
+    buf.getString(name);
 }
 
 
@@ -104,16 +86,17 @@ void ts::BouquetNameDescriptor::deserialize(DuckContext& duck, const Descriptor&
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::BouquetNameDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* payload, size_t size, int indent, TID tid, PDS pds)
+void ts::BouquetNameDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
     const std::string margin(indent, ' ');
-    strm << margin << "Name: \"" << display.duck().fromDVB(payload, size) << "\"" << std::endl;
+    PSIBuffer buf(display.duck(), data, size);
+
+    display.out() << margin << "Name: \"" << buf.getString() << "\"" << std::endl;
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML
 //----------------------------------------------------------------------------
 
 void ts::BouquetNameDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -121,14 +104,7 @@ void ts::BouquetNameDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
     root->setAttribute(u"bouquet_name", name);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::BouquetNameDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::BouquetNameDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(name, u"bouquet_name", true, u"", 0, MAX_DESCRIPTOR_SIZE - 2);
+    return element->getAttribute(name, u"bouquet_name", true, u"", 0, MAX_DESCRIPTOR_SIZE - 2);
 }

@@ -26,27 +26,23 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a message_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsMessageDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"message_descriptor"
+#define MY_CLASS ts::MessageDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_MESSAGE
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::MessageDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::MessageDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::MessageDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -59,7 +55,6 @@ ts::MessageDescriptor::MessageDescriptor() :
     language_code(),
     message()
 {
-    _is_valid = true;
 }
 
 ts::MessageDescriptor::MessageDescriptor(uint8_t id, const UString& lang, const UString& text) :
@@ -68,13 +63,19 @@ ts::MessageDescriptor::MessageDescriptor(uint8_t id, const UString& lang, const 
     language_code(lang),
     message(text)
 {
-    _is_valid = true;
 }
 
 ts::MessageDescriptor::MessageDescriptor(DuckContext& duck, const Descriptor& desc) :
     MessageDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::MessageDescriptor::clearContent()
+{
+    message_id = 0;
+    language_code.clear();
+    message.clear();
 }
 
 
@@ -91,7 +92,7 @@ void ts::MessageDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
         desc.invalidate();
         return;
     }
-    bbp->append(duck.toDVB(message));
+    bbp->append(duck.encoded(message));
     serializeEnd(desc, bbp);
 }
 
@@ -105,13 +106,13 @@ void ts::MessageDescriptor::deserialize(DuckContext& duck, const Descriptor& des
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag && size >= 5 && data[0] == MY_EDID)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && size >= 5 && data[0] == MY_EDID)) {
         return;
     }
 
     message_id = data[1];
     language_code = DeserializeLanguageCode(data + 2);
-    message = duck.fromDVB(data + 5, size - 5);
+    duck.decode(message, data + 5, size - 5);
 }
 
 
@@ -131,13 +132,11 @@ void ts::MessageDescriptor::buildXML(DuckContext& duck, xml::Element* root) cons
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::MessageDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::MessageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute(message_id, u"message_id", true) &&
-        element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
-        element->getTextChild(message, u"text");
+    return element->getIntAttribute(message_id, u"message_id", true) &&
+           element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
+           element->getTextChild(message, u"text");
 }
 
 
@@ -152,11 +151,13 @@ void ts::MessageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, c
     // See ts::TablesDisplay::displayDescriptorData()
 
     if (size >= 4) {
-        std::ostream& strm(display.duck().out());
+        DuckContext& duck(display.duck());
+        std::ostream& strm(duck.out());
         const std::string margin(indent, ' ');
+
         strm << margin << "Message id: " << int(data[0])
              << ", language: " << DeserializeLanguageCode(data + 1) << std::endl
-             << margin << "Message: \"" << display.duck().fromDVB(data + 4, size - 4) << "\"" << std::endl;
+             << margin << "Message: \"" << duck.decoded(data + 4, size - 4) << "\"" << std::endl;
     }
     else {
         display.displayExtraData(data, size, indent);

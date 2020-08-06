@@ -5,13 +5,12 @@
 
 // Characteristics of a FOOT
 #define MY_XML_NAME u"FOOT"      // XML name is <FOOT>
+#define MY_CLASS foo::FooTable   // Fully qualified class name
 #define MY_TID foo::TID_FOOT     // Table id
-#define MY_STD ts::STD_NONE      // Not defined in any standard.
+#define MY_STD foo::STD          // DTV standards for FOOT.
 
 // Registration of the table in TSDuck library
-TS_XML_TABLE_FACTORY(foo::FooTable, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(foo::FooTable, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(foo::FooTable::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
@@ -42,6 +41,18 @@ foo::FooTable::FooTable(ts::DuckContext& duck, const ts::BinaryTable& table) :
 
 
 //----------------------------------------------------------------------------
+// Clear content, return to initial values
+//----------------------------------------------------------------------------
+
+void foo::FooTable::clearContent()
+{
+    foo_id = 0;
+    name.clear();
+    descs.clear();
+}
+
+
+//----------------------------------------------------------------------------
 // Deserialization
 //----------------------------------------------------------------------------
 
@@ -68,7 +79,7 @@ void foo::FooTable::deserializeContent(ts::DuckContext& duck, const ts::BinaryTa
         size_t remain = sect.payloadSize();
 
         // Get name (accumulated in all sections)
-        name.append(ts::UString::FromDVBWithByteLength(data, remain, duck.dvbCharsetIn()));
+        name.append(duck.decodedWithByteLength(data, remain));
 
         // Get descriptor list
         if (remain < 2) {
@@ -104,7 +115,7 @@ void foo::FooTable::serializeContent(ts::DuckContext& duck, ts::BinaryTable& tab
         size_t remain = sizeof(payload);
 
         // Serialize at most 255 bytes of the name.
-        name_index += name.toDVBWithByteLength(data, remain, name_index, ts::NPOS, duck.dvbCharsetOut());
+        name_index += duck.encodeWithByteLength(data, remain, name, name_index);
 
         // Serialize as many descriptors as we can.
         desc_index = descs.lengthSerialize(data, remain, desc_index);
@@ -133,12 +144,13 @@ void foo::FooTable::serializeContent(ts::DuckContext& duck, ts::BinaryTable& tab
 
 void foo::FooTable::DisplaySection(ts::TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    ts::DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
 
     const uint16_t id = section.tableIdExtension();
-    const ts::UString name(ts::UString::FromDVBWithByteLength(data, size, display.duck().dvbCharsetIn()));
+    const ts::UString name(duck.decodedWithByteLength(data, size));
 
     strm << ts::UString::Format(u"%*sFoo id: 0x%X (%d), name: \"%s\"", {indent, u"", id, id, name}) << std::endl;
 
@@ -171,15 +183,11 @@ void foo::FooTable::buildXML(ts::DuckContext& duck, ts::xml::Element* root) cons
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void foo::FooTable::fromXML(ts::DuckContext& duck, const ts::xml::Element* element)
+bool foo::FooTable::analyzeXML(ts::DuckContext& duck, const ts::xml::Element* element)
 {
-    descs.clear();
-
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
-        element->getBoolAttribute(is_current, u"current", false, true) &&
-        element->getIntAttribute<uint16_t>(foo_id, u"foo_id", true) &&
-        element->getAttribute(name, u"name") &&
-        descs.fromXML(duck, element);
+    return element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+           element->getBoolAttribute(is_current, u"current", false, true) &&
+           element->getIntAttribute<uint16_t>(foo_id, u"foo_id", true) &&
+           element->getAttribute(name, u"name") &&
+           descs.fromXML(duck, element);
 }

@@ -35,12 +35,21 @@
 
 #pragma once
 #include "tsUString.h"
+#include "tsEnumUtils.h"
 #include "tsCASFamily.h"
 #include "tsMPEG.h"
 #include "tsReport.h"
 #include "tsSingletonManager.h"
 
+// Forward declaration to allow using the '|' operator in the definition of the enum type.
+// Not needed with GCC and LLVM, only MSC complains.
+namespace ts { namespace names { enum Flags : uint16_t; }}
+TS_ENABLE_BITMASK_OPERATORS(ts::names::Flags);
+
 namespace ts {
+
+    class DuckContext;
+
     //!
     //! Namespace for functions returning MPEG/DVB names.
     //!
@@ -49,7 +58,7 @@ namespace ts {
         //! Flags to be used in the formating of MPEG/DVB names.
         //! Values can be or'ed.
         //!
-        enum Flags {
+        enum Flags : uint16_t {
             NAME          = 0x0000,   //!< Name only, no value. This is the default.
             VALUE         = 0x0001,   //!< Include the value: "name (value)".
             FIRST         = 0x0002,   //!< Same with value first: "value (name)".
@@ -60,16 +69,18 @@ namespace ts {
             DECIMAL_FIRST = FIRST | DECIMAL,         //!< Value in decimal in first position.
             BOTH_FIRST    = FIRST | HEXA | DECIMAL,  //!< Value in decimal and hexadecimal in first position.
             ALTERNATE     = 0x0010,                  //!< Display an alternate integer value.
+            NAME_OR_VALUE = 0x0020,                  //!< Display name if defined or value only if not defined.
         };
 
         //!
         //! Name of Table ID.
+        //! @param [in] duck TSDuck execution context (used to select from conflicting standards).
         //! @param [in] tid Table id.
         //! @param [in] cas CAS id for EMM/ECM table ids.
         //! @param [in] flags Presentation flags.
         //! @return The corresponding name.
         //!
-        TSDUCKDLL UString TID(uint8_t tid, uint16_t cas = CASID_NULL, Flags flags = NAME);
+        TSDUCKDLL UString TID(const DuckContext& duck, uint8_t tid, uint16_t cas = CASID_NULL, Flags flags = NAME);
 
         //!
         //! Name of Descriptor ID.
@@ -195,11 +206,12 @@ namespace ts {
 
         //!
         //! Name of Conditional Access System Id (in CA Descriptor).
+        //! @param [in] duck TSDuck execution context (used to select from other standards).
         //! @param [in] casid Conditional Access System Id (in CA Descriptor).
         //! @param [in] flags Presentation flags.
         //! @return The corresponding name.
         //!
-        TSDUCKDLL UString CASId(uint16_t casid, Flags flags = NAME);
+        TSDUCKDLL UString CASId(const DuckContext& duck, uint16_t casid, Flags flags = NAME);
 
         //!
         //! Name of Conditional Access Families.
@@ -226,12 +238,13 @@ namespace ts {
 
         //!
         //! Name of Component Type (in Component Descriptor).
+        //! @param [in] duck TSDuck execution context (used to select from other standards).
         //! @param [in] ct Component Type (in Component Descriptor).
         //! Combination of stream_content_ext (4 bits), stream_content (4 bits) and component_type (8 bits).
         //! @param [in] flags Presentation flags.
         //! @return The corresponding name.
         //!
-        TSDUCKDLL UString ComponentType(uint16_t ct, Flags flags = NAME);
+        TSDUCKDLL UString ComponentType(const DuckContext& duck, uint16_t ct, Flags flags = NAME);
 
         //!
         //! Name of AC-3 Component Type.
@@ -496,7 +509,7 @@ namespace ts {
     {
         TS_DECLARE_SINGLETON(NamesMain);
     public:
-        virtual ~NamesMain() override;  //!< Destructor
+        virtual ~NamesMain();  //!< Destructor
     };
 
     //!
@@ -507,7 +520,7 @@ namespace ts {
     {
         TS_DECLARE_SINGLETON(NamesOUI);
     public:
-        virtual ~NamesOUI() override;  //!< Destructor
+        virtual ~NamesOUI();  //!< Destructor
     };
 
     //!
@@ -526,5 +539,3 @@ namespace ts {
         return NamesMain::Instance()->nameFromSection(sectionName, Names::Value(value), flags, bits, Names::Value(alternateValue));
     }
 }
-
-TS_FLAGS_OPERATORS(ts::names::Flags)

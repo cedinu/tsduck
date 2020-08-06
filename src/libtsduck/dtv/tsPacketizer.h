@@ -34,10 +34,14 @@
 
 #pragma once
 #include "tsMPEG.h"
-#include "tsTSPacket.h"
 #include "tsSectionProviderInterface.h"
+#include "tsReport.h"
 
 namespace ts {
+
+    class TSPacket;
+    class DuckContext;
+
     //!
     //! Packetization of MPEG sections into Transport Stream packets.
     //! @ingroup mpeg
@@ -46,14 +50,16 @@ namespace ts {
     //!
     class TSDUCKDLL Packetizer
     {
-        TS_NOCOPY(Packetizer);
+        TS_NOBUILD_NOCOPY(Packetizer);
     public:
         //!
-        //! Default constructor.
+        //! Constructor.
+        //! @param [in] duck TSDuck execution context. The reference is kept inside the packetizer.
         //! @param [in] pid PID for generated TS packets.
         //! @param [in] provider An object which will be called each time a section is required.
+        //! @param [in] report Optional address of a Report object for debug and trace messages.
         //!
-        Packetizer(PID pid = PID_NULL, SectionProviderInterface* provider = nullptr);
+        Packetizer(const DuckContext& duck, PID pid = PID_NULL, SectionProviderInterface* provider = nullptr, Report* report = nullptr);
 
         //!
         //! Destructor
@@ -64,37 +70,25 @@ namespace ts {
         //! Set the default PID for subsequent MPEG packets.
         //! @param [in] pid PID for generated TS packets.
         //!
-        void setPID(PID pid)
-        {
-            _pid = pid & 0x1FFF;
-        }
+        void setPID(PID pid) { _pid = pid & 0x1FFF; }
 
         //!
         //! Get the default PID for subsequent MPEG packets.
         //! @return PID for generated TS packets.
         //!
-        PID getPID() const
-        {
-            return _pid;
-        }
+        PID getPID() const { return _pid; }
 
         //!
         //! Set the object which provides MPEG sections when the packetizer needs a new section.
         //! @param [in] provider An object which will be called each time a section is required.
         //!
-        void setSectionProvider(SectionProviderInterface* provider)
-        {
-            _provider = provider;
-        }
+        void setSectionProvider(SectionProviderInterface* provider) { _provider = provider; }
 
         //!
         //! Get the object which provides MPEG sections when the packetizer needs a new section.
         //! @return The object which will be called each time a section is required.
         //!
-        SectionProviderInterface* sectionProvider() const
-        {
-            return _provider;
-        }
+        SectionProviderInterface* sectionProvider() const { return _provider; }
 
         //!
         //! Set the continuity counter value for next MPEG packet.
@@ -104,29 +98,20 @@ namespace ts {
         //! must be preserved with the previous content of the PID.
         //! @param [in] cc Next continuity counter.
         //!
-        void setNextContinuityCounter(uint8_t cc)
-        {
-            _continuity = cc & 0x0F;
-        }
+        void setNextContinuityCounter(uint8_t cc) { _continuity = cc & 0x0F; }
 
         //!
         //! Get the continuity counter value for next MPEG packet.
         //! @return Next continuity counter.
         //!
-        uint8_t nextContinuityCounter() const
-        {
-            return _continuity;
-        }
+        uint8_t nextContinuityCounter() const { return _continuity; }
 
         //!
         //! Check if the packet stream is exactly at a section boundary.
         //! @return True if the last returned packet contained
         //! the end of a section and no unfinished section.
         //!
-        bool atSectionBoundary() const
-        {
-            return _next_byte == 0;
-        }
+        bool atSectionBoundary() const { return _next_byte == 0; }
 
         //!
         //! Build the next MPEG packet for the list of sections.
@@ -140,19 +125,33 @@ namespace ts {
         //! Get the number of generated packets so far.
         //! @return The number of generated packets so far.
         //!
-        PacketCounter packetCount() const
-        {
-            return _packet_count;
-        }
+        PacketCounter packetCount() const { return _packet_count; }
 
         //!
         //! Get the number of completely packetized sections so far.
         //! @return The number of completely packetized sections so far.
         //!
-        SectionCounter sectionCount() const
-        {
-            return _section_out_count;
-        }
+        SectionCounter sectionCount() const { return _section_out_count; }
+
+        //!
+        //! Allow or disallow splitting section headers across TS packets.
+        //! By default, a Packetizer never splits a section header between two TS packets.
+        //! This is not required by the MPEG standard but some STB are known to have problems with that.
+        //! @param [in] allow If true, splitting section headers across TS packets is allowed.
+        //!
+        void allowHeaderSplit(bool allow) { _split_headers = allow; }
+
+        //!
+        //! Check if splitting section headers across TS packets is allowed.
+        //! @return True if splitting section headers across TS packets is allowed.
+        //!
+        bool headerSplitAllowed() const { return _split_headers; }
+
+        //!
+        //! Get a reference to the debugging report.
+        //! @return A reference to the debugging report.
+        //!
+        Report& report() const { return _report; }
 
         //!
         //! Reset the content of a packetizer.
@@ -168,9 +167,15 @@ namespace ts {
         //!
         virtual std::ostream& display(std::ostream& strm) const;
 
+    protected:
+        // Protected directly accessible to subclasses.
+        const DuckContext& _duck;  //!< The TSDuck execution context is accessible to all subclasses.
+
     private:
         SectionProviderInterface* _provider;
-        PID            _pid;
+        Report&        _report;            // Report object for debug.
+        PID            _pid;               // PID for injected sections.
+        bool           _split_headers;     // Allowed to split section header beetwen TS packets.
         uint8_t        _continuity;        // Continuity counter for next packet
         SectionPtr     _section;           // Current section to insert
         size_t         _next_byte;         // Next byte to insert in current section

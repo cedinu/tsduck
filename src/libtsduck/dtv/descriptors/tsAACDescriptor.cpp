@@ -26,30 +26,26 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of an AAC_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsAACDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"AAC_descriptor"
+#define MY_CLASS ts::AACDescriptor
 #define MY_DID ts::DID_AAC
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::AACDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::AACDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::AACDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::AACDescriptor::AACDescriptor() :
@@ -59,18 +55,20 @@ ts::AACDescriptor::AACDescriptor() :
     AAC_type(),
     additional_info()
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::AACDescriptor::AACDescriptor(DuckContext& duck, const Descriptor& desc) :
     AACDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::AACDescriptor::clearContent()
+{
+    profile_and_level = 0;
+    SAOC_DE = false;
+    AAC_type.clear();
+    additional_info.clear();
 }
 
 
@@ -104,12 +102,12 @@ void ts::AACDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
 
     if (_is_valid) {
         profile_and_level = data[0];
         SAOC_DE = false;
-        AAC_type.reset();
+        AAC_type.clear();
         additional_info.clear();
         data++; size--;
 
@@ -135,7 +133,8 @@ void ts::AACDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 
 void ts::AACDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -150,11 +149,8 @@ void ts::AACDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const
                 data++; size--;
                 strm << margin << "AAC type: " << NameFromSection(u"ComponentType", 0x6F00 | type, names::HEXA_FIRST, 8) << std::endl;
             }
-            if (size > 0) {
-                strm << margin << "Additional information:" << std::endl
-                     << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-                data += size; size = 0;
-            }
+            display.displayPrivateData(u"Additional information", data, size, indent);
+            data += size; size = 0;
         }
     }
 
@@ -171,9 +167,7 @@ void ts::AACDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
     root->setIntAttribute(u"profile_and_level", profile_and_level, true);
     root->setBoolAttribute(u"SAOC_DE", SAOC_DE);
     root->setOptionalIntAttribute(u"AAC_type", AAC_type, true);
-    if (!additional_info.empty()) {
-        root->addElement(u"additional_info")->addHexaText(additional_info);
-    }
+    root->addHexaTextChild(u"additional_info", additional_info, true);
 }
 
 
@@ -181,12 +175,10 @@ void ts::AACDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AACDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AACDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(profile_and_level, u"profile_and_level", true) &&
-        element->getBoolAttribute(SAOC_DE, u"SAOC_DE", false) &&
-        element->getOptionalIntAttribute(AAC_type, u"AAC_type") &&
-        element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 5);
+    return element->getIntAttribute<uint8_t>(profile_and_level, u"profile_and_level", true) &&
+           element->getBoolAttribute(SAOC_DE, u"SAOC_DE", false) &&
+           element->getOptionalIntAttribute(AAC_type, u"AAC_type") &&
+           element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 5);
 }

@@ -32,11 +32,12 @@
 #-----------------------------------------------------------------------------
 
 # With static link, we compile in a specific directory.
-OBJDIR_SUFFIX := $(if $(STATIC),-static,)
+BINDIR_SUFFIX := $(if $(STATIC),-static,)
+OBJSUBDIR := objs-tstools
 
 include ../../Makefile.tsduck
 
-default: execs $(OBJDIR)/setenv.sh
+default: execs
 	@true
 
 .PHONY: execs
@@ -44,18 +45,13 @@ execs: $(EXECS)
 
 ifndef STATIC
     # With dynamic link (the default), we use the shareable library.
-    $(EXECS): $(LIBTSDUCKDIR)/$(OBJDIR)/$(SHARED_LIBTSDUCK)
+    $(EXECS): $(SHARED_LIBTSDUCK)
 else
     # With static link, we compile in a specific directory and we link tsp with all plugins.
     LDFLAGS_EXTRA = -static
-    $(OBJDIR)/tsp: $(addprefix $(TSPLUGINSDIR)/$(OBJDIR)/,$(addsuffix .o,$(TSPLUGINS)))
-    $(EXECS): $(LIBTSDUCKDIR)/$(OBJDIR)/$(STATIC_LIBTSDUCK)
+    $(BINDIR)/tsp: $(addprefix $(BINDIR)/objs-tsplugins/,$(addsuffix .o,$(TSPLUGINS)))
+    $(EXECS): $(STATIC_LIBTSDUCK)
 endif
-
-$(OBJDIR)/setenv.sh: Makefile
-	echo '[[ ":$$PATH:" != *:$(realpath $(OBJDIR)):* ]] && export PATH="$(realpath $(OBJDIR)):$$PATH"' >$@
-	echo 'export LD_LIBRARY_PATH="$(realpath $(LIBTSDUCKDIR)/$(OBJDIR))"' >>$@
-	echo 'export TSPLUGINS_PATH=$(realpath $(TSPLUGINSDIR)/$(OBJDIR)):$(realpath $(LIBTSDUCKDIR)/dtv)' >>$@
 
 .PHONY: install install-devel
 install: $(EXECS)

@@ -38,11 +38,14 @@ TSDUCK_SOURCE;
 // Constructor and destructor.
 //----------------------------------------------------------------------------
 
-ts::tsswitch::InputExecutor::InputExecutor(size_t index, Core& core, const InputSwitcherArgs& opt, Report& log) :
+ts::tsswitch::InputExecutor::InputExecutor(const InputSwitcherArgs& opt,
+                                           const PluginEventHandlerRegistry& handlers,
+                                           size_t index,
+                                           Core& core,
+                                           Report& log) :
+
     // Input threads have a high priority to be always ready to load incoming packets in the buffer.
-    PluginThread(&log, opt.appName, INPUT_PLUGIN, opt.inputs[index], ThreadAttributes().setPriority(ThreadAttributes::GetHighPriority())),
-    _core(core),
-    _opt(opt),
+    PluginExecutor(opt, handlers, PluginType::INPUT, opt.inputs[index], ThreadAttributes().setPriority(ThreadAttributes::GetHighPriority()), core, log),
     _input(dynamic_cast<InputPlugin*>(PluginThread::plugin())),
     _pluginIndex(index),
     _buffer(opt.bufferedPackets),
@@ -55,39 +58,21 @@ ts::tsswitch::InputExecutor::InputExecutor(size_t index, Core& core, const Input
     _stopRequest(false),
     _terminated(false),
     _outFirst(0),
-    _outCount(0)
+    _outCount(0),
+    _start_time(true) // initialized with current system time
 {
     // Make sure that the input plugins display their index.
     setLogName(UString::Format(u"%s[%d]", {pluginName(), _pluginIndex}));
 }
 
-ts::tsswitch::InputExecutor::~InputExecutor()
-{
-    // Wait for thread termination.
-    waitForTermination();
-}
-
 
 //----------------------------------------------------------------------------
-// Implementation of TSP. We do not use "joint termination" in tsswitch.
+// Implementation of TSP.
 //----------------------------------------------------------------------------
 
-void ts::tsswitch::InputExecutor::useJointTermination(bool)
+size_t ts::tsswitch::InputExecutor::pluginIndex() const
 {
-}
-
-void ts::tsswitch::InputExecutor::jointTerminate()
-{
-}
-
-bool ts::tsswitch::InputExecutor::useJointTermination() const
-{
-    return false;
-}
-
-bool ts::tsswitch::InputExecutor::thisJointTerminated() const
-{
-    return false;
+    return _pluginIndex;
 }
 
 
@@ -119,6 +104,16 @@ void ts::tsswitch::InputExecutor::stopInput()
     _startRequest = false;
     _stopRequest = true;
     lock.signal();
+}
+
+
+//----------------------------------------------------------------------------
+// Abort the input operation currently in progress in the plugin.
+//----------------------------------------------------------------------------
+
+bool ts::tsswitch::InputExecutor::abortInput()
+{
+    return _input != nullptr && _input->abortInput();
 }
 
 
@@ -273,6 +268,15 @@ void ts::tsswitch::InputExecutor::main()
                 break;
             }
             addPluginPackets(inCount);
+
+            // Fill input time stamps with monotonic clock if none was provided by the input plugin.
+            // Only check the first returned packet. Assume that the input plugin generates time stamps for all or none.
+            if (!_metadata[inFirst].hasInputTimeStamp()) {
+                const NanoSecond current = Monotonic(true) - _start_time;
+                for (size_t n = 0; n < inCount; ++n) {
+                    _metadata[inFirst + n].setInputTimeStamp(current, NanoSecPerSec, TimeSource::TSP);
+                }
+            }
 
             // Signal the presence of received packets.
             {

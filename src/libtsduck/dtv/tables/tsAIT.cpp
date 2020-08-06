@@ -26,26 +26,22 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of an Application Information Table (AIT)
-//
-//----------------------------------------------------------------------------
 
 #include "tsAIT.h"
 #include "tsBinaryTable.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"AIT"
+#define MY_CLASS ts::AIT
 #define MY_TID ts::TID_AIT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABLE_FACTORY(ts::AIT, MY_XML_NAME);
-TS_ID_TABLE_FACTORY(ts::AIT, MY_TID, MY_STD);
-TS_FACTORY_REGISTER(ts::AIT::DisplaySection, MY_TID);
+TS_REGISTER_TABLE(MY_CLASS, {MY_TID}, MY_STD, MY_XML_NAME, MY_CLASS::DisplaySection);
 
 
 //----------------------------------------------------------------------------
@@ -59,7 +55,6 @@ ts::AIT::AIT(uint8_t version_, bool is_current_, uint16_t application_type_, boo
     descs(this),
     applications(this)
 {
-    _is_valid = true;
 }
 
 ts::AIT::AIT(DuckContext& duck, const BinaryTable& table) :
@@ -75,6 +70,29 @@ ts::AIT::AIT(const AIT& other) :
     descs(this, other.descs),
     applications(this, other.applications)
 {
+}
+
+
+//----------------------------------------------------------------------------
+// Get the table id extension.
+//----------------------------------------------------------------------------
+
+uint16_t ts::AIT::tableIdExtension() const
+{
+    return (test_application_flag ? 0x8000 : 0x0000) | (application_type & 0x7FFF);
+}
+
+
+//----------------------------------------------------------------------------
+// Clear the content of the table.
+//----------------------------------------------------------------------------
+
+void ts::AIT::clearContent()
+{
+    application_type = 0;
+    test_application_flag = false;
+    descs.clear();
+    applications.clear();
 }
 
 
@@ -186,20 +204,18 @@ void ts::AIT::serializeContent(DuckContext& duck, BinaryTable& table) const
     // Now update the 16-bit application loop length.
     PutUInt16(app_length, uint16_t(0xF000 | (data - app_length - 2)));
 
-    // Compute synthetic tid extension.
-    uint16_t tid_ext = (test_application_flag ? 0x8000 : 0x0000) | (application_type & 0x7FFF);
-
     // Add one single section in the table
-    table.addSection(new Section(MY_TID, // tid
-        true,                            // is_private_section
-        tid_ext,                         // tid_ext
-        version,
-        is_current,
-        0, // section_number,
-        0, // last_section_number
-        payload,
-        data - payload)); // payload_size,
+    table.addSection(new Section(MY_TID,              // tid
+                                 true,                // is_private_section
+                                 tableIdExtension(),  // tid_ext
+                                 version,
+                                 is_current,
+                                 0,                   // section_number,
+                                 0,                   // last_section_number
+                                 payload,
+                                 data - payload));    // payload_size,
 }
+
 
 //----------------------------------------------------------------------------
 // A static method to display a AIT section.
@@ -207,7 +223,8 @@ void ts::AIT::serializeContent(DuckContext& duck, BinaryTable& table) const
 
 void ts::AIT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
     const uint8_t* data = section.payload();
     size_t size = section.payloadSize();
@@ -288,14 +305,10 @@ void ts::AIT::buildXML(DuckContext& duck, xml::Element* root) const
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AIT::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AIT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    descs.clear();
-    applications.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
+    bool ok =
         element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
         element->getBoolAttribute(test_application_flag, u"test_application_flag", false, true) &&
@@ -303,23 +316,22 @@ void ts::AIT::fromXML(DuckContext& duck, const xml::Element* element)
         descs.fromXML(duck, children, element, u"application");
 
     // Iterate through applications
-    for (size_t index = 0; _is_valid && index < children.size(); ++index) {
+    for (size_t index = 0; ok && index < children.size(); ++index) {
         Application application(this);
         ApplicationIdentifier identifier;
         const xml::Element* id = children[index]->findFirstChild(u"application_identifier", true);
-
         xml::ElementVector others;
         UStringList allowed({ u"application_identifier" });
 
-        _is_valid =
-            children[index]->getIntAttribute<uint8_t>(application.control_code, u"control_code", true, 0, 0x00, 0xFF) &&
-            application.descs.fromXML(duck, others, children[index], allowed) &&
-            id != nullptr &&
-            id->getIntAttribute<uint32_t>(identifier.organization_id, u"organization_id", true, 0, 0, 0xFFFFFFFF) &&
-            id->getIntAttribute<uint16_t>(identifier.application_id, u"application_id", true, 0, 0, 0xFFFF);
+        ok = children[index]->getIntAttribute<uint8_t>(application.control_code, u"control_code", true, 0, 0x00, 0xFF) &&
+             application.descs.fromXML(duck, others, children[index], allowed) &&
+             id != nullptr &&
+             id->getIntAttribute<uint32_t>(identifier.organization_id, u"organization_id", true, 0, 0, 0xFFFFFFFF) &&
+             id->getIntAttribute<uint16_t>(identifier.application_id, u"application_id", true, 0, 0, 0xFFFF);
 
-        if (_is_valid) {
+        if (ok) {
             applications[identifier] = application;
         }
     }
+    return ok;
 }

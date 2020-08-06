@@ -31,18 +31,18 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"audio_preselection_descriptor"
+#define MY_CLASS ts::AudioPreselectionDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_AUDIO_PRESELECT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::AudioPreselectionDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::AudioPreselectionDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::AudioPreselectionDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -53,13 +53,17 @@ ts::AudioPreselectionDescriptor::AudioPreselectionDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
 }
 
 ts::AudioPreselectionDescriptor::AudioPreselectionDescriptor(DuckContext& duck, const Descriptor& desc) :
     AudioPreselectionDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::AudioPreselectionDescriptor::clearContent()
+{
+    entries.clear();
 }
 
 ts::AudioPreselectionDescriptor::PreSelection::PreSelection() :
@@ -150,7 +154,7 @@ void ts::AudioPreselectionDescriptor::deserialize(DuckContext& duck, const Descr
     size_t size = desc.payloadSize();
 
     entries.clear();
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 2 && data[0] == MY_EDID;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID;
 
     if (_is_valid) {
         size_t numEntries = data[1] >> 3;
@@ -176,7 +180,7 @@ void ts::AudioPreselectionDescriptor::deserialize(DuckContext& duck, const Descr
             if (hasLanguage) {
                 _is_valid = size >= 3;
                 if (_is_valid) {
-                    sel.ISO_639_language_code = duck.fromDVB(data, 3);
+                    sel.ISO_639_language_code = DeserializeLanguageCode(data);
                     data += 3;
                     size -= 3;
                 }
@@ -231,7 +235,8 @@ void ts::AudioPreselectionDescriptor::DisplayDescriptor(TablesDisplay& display, 
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -258,7 +263,7 @@ void ts::AudioPreselectionDescriptor::DisplayDescriptor(TablesDisplay& display, 
             if (hasLanguage) {
                 valid = size >= 3;
                 if (valid) {
-                    strm << margin << "  Language code: \"" << display.duck().fromDVB(data, 3) << '"' << std::endl;
+                    strm << margin << "  Language code: \"" << DeserializeLanguageCode(data) << '"' << std::endl;
                     data += 3;
                     size -= 3;
                 }
@@ -289,8 +294,7 @@ void ts::AudioPreselectionDescriptor::DisplayDescriptor(TablesDisplay& display, 
                 const size_t len = valid ? (data[0] & 0x1F) : 0;
                 valid = valid && size >= 1 + len;
                 if (valid) {
-                    strm << margin << "  Future extension:" << std::endl
-                         << UString::Dump(data + 1, len, UString::HEXA | UString::ASCII | UString::OFFSET, indent + 4);
+                    display.displayPrivateData(u"Future extension", data + 1, len, indent + 2);
                     data += 1 + len;
                     size -= 1 + len;
                 }
@@ -327,7 +331,7 @@ void ts::AudioPreselectionDescriptor::buildXML(DuckContext& duck, xml::Element* 
             }
         }
         if (!it->future_extension.empty()) {
-            e->addElement(u"future_extension")->addHexaText(it->future_extension);
+            e->addHexaTextChild(u"future_extension", it->future_extension);
         }
     }
 }
@@ -337,45 +341,33 @@ void ts::AudioPreselectionDescriptor::buildXML(DuckContext& duck, xml::Element* 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::AudioPreselectionDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::AudioPreselectionDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"preselection");
+    bool ok = element->getChildren(children, u"preselection");
 
     for (size_t i = 0; _is_valid && i < children.size(); ++i) {
-
         PreSelection sel;
         xml::ElementVector msi;
         xml::ElementVector comps;
+        ok = children[i]->getIntAttribute<uint8_t>(sel.preselection_id, u"preselection_id", true, 0, 0x00, 0x1F) &&
+             children[i]->getIntAttribute<uint8_t>(sel.audio_rendering_indication, u"audio_rendering_indication", true, 0, 0x00, 0x07) &&
+             children[i]->getBoolAttribute(sel.audio_description, u"audio_description", false, false) &&
+             children[i]->getBoolAttribute(sel.spoken_subtitles, u"spoken_subtitles", false, false) &&
+             children[i]->getBoolAttribute(sel.dialogue_enhancement, u"dialogue_enhancement", false, false) &&
+             children[i]->getBoolAttribute(sel.interactivity_enabled, u"interactivity_enabled", false, false) &&
+             children[i]->getAttribute(sel.ISO_639_language_code, u"ISO_639_language_code", false, u"", 3, 3) &&
+             children[i]->getOptionalIntAttribute<uint8_t>(sel.message_id, u"message_id") &&
+             children[i]->getChildren(msi, u"multi_stream_info", 0, 1) &&
+             (msi.empty() || msi.front()->getChildren(comps, u"component", 0, 0x07)) &&
+             children[i]->getHexaTextChild(sel.future_extension, u"future_extension", false, 0, 0x1F);
 
-        _is_valid =
-            children[i]->getIntAttribute<uint8_t>(sel.preselection_id, u"preselection_id", true, 0, 0x00, 0x1F) &&
-            children[i]->getIntAttribute<uint8_t>(sel.audio_rendering_indication, u"audio_rendering_indication", true, 0, 0x00, 0x07) &&
-            children[i]->getBoolAttribute(sel.audio_description, u"audio_description", false, false) &&
-            children[i]->getBoolAttribute(sel.spoken_subtitles, u"spoken_subtitles", false, false) &&
-            children[i]->getBoolAttribute(sel.dialogue_enhancement, u"dialogue_enhancement", false, false) &&
-            children[i]->getBoolAttribute(sel.interactivity_enabled, u"interactivity_enabled", false, false) &&
-            children[i]->getAttribute(sel.ISO_639_language_code, u"ISO_639_language_code", false, u"", 3, 3) &&
-            children[i]->getOptionalIntAttribute<uint8_t>(sel.message_id, u"message_id") &&
-            children[i]->getChildren(msi, u"multi_stream_info", 0, 1) &&
-            (msi.empty() || msi.front()->getChildren(comps, u"component", 0, 0x07)) &&
-            children[i]->getHexaTextChild(sel.future_extension, u"future_extension", false, 0, 0x1F);
-
-        if (_is_valid) {
-            for (size_t i2 = 0; _is_valid && i2 < comps.size(); ++i2) {
-                uint8_t t = 0;
-                _is_valid = comps[i2]->getIntAttribute<uint8_t>(t, u"tag", true);
-                sel.aux_component_tags.push_back(t);
-            }
+        for (size_t i2 = 0; ok && i2 < comps.size(); ++i2) {
+            uint8_t t = 0;
+            ok = comps[i2]->getIntAttribute<uint8_t>(t, u"tag", true);
+            sel.aux_component_tags.push_back(t);
         }
-
-        if (_is_valid) {
-            entries.push_back(sel);
-        }
+        entries.push_back(sel);
     }
-
-    _is_valid = _is_valid && hasValidSizes();
+    return ok && hasValidSizes();
 }

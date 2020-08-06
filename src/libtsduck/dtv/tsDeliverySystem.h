@@ -35,6 +35,8 @@
 
 #pragma once
 #include "tsEnumeration.h"
+#include "tsStandards.h"
+#include "tsStringifyInterface.h"
 
 namespace ts {
     //!
@@ -133,6 +135,13 @@ namespace ts {
     TSDUCKDLL TunerType TunerTypeOf(DeliverySystem system);
 
     //!
+    //! Get the list of standards for a delivery system.
+    //! @param [in] system Delivery system.
+    //! @return Corresponding standards.
+    //!
+    TSDUCKDLL Standards StandardsOf(DeliverySystem system);
+
+    //!
     //! Check if a delivery system is a satellite one.
     //! This can be used to check if dish manipulations are required.
     //! @param [in] sys The delivery system to check.
@@ -153,11 +162,16 @@ namespace ts {
     //!
     typedef std::list<DeliverySystem> DeliverySystemList;
 
+    // GCC: error: base class 'class std::set<ts::DeliverySystem>' has accessible non-virtual destructor
+    // This is harmless here since the subclass does not allocate own resources.
+    TS_PUSH_WARNING()
+    TS_GCC_NOWARNING(non-virtual-dtor)
+    
     //!
     //! A set of delivery system values (ts::DeliverySystem).
     //! Typically used to indicate the list of standards which are supported by a tuner.
     //!
-    class TSDUCKDLL DeliverySystemSet : public std::set<DeliverySystem>
+    class TSDUCKDLL DeliverySystemSet : public std::set<DeliverySystem>, public StringifyInterface
     {
     public:
         //!
@@ -185,14 +199,17 @@ namespace ts {
         DeliverySystemList toList() const;
 
         //!
-        //! Convert to a string object.
-        //! @return Return all delivery systems in decreasing order of preference.
+        //! Get the list of standards for the set of delivery systems.
+        //! @return Corresponding standards.
         //!
-        UString toString() const;
+        Standards standards() const;
+
+        // Implementation of StringifyInterface.
+        virtual UString toString() const override;
 
 #if !defined(DOXYGEN)
         // Trampolines to superclass constructors.
-        DeliverySystemSet() : SuperClass() {}
+        DeliverySystemSet() = default;
         DeliverySystemSet(const SuperClass& other) : SuperClass(other) {}
         DeliverySystemSet(const SuperClass&& other) : SuperClass(other) {}
         DeliverySystemSet(std::initializer_list<value_type> init) : SuperClass(init) {}
@@ -205,4 +222,6 @@ namespace ts {
         // to build the list of supported delivery systems in order of preference.
         static const ts::DeliverySystemList _preferred_order;
     };
+
+    TS_POP_WARNING()
 }

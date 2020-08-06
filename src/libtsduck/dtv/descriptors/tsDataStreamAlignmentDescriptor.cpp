@@ -31,17 +31,17 @@
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"data_stream_alignment_descriptor"
+#define MY_CLASS ts::DataStreamAlignmentDescriptor
 #define MY_DID ts::DID_DATA_ALIGN
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::DataStreamAlignmentDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::DataStreamAlignmentDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::DataStreamAlignmentDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -52,13 +52,17 @@ ts::DataStreamAlignmentDescriptor::DataStreamAlignmentDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     alignment_type(0)
 {
-    _is_valid = true;
 }
 
 ts::DataStreamAlignmentDescriptor::DataStreamAlignmentDescriptor(DuckContext& duck, const Descriptor& desc) :
     DataStreamAlignmentDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::DataStreamAlignmentDescriptor::clearContent()
+{
+    alignment_type = 0;
 }
 
 
@@ -83,7 +87,7 @@ void ts::DataStreamAlignmentDescriptor::deserialize(DuckContext& duck, const Des
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 1;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 1;
 
     if (_is_valid) {
         alignment_type = data[0];
@@ -97,7 +101,8 @@ void ts::DataStreamAlignmentDescriptor::deserialize(DuckContext& duck, const Des
 
 void ts::DataStreamAlignmentDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -110,7 +115,7 @@ void ts::DataStreamAlignmentDescriptor::DisplayDescriptor(TablesDisplay& display
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML (de)serialization
 //----------------------------------------------------------------------------
 
 void ts::DataStreamAlignmentDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -118,14 +123,7 @@ void ts::DataStreamAlignmentDescriptor::buildXML(DuckContext& duck, xml::Element
     root->setIntAttribute(u"alignment_type", alignment_type, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::DataStreamAlignmentDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::DataStreamAlignmentDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(alignment_type, u"alignment_type", true);
+    return element->getIntAttribute<uint8_t>(alignment_type, u"alignment_type", true);
 }

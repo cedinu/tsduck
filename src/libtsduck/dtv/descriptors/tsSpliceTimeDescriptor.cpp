@@ -30,18 +30,18 @@
 #include "tsSpliceTimeDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"splice_time_descriptor"
+#define MY_CLASS ts::SpliceTimeDescriptor
 #define MY_DID ts::DID_SPLICE_TIME
 #define MY_TID ts::TID_SCTE35_SIT
-#define MY_STD ts::STD_SCTE
+#define MY_STD ts::Standards::SCTE
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::SpliceTimeDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::SpliceTimeDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::SpliceTimeDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
@@ -55,7 +55,14 @@ ts::SpliceTimeDescriptor::SpliceTimeDescriptor() :
     TAI_ns(0),
     UTC_offset(0)
 {
-    _is_valid = true;
+}
+
+void ts::SpliceTimeDescriptor::clearContent()
+{
+    identifier = SPLICE_ID_CUEI;
+    TAI_seconds = 0;
+    TAI_ns = 0;
+    UTC_offset = 0;
 }
 
 ts::SpliceTimeDescriptor::SpliceTimeDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -89,7 +96,7 @@ void ts::SpliceTimeDescriptor::deserialize(DuckContext& duck, const Descriptor& 
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size == 16;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size == 16;
 
     if (_is_valid) {
         identifier = GetUInt32(data);
@@ -106,7 +113,8 @@ void ts::SpliceTimeDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 
 void ts::SpliceTimeDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 16) {
@@ -114,7 +122,7 @@ void ts::SpliceTimeDescriptor::DisplayDescriptor(TablesDisplay& display, DID did
         const uint32_t ns = GetUInt32(data + 10);
         const uint16_t off = GetUInt16(data + 14);
         strm << margin << UString::Format(u"Identifier: 0x%X", {GetUInt32(data)});
-        display.duck().displayIfASCII(data, 4, u" (\"", u"\")");
+        duck.displayIfASCII(data, 4, u" (\"", u"\")");
         strm << std::endl
              << margin
              << UString::Format(u"TAI: %'d seconds (%s) + %'d ns, UTC offset: %'d", {tai, Time::UnixTimeToUTC(uint32_t(tai)).format(Time::DATE | Time::TIME), ns, off})
@@ -143,12 +151,10 @@ void ts::SpliceTimeDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SpliceTimeDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SpliceTimeDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint32_t>(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
-        element->getIntAttribute<uint64_t>(TAI_seconds, u"TAI_seconds", true, 0, 0, TS_UCONST64(0x0000FFFFFFFFFFFF)) &&
-        element->getIntAttribute<uint32_t>(TAI_ns, u"TAI_ns", true) &&
-        element->getIntAttribute<uint16_t>(UTC_offset, u"UTC_offset", true);
+    return element->getIntAttribute<uint32_t>(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
+           element->getIntAttribute<uint64_t>(TAI_seconds, u"TAI_seconds", true, 0, 0, TS_UCONST64(0x0000FFFFFFFFFFFF)) &&
+           element->getIntAttribute<uint32_t>(TAI_ns, u"TAI_ns", true) &&
+           element->getIntAttribute<uint16_t>(UTC_offset, u"UTC_offset", true);
 }

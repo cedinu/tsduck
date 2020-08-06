@@ -26,43 +26,43 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a content_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsContentDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"content_descriptor"
+#define MY_CLASS ts::ContentDescriptor
 #define MY_DID ts::DID_CONTENT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::ContentDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::ContentDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::ContentDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::ContentDescriptor::ContentDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
     entries()
 {
-    _is_valid = true;
 }
 
 
 //----------------------------------------------------------------------------
 // Constructor from a binary descriptor
 //----------------------------------------------------------------------------
+
+void ts::ContentDescriptor::clearContent()
+{
+    entries.clear();
+}
 
 ts::ContentDescriptor::ContentDescriptor(DuckContext& duck, const Descriptor& desc) :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
@@ -93,7 +93,7 @@ void ts::ContentDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 
 void ts::ContentDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() % 2 == 0;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 2 == 0;
     entries.clear();
 
     if (_is_valid) {
@@ -113,7 +113,8 @@ void ts::ContentDescriptor::deserialize(DuckContext& duck, const Descriptor& des
 
 void ts::ContentDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     while (size >= 2) {
@@ -146,26 +147,20 @@ void ts::ContentDescriptor::buildXML(DuckContext& duck, xml::Element* root) cons
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::ContentDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::ContentDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    entries.clear();
-
     xml::ElementVector children;
-    _is_valid =
-        checkXMLName(element) &&
-        element->getChildren(children, u"content", 0, MAX_ENTRIES);
+    bool ok = element->getChildren(children, u"content", 0, MAX_ENTRIES);
 
-    for (size_t i = 0; _is_valid && i < children.size(); ++i) {
+    for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
         uint8_t user = 0;
-        _is_valid =
-            children[i]->getIntAttribute<uint8_t>(entry.content_nibble_level_1, u"content_nibble_level_1", true, 0, 0x00, 0x0F) &&
-            children[i]->getIntAttribute<uint8_t>(entry.content_nibble_level_2, u"content_nibble_level_2", true, 0, 0x00, 0x0F) &&
-            children[i]->getIntAttribute<uint8_t>(user, u"user_byte", true, 0, 0x00, 0xFF);
-        if (_is_valid) {
-            entry.user_nibble_1 = (user >> 4) & 0x0F;
-            entry.user_nibble_2 = user & 0x0F;
-            entries.push_back(entry);
-        }
+        ok = children[i]->getIntAttribute<uint8_t>(entry.content_nibble_level_1, u"content_nibble_level_1", true, 0, 0x00, 0x0F) &&
+             children[i]->getIntAttribute<uint8_t>(entry.content_nibble_level_2, u"content_nibble_level_2", true, 0, 0x00, 0x0F) &&
+             children[i]->getIntAttribute<uint8_t>(user, u"user_byte", true, 0, 0x00, 0xFF);
+        entry.user_nibble_1 = (user >> 4) & 0x0F;
+        entry.user_nibble_2 = user & 0x0F;
+        entries.push_back(entry);
     }
+    return ok;
 }

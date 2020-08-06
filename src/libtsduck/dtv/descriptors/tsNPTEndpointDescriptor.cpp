@@ -30,21 +30,21 @@
 #include "tsNPTEndpointDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"NPT_endpoint_descriptor"
+#define MY_CLASS ts::NPTEndpointDescriptor
 #define MY_DID ts::DID_NPT_ENDPOINT
-#define MY_STD ts::STD_MPEG
+#define MY_STD ts::Standards::MPEG
 
-TS_XML_DESCRIPTOR_FACTORY(ts::NPTEndpointDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::NPTEndpointDescriptor, ts::EDID::Standard(MY_DID));
-TS_FACTORY_REGISTER(ts::NPTEndpointDescriptor::DisplayDescriptor, ts::EDID::Standard(MY_DID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::NPTEndpointDescriptor::NPTEndpointDescriptor(uint64_t start, uint64_t stop) :
@@ -52,18 +52,18 @@ ts::NPTEndpointDescriptor::NPTEndpointDescriptor(uint64_t start, uint64_t stop) 
     start_NPT(start),
     stop_NPT(stop)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::NPTEndpointDescriptor::NPTEndpointDescriptor(DuckContext& duck, const Descriptor& desc) :
     NPTEndpointDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::NPTEndpointDescriptor::clearContent()
+{
+    start_NPT = 0;
+    stop_NPT = 0;
 }
 
 
@@ -86,7 +86,7 @@ void ts::NPTEndpointDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 
 void ts::NPTEndpointDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 {
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 14;
+    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 14;
 
     if (_is_valid) {
         const uint8_t* data = desc.payload();
@@ -102,7 +102,8 @@ void ts::NPTEndpointDescriptor::deserialize(DuckContext& duck, const Descriptor&
 
 void ts::NPTEndpointDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 14) {
@@ -133,10 +134,8 @@ void ts::NPTEndpointDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::NPTEndpointDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::NPTEndpointDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint64_t>(start_NPT, u"start_NPT", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
-        element->getIntAttribute<uint64_t>(stop_NPT, u"stop_NPT", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF));
+    return element->getIntAttribute<uint64_t>(start_NPT, u"start_NPT", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
+           element->getIntAttribute<uint64_t>(stop_NPT, u"stop_NPT", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF));
 }

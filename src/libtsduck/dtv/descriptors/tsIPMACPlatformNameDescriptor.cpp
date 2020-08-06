@@ -30,22 +30,22 @@
 #include "tsIPMACPlatformNameDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"IPMAC_platform_name_descriptor"
+#define MY_CLASS ts::IPMACPlatformNameDescriptor
 #define MY_DID ts::DID_INT_PF_NAME
 #define MY_TID ts::TID_INT
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_TABSPEC_DESCRIPTOR_FACTORY(ts::IPMACPlatformNameDescriptor, MY_XML_NAME, MY_TID);
-TS_ID_DESCRIPTOR_FACTORY(ts::IPMACPlatformNameDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
-TS_FACTORY_REGISTER(ts::IPMACPlatformNameDescriptor::DisplayDescriptor, ts::EDID::TableSpecific(MY_DID, MY_TID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::TableSpecific(MY_DID, MY_TID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::IPMACPlatformNameDescriptor::IPMACPlatformNameDescriptor(const UString& lang, const UString& name) :
@@ -53,18 +53,18 @@ ts::IPMACPlatformNameDescriptor::IPMACPlatformNameDescriptor(const UString& lang
     language_code(lang),
     text(name)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::IPMACPlatformNameDescriptor::IPMACPlatformNameDescriptor(DuckContext& duck, const Descriptor& desc) :
     IPMACPlatformNameDescriptor()
 {
     deserialize(duck, desc);
+}
+
+void ts::IPMACPlatformNameDescriptor::clearContent()
+{
+    language_code.clear();
+    text.clear();
 }
 
 
@@ -76,7 +76,7 @@ void ts::IPMACPlatformNameDescriptor::serialize(DuckContext& duck, Descriptor& d
 {
     ByteBlockPtr bbp(serializeStart());
     if (SerializeLanguageCode(*bbp, language_code)) {
-        bbp->append(duck.toDVB(text));
+        bbp->append(duck.encoded(text));
         serializeEnd(desc, bbp);
     }
     else {
@@ -94,11 +94,11 @@ void ts::IPMACPlatformNameDescriptor::deserialize(DuckContext& duck, const Descr
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    _is_valid = desc.isValid() && desc.tag() == _tag && size >= 3;
+    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 3;
 
     if (_is_valid) {
         language_code = DeserializeLanguageCode(data);
-        text = duck.fromDVB(data + 3, size - 3);
+        duck.decode(text, data + 3, size - 3);
     }
 }
 
@@ -109,12 +109,13 @@ void ts::IPMACPlatformNameDescriptor::deserialize(DuckContext& duck, const Descr
 
 void ts::IPMACPlatformNameDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
 {
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 3) {
         strm << margin << "Language: " << DeserializeLanguageCode(data) << std::endl
-             << margin << "Platform name: " << display.duck().fromDVB(data + 3, size - 3) << std::endl;
+             << margin << "Platform name: " << duck.decoded(data + 3, size - 3) << std::endl;
         size = 0;
     }
 
@@ -137,10 +138,8 @@ void ts::IPMACPlatformNameDescriptor::buildXML(DuckContext& duck, xml::Element* 
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::IPMACPlatformNameDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::IPMACPlatformNameDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getAttribute(language_code, u"language_code", true, UString(), 3, 3) &&
-        element->getAttribute(text, u"text", true, UString(), 0, MAX_DESCRIPTOR_SIZE - 5);
+    return element->getAttribute(language_code, u"language_code", true, UString(), 3, 3) &&
+           element->getAttribute(text, u"text", true, UString(), 0, MAX_DESCRIPTOR_SIZE - 5);
 }

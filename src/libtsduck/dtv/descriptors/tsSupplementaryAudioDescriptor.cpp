@@ -26,31 +26,27 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a supplementary_audio_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsSupplementaryAudioDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
+#include "tsPSIRepository.h"
+#include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"supplementary_audio_descriptor"
+#define MY_CLASS ts::SupplementaryAudioDescriptor
 #define MY_DID ts::DID_DVB_EXTENSION
 #define MY_EDID ts::EDID_SUPPL_AUDIO
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::SupplementaryAudioDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::SupplementaryAudioDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
-TS_FACTORY_REGISTER(ts::SupplementaryAudioDescriptor::DisplayDescriptor, ts::EDID::ExtensionDVB(MY_EDID));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::ExtensionDVB(MY_EDID), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Constructor.
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::SupplementaryAudioDescriptor::SupplementaryAudioDescriptor() :
@@ -60,7 +56,6 @@ ts::SupplementaryAudioDescriptor::SupplementaryAudioDescriptor() :
     language_code(),
     private_data()
 {
-    _is_valid = true;
 }
 
 ts::SupplementaryAudioDescriptor::SupplementaryAudioDescriptor(DuckContext& duck, const Descriptor& desc) :
@@ -71,6 +66,14 @@ ts::SupplementaryAudioDescriptor::SupplementaryAudioDescriptor(DuckContext& duck
     private_data()
 {
     deserialize(duck, desc);
+}
+
+void ts::SupplementaryAudioDescriptor::clearContent()
+{
+    mix_type = 0;
+    editorial_classification = 0;
+    language_code.clear();
+    private_data.clear();
 }
 
 
@@ -109,7 +112,7 @@ void ts::SupplementaryAudioDescriptor::deserialize(DuckContext& duck, const Desc
     const uint8_t* data = desc.payload();
     size_t size = desc.payloadSize();
 
-    if (!(_is_valid = desc.isValid() && desc.tag() == _tag && size >= 2 && data[0] == MY_EDID)) {
+    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID)) {
         return;
     }
 
@@ -139,12 +142,8 @@ void ts::SupplementaryAudioDescriptor::buildXML(DuckContext& duck, xml::Element*
 {
     root->setIntAttribute(u"mix_type", mix_type);
     root->setIntAttribute(u"editorial_classification", editorial_classification, true);
-    if (!language_code.empty()) {
-        root->setAttribute(u"language_code", language_code);
-    }
-    if (!private_data.empty()) {
-        root->addElement(u"private_data")->addHexaText(private_data);
-    }
+    root->setAttribute(u"language_code", language_code, true);
+    root->addHexaTextChild(u"private_data", private_data, true);
 }
 
 
@@ -152,14 +151,12 @@ void ts::SupplementaryAudioDescriptor::buildXML(DuckContext& duck, xml::Element*
 // XML deserialization
 //----------------------------------------------------------------------------
 
-void ts::SupplementaryAudioDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
+bool ts::SupplementaryAudioDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(mix_type, u"mix_type", true, 0, 0, 1) &&
-        element->getIntAttribute<uint8_t>(editorial_classification, u"editorial_classification", true, 0, 0x00, 0x1F) &&
-        element->getAttribute(language_code, u"language_code", false, u"", 3, 3) &&
-        element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 7);
+    return element->getIntAttribute<uint8_t>(mix_type, u"mix_type", true, 0, 0, 1) &&
+           element->getIntAttribute<uint8_t>(editorial_classification, u"editorial_classification", true, 0, 0x00, 0x1F) &&
+           element->getAttribute(language_code, u"language_code", false, u"", 3, 3) &&
+           element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 7);
 }
 
 
@@ -173,7 +170,8 @@ void ts::SupplementaryAudioDescriptor::DisplayDescriptor(TablesDisplay& display,
     // with extension payload. Meaning that data points after descriptor_tag_extension.
     // See ts::TablesDisplay::displayDescriptorData()
 
-    std::ostream& strm(display.duck().out());
+    DuckContext& duck(display.duck());
+    std::ostream& strm(duck.out());
     const std::string margin(indent, ' ');
 
     if (size >= 1) {
@@ -200,12 +198,9 @@ void ts::SupplementaryAudioDescriptor::DisplayDescriptor(TablesDisplay& display,
             strm << margin << "Language: " << DeserializeLanguageCode(data) << std::endl;
             data += 3; size -= 3;
         }
-        if (size > 0) {
-            strm << margin << "Private data:" << std::endl
-                 << UString::Dump(data, size, UString::HEXA | UString::ASCII | UString::OFFSET, indent);
-            data += size; size = 0;
-        }
+        display.displayPrivateData(u"Private data", data, size, indent);
     }
-
-    display.displayExtraData(data, size, indent);
+    else {
+        display.displayExtraData(data, size, indent);
+    }
 }

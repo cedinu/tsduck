@@ -26,120 +26,37 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of an eacem_preferred_name_identifier_descriptor.
-//  Private descriptor, must be preceeded by the EACEM/EICTA PDS.
-//
-//----------------------------------------------------------------------------
 
 #include "tsEacemPreferredNameIdentifierDescriptor.h"
-#include "tsDescriptor.h"
-#include "tsTablesDisplay.h"
-#include "tsTablesFactory.h"
-#include "tsxmlElement.h"
+#include "tsPSIRepository.h"
 TSDUCK_SOURCE;
 
 #define MY_XML_NAME u"eacem_preferred_name_identifier_descriptor"
+#define MY_CLASS ts::EacemPreferredNameIdentifierDescriptor
 #define MY_DID ts::DID_PREF_NAME_ID
 #define MY_PDS ts::PDS_EACEM
-#define MY_STD ts::STD_DVB
+#define MY_STD ts::Standards::DVB
 
-TS_XML_DESCRIPTOR_FACTORY(ts::EacemPreferredNameIdentifierDescriptor, MY_XML_NAME);
-TS_ID_DESCRIPTOR_FACTORY(ts::EacemPreferredNameIdentifierDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
-TS_FACTORY_REGISTER(ts::EacemPreferredNameIdentifierDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, MY_PDS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, MY_PDS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 // Incorrect use of TPS private data, TPS broadcasters should use EACEM/EICTA PDS instead.
-TS_ID_DESCRIPTOR_FACTORY(ts::EacemPreferredNameIdentifierDescriptor, ts::EDID::Private(MY_DID, ts::PDS_TPS));
-TS_FACTORY_REGISTER(ts::EacemPreferredNameIdentifierDescriptor::DisplayDescriptor, ts::EDID::Private(MY_DID, ts::PDS_TPS));
+TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Private(MY_DID, ts::PDS_TPS), MY_XML_NAME, MY_CLASS::DisplayDescriptor);
 
 
 //----------------------------------------------------------------------------
-// Default constructor:
+// Constructors
 //----------------------------------------------------------------------------
 
 ts::EacemPreferredNameIdentifierDescriptor::EacemPreferredNameIdentifierDescriptor(uint8_t id) :
-    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, MY_PDS),
-    name_id(id)
+    AbstractPreferredNameIdentifierDescriptor(id, MY_DID, MY_XML_NAME, MY_STD, MY_PDS)
 {
-    _is_valid = true;
 }
-
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
 
 ts::EacemPreferredNameIdentifierDescriptor::EacemPreferredNameIdentifierDescriptor(DuckContext& duck, const Descriptor& desc) :
-    AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, MY_PDS),
-    name_id(0)
+    AbstractPreferredNameIdentifierDescriptor(duck, desc, MY_DID, MY_XML_NAME, MY_STD, MY_PDS)
 {
-    deserialize(duck, desc);
 }
 
-
-//----------------------------------------------------------------------------
-// Serialization
-//----------------------------------------------------------------------------
-
-void ts::EacemPreferredNameIdentifierDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+ts::EacemPreferredNameIdentifierDescriptor::~EacemPreferredNameIdentifierDescriptor()
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(name_id);
-    serializeEnd(desc, bbp);
-}
-
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::EacemPreferredNameIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
-{
-    _is_valid = desc.isValid() && desc.tag() == _tag && desc.payloadSize() == 1;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        name_id = data[0];
-    }
-}
-
-
-//----------------------------------------------------------------------------
-// Static method to display a descriptor.
-//----------------------------------------------------------------------------
-
-void ts::EacemPreferredNameIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
-{
-    std::ostream& strm(display.duck().out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        uint8_t id = data[0];
-        data += 1; size -= 1;
-        strm << margin << "Name identifier: " << int(id) << std::endl;
-    }
-
-    display.displayExtraData(data, size, indent);
-}
-
-
-//----------------------------------------------------------------------------
-// XML serialization
-//----------------------------------------------------------------------------
-
-void ts::EacemPreferredNameIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
-{
-    root->setIntAttribute(u"name_id", name_id, true);
-}
-
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
-void ts::EacemPreferredNameIdentifierDescriptor::fromXML(DuckContext& duck, const xml::Element* element)
-{
-    _is_valid =
-        checkXMLName(element) &&
-        element->getIntAttribute<uint8_t>(name_id, u"name_id", true, 0, 0x00, 0xFF);
 }
