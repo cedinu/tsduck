@@ -726,9 +726,10 @@ void ts::PrgSplicePlugin::processSpliceCommand(PID pid, SpliceInformationTable& 
 
     // Start of message.
     UString msg(u"");
-    uint8_t segmentation_type_id;
-
-    if (sit.splice_command_type == SPLICE_TIME_SIGNAL) {
+ //   uint8_t segmentation_type_id;
+    uint64_t i = 0;
+ 
+ /*   if (sit.splice_command_type == SPLICE_TIME_SIGNAL) {
         double tsvalue;
         _eventCount++;
         tsvalue = (((double)sit.time_signal.value()) / 90000);
@@ -755,5 +756,23 @@ void ts::PrgSplicePlugin::processSpliceCommand(PID pid, SpliceInformationTable& 
         _udpMessage.clear();
 
         *_output << msg << std::endl;
+    } */
+
+    double tsvalue;
+    _eventCount++;
+    tsvalue = (((double)sit.time_signal.value()) / 90000);
+    msg += UString::Format(u"%d_\r\n", { _eventCount });
+    msg += UString::Float(tsvalue, 10, 3, false);
+    msg += u"\r\n";
+    for (i = 0; i < sit.descs[0]->size(); i++) {
+        msg += UString::Format(u"\nDesc 0: %x", { (INT64)sit.descs[0]->content()[i] });
     }
+    tsp->info(msg);
+    _udpMessage.appendUTF8(msg);
+    if (_sock.isOpen()) {
+        _sock.send(_udpMessage.data(), _udpMessage.size(), *tsp);
+    }
+    _udpMessage.clear();
+
+    *_output << msg << std::endl;
 }
