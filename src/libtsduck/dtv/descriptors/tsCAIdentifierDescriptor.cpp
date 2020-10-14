@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -76,15 +77,11 @@ ts::CAIdentifierDescriptor::CAIdentifierDescriptor(std::initializer_list<uint16_
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::CAIdentifierDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::CAIdentifierDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
     for (size_t n = 0; n < casids.size(); ++n) {
-        bbp->appendUInt16(casids[n]);
+        buf.putUInt16(casids[n]);
     }
-
-    serializeEnd(desc, bbp);
 }
 
 
@@ -92,19 +89,10 @@ void ts::CAIdentifierDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::CAIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::CAIdentifierDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 2 == 0;
-    casids.clear();
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        while (size >= 2) {
-            casids.push_back (GetUInt16 (data));
-            data += 2;
-            size -= 2;
-        }
+    while (buf.canRead()) {
+        casids.push_back(buf.getUInt16());
     }
 }
 
@@ -113,19 +101,11 @@ void ts::CAIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::CAIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::CAIdentifierDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 2) {
-        uint16_t cas_id = GetUInt16(data);
-        data += 2; size -= 2;
-        strm << margin << "CA System Id: " << names::CASId(duck, cas_id, names::FIRST) << std::endl;
+    while (buf.canReadBytes(2)) {
+        disp << margin << "CA System Id: " << names::CASId(disp.duck(), buf.getUInt16(), names::FIRST) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -151,7 +131,7 @@ bool ts::CAIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Elemen
     bool ok = element->getChildren(children, u"CA_system_id", 0, (MAX_DESCRIPTOR_SIZE - 2) / 2);
     for (size_t i = 0; ok && i < children.size(); ++i) {
         uint16_t id = 0;
-        ok = children[i]->getIntAttribute<uint16_t>(id, u"value", true, 0, 0x0000, 0xFFFF);
+        ok = children[i]->getIntAttribute(id, u"value", true, 0, 0x0000, 0xFFFF);
         casids.push_back(id);
     }
     return ok;

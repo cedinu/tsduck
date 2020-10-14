@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -145,64 +146,62 @@ ts::LinkageDescriptor::LinkageDescriptor(DuckContext& duck, const Descriptor& de
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::LinkageDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::LinkageDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
     // Fixed part.
-    bbp->appendUInt16(ts_id);
-    bbp->appendUInt16(onetw_id);
-    bbp->appendUInt16(service_id);
-    bbp->appendUInt8(linkage_type);
+    buf.putUInt16(ts_id);
+    buf.putUInt16(onetw_id);
+    buf.putUInt16(service_id);
+    buf.putUInt8(linkage_type);
 
     // Known variable parts.
     if (linkage_type == LINKAGE_HAND_OVER) {
-        bbp->appendUInt8(uint8_t(mobile_handover_info.handover_type << 4) | 0x0E | (mobile_handover_info.origin_type & 0x01));
+        buf.putBits(mobile_handover_info.handover_type, 4);
+        buf.putBits(0xFF, 3);
+        buf.putBit(mobile_handover_info.origin_type);
         if (mobile_handover_info.handover_type >= 1 && mobile_handover_info.handover_type <= 3) {
-            bbp->appendUInt16(mobile_handover_info.network_id);
+            buf.putUInt16(mobile_handover_info.network_id);
         }
         if (mobile_handover_info.origin_type == 0x00) {
-            bbp->appendUInt16(mobile_handover_info.initial_service_id);
+            buf.putUInt16(mobile_handover_info.initial_service_id);
         }
     }
     else if (linkage_type == LINKAGE_EVENT) {
-        bbp->appendUInt16(event_linkage_info.target_event_id);
-        bbp->appendUInt8((event_linkage_info.target_listed ? 0x80 : 0x00) |
-                         (event_linkage_info.event_simulcast ? 0x40 : 0x00) |
-                         0x3F);
+        buf.putUInt16(event_linkage_info.target_event_id);
+        buf.putBit(event_linkage_info.target_listed);
+        buf.putBit(event_linkage_info.event_simulcast);
+        buf.putBits(0xFF, 6);
     }
     else if (linkage_type >= LINKAGE_EXT_EVENT_MIN && linkage_type <= LINKAGE_EXT_EVENT_MAX) {
-        const size_t length_index = bbp->size();
-        bbp->appendUInt8(0); // placeholder for loop_length
-        for (ExtendedEventLinkageList::const_iterator it = extended_event_linkage_info.begin(); it != extended_event_linkage_info.end(); ++it) {
-            bbp->appendUInt16(it->target_event_id);
-            bbp->appendUInt8((it->target_listed ? 0x80 : 0x00) |
-                             (it->event_simulcast ? 0x40 : 0x00) |
-                             uint8_t((it->link_type & 0x03) << 4) |
-                             uint8_t((it->target_id_type & 0x03) << 2) |
-                             (it->target_original_network_id.set() ? 0x02 : 0x00) |
-                             (it->target_service_id.set() ? 0x01 : 0x00));
+        buf.pushWriteSequenceWithLeadingLength(8); // loop_length
+        for (auto it = extended_event_linkage_info.begin(); it != extended_event_linkage_info.end(); ++it) {
+            buf.putUInt16(it->target_event_id);
+            buf.putBit(it->target_listed);
+            buf.putBit(it->event_simulcast);
+            buf.putBits(it->link_type, 2);
+            buf.putBits(it->target_id_type, 2);
+            buf.putBit(it->target_original_network_id.set());
+            buf.putBit(it->target_service_id.set());
             if (it->target_id_type == 3) {
-                bbp->appendUInt16(it->user_defined_id);
+                buf.putUInt16(it->user_defined_id);
             }
-            if (it->target_id_type == 1) {
-                bbp->appendUInt16(it->target_transport_stream_id);
-            }
-            if (it->target_original_network_id.set()) {
-                bbp->appendUInt16(it->target_original_network_id.value());
-            }
-            if (it->target_service_id.set()) {
-                bbp->appendUInt16(it->target_service_id.value());
+            else {
+                if (it->target_id_type == 1) {
+                    buf.putUInt16(it->target_transport_stream_id);
+                }
+                if (it->target_original_network_id.set()) {
+                    buf.putUInt16(it->target_original_network_id.value());
+                }
+                if (it->target_service_id.set()) {
+                    buf.putUInt16(it->target_service_id.value());
+                }
             }
         }
-        // Update loop_length.
-        (*bbp)[length_index] = uint8_t(bbp->size() - length_index - 1);
+        buf.popState(); // update loop_length
     }
 
     // Finally, add private data.
-    bbp->append(private_data);
-
-    serializeEnd(desc, bbp);
+    buf.putBytes(private_data);
 }
 
 
@@ -210,116 +209,63 @@ void ts::LinkageDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::LinkageDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::LinkageDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    clear();
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 7;
+    // Fixed part.
+    ts_id = buf.getUInt16();
+    onetw_id = buf.getUInt16();
+    service_id = buf.getUInt16();
+    linkage_type = buf.getUInt8();
 
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-
-        // Fixed part.
-        ts_id = GetUInt16(data);
-        onetw_id = GetUInt16(data + 2);
-        service_id = GetUInt16(data + 4);
-        linkage_type = data[6];
-        data += 7; size -= 7;
-
-        // Known variable parts.
-        if (linkage_type == LINKAGE_HAND_OVER) {
-            _is_valid = size >= 1;
-            if (_is_valid) {
-                mobile_handover_info.handover_type = data[0] >> 4;
-                mobile_handover_info.origin_type = data[0] & 0x01;
-                data += 1; size -= 1;
-            }
-            if (_is_valid && mobile_handover_info.handover_type >= 1 && mobile_handover_info.handover_type <= 3) {
-                _is_valid = size >= 2;
-                if (_is_valid) {
-                    mobile_handover_info.network_id = GetUInt16(data);
-                    data += 2; size -= 2;
-                }
-            }
-            if (_is_valid && mobile_handover_info.origin_type == 0x00) {
-                _is_valid = size >= 2;
-                if (_is_valid) {
-                    mobile_handover_info.initial_service_id = GetUInt16(data);
-                    data += 2; size -= 2;
-                }
-            }
+    // Known variable parts.
+    if (linkage_type == LINKAGE_HAND_OVER) {
+        buf.getBits(mobile_handover_info.handover_type, 4);
+        buf.skipBits(3);
+        mobile_handover_info.origin_type = buf.getBit();
+        if (mobile_handover_info.handover_type >= 1 && mobile_handover_info.handover_type <= 3) {
+            mobile_handover_info.network_id = buf.getUInt16();
         }
-
-        else if (linkage_type == LINKAGE_EVENT) {
-            _is_valid = size >= 3;
-            if (_is_valid) {
-                event_linkage_info.target_event_id = GetUInt16(data);
-                event_linkage_info.target_listed = (data[2] & 0x80) != 0;
-                event_linkage_info.event_simulcast = (data[2] & 0x40) != 0;
-                data += 3; size -= 3;
-            }
-        }
-
-        else if (linkage_type >= LINKAGE_EXT_EVENT_MIN && linkage_type <= LINKAGE_EXT_EVENT_MAX) {
-            _is_valid = size >= 1;
-            if (_is_valid) {
-                size_t loop_length = data[0];
-                data += 1; size -= 1;
-                while (_is_valid && loop_length > 0) {
-                    _is_valid = loop_length >= 3;
-                    ExtendedEventLinkageInfo info;
-                    bool onetw_flag = false;
-                    bool serv_flag = false;
-                    if (_is_valid) {
-                        info.target_event_id = GetUInt16(data);
-                        info.target_listed = (data[2] & 0x80) != 0;
-                        info.event_simulcast = (data[2] & 0x40) != 0;
-                        info.link_type = (data[2] >> 4) & 0x03;
-                        info.target_id_type = (data[2] >> 2) & 0x03;
-                        onetw_flag = (data[2] & 0x02) != 0;
-                        serv_flag = (data[2] & 0x01) != 0;
-                        data += 3; size -= 3; loop_length -= 3;
-                    }
-                    if (_is_valid && info.target_id_type == 3) {
-                        _is_valid = size >= 2;
-                        if (_is_valid) {
-                            info.user_defined_id = GetUInt16(data);
-                            data += 2; size -= 2; loop_length -= 2;
-                        }
-                    }
-                    if (_is_valid && info.target_id_type == 1) {
-                        _is_valid = size >= 2;
-                        if (_is_valid) {
-                            info.target_transport_stream_id = GetUInt16(data);
-                            data += 2; size -= 2; loop_length -= 2;
-                        }
-                    }
-                    if (_is_valid && onetw_flag) {
-                        _is_valid = size >= 2;
-                        if (_is_valid) {
-                            info.target_original_network_id = GetUInt16(data);
-                            data += 2; size -= 2; loop_length -= 2;
-                        }
-                    }
-                    if (_is_valid && serv_flag) {
-                        _is_valid = size >= 2;
-                        if (_is_valid) {
-                            info.target_service_id = GetUInt16(data);
-                            data += 2; size -= 2; loop_length -= 2;
-                        }
-                    }
-                    if (_is_valid) {
-                        extended_event_linkage_info.push_back(info);
-                    }
-                }
-            }
-        }
-
-        // Remaining bytes are private data.
-        if (_is_valid) {
-            private_data.copy(data, size);
+        if (mobile_handover_info.origin_type == 0x00) {
+            mobile_handover_info.initial_service_id = buf.getUInt16();
         }
     }
+    else if (linkage_type == LINKAGE_EVENT) {
+        event_linkage_info.target_event_id = buf.getUInt16();
+        event_linkage_info.target_listed = buf.getBool();
+        event_linkage_info.event_simulcast = buf.getBool();
+        buf.skipBits(6);
+    }
+    else if (linkage_type >= LINKAGE_EXT_EVENT_MIN && linkage_type <= LINKAGE_EXT_EVENT_MAX) {
+        buf.pushReadSizeFromLength(8); // loop_length
+        while (buf.canRead()) {
+            ExtendedEventLinkageInfo info;
+            info.target_event_id = buf.getUInt16();
+            info.target_listed = buf.getBool();
+            info.event_simulcast = buf.getBool();
+            buf.getBits(info.link_type, 2);
+            buf.getBits(info.target_id_type, 2);
+            const bool onetw_flag = buf.getBool();
+            const bool serv_flag = buf.getBool();
+            if (info.target_id_type == 3) {
+                info.user_defined_id = buf.getUInt16();
+            }
+            else {
+                if (info.target_id_type == 1) {
+                    info.target_transport_stream_id = buf.getUInt16();
+                }
+                if (onetw_flag) {
+                    info.target_original_network_id = buf.getUInt16();
+                }
+                if (serv_flag) {
+                    info.target_service_id = buf.getUInt16();
+                }
+            }
+            extended_event_linkage_info.push_back(info);
+        }
+        buf.popState(); // end of loop_length
+    }
+
+    buf.getBytes(private_data);
 }
 
 
@@ -327,51 +273,38 @@ void ts::LinkageDescriptor::deserialize(DuckContext& duck, const Descriptor& des
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::LinkageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::LinkageDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 7) {
-
-        // Fixed part
-        uint16_t tsid = GetUInt16(data);
-        uint16_t onid = GetUInt16(data + 2);
-        uint16_t servid = GetUInt16(data + 4);
-        uint8_t ltype = data[6];
-        data += 7; size -= 7;
-        strm << margin << UString::Format(u"Transport stream id: %d (0x%X)", {tsid, tsid}) << std::endl
-             << margin << UString::Format(u"Original network Id: %d (0x%X)", {onid, onid}) << std::endl
-             << margin << UString::Format(u"Service id: %d (0x%X)", {servid, servid}) << std::endl
-             << margin << UString::Format(u"Linkage type: %s", {names::LinkageType(ltype, names::FIRST)}) << std::endl;
+    if (buf.canReadBytes(7)) {
+        disp << margin << UString::Format(u"Transport stream id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Original network Id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Service id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
+        const uint8_t ltype = buf.getUInt8();
+        disp << margin << UString::Format(u"Linkage type: %s", {names::LinkageType(ltype, names::FIRST)}) << std::endl;
 
         // Variable part
         switch (ltype) {
             case 0x08:
-                DisplayPrivateMobileHandover(display, data, size, indent, ltype);
+                DisplayPrivateMobileHandover(disp, buf, margin, ltype);
                 break;
             case 0x09:
-                DisplayPrivateSSU(display, data, size, indent, ltype);
+                DisplayPrivateSSU(disp, buf, margin, ltype);
                 break;
             case 0x0A:
-                DisplayPrivateTableSSU(display, data, size, indent, ltype);
+                DisplayPrivateTableSSU(disp, buf, margin, ltype);
                 break;
             case 0x0B:
-                DisplayPrivateINT(display, data, size, indent, ltype);
+                DisplayPrivateINT(disp, buf, margin, ltype);
                 break;
             case 0x0C:
-                DisplayPrivateDeferredINT(display, data, size, indent, ltype);
+                DisplayPrivateDeferredINT(disp, buf, margin, ltype);
                 break;
             default:
                 break;
         }
 
         // Remaining private data
-        display.displayPrivateData(u"Private data", data, size, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+        disp.displayPrivateData(u"Private data", buf, NPOS, margin);
     }
 }
 
@@ -380,179 +313,112 @@ void ts::LinkageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, c
 // Display linkage private data for mobile hand-over
 //----------------------------------------------------------------------------
 
-void ts::LinkageDescriptor::DisplayPrivateMobileHandover(TablesDisplay& display, const uint8_t*& data, size_t& size, int indent, uint8_t ltype)
+void ts::LinkageDescriptor::DisplayPrivateMobileHandover(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, uint8_t ltype)
 {
-    if (size < 1) {
-        return;
-    }
+    if (buf.canReadBytes(1)) {
+        const uint8_t hand_over = buf.getBits<uint8_t>(4);
+        buf.skipBits(3);
+        const uint8_t origin = buf.getBit();
 
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    uint8_t hand_over = *data >> 4;
-    uint8_t origin = *data & 0x01;
-    data += 1; size -= 1;
-
-    const UChar *name;
-    switch (hand_over) {
-        case 0x01: name = u"identical service in neighbour country"; break;
-        case 0x02: name = u"local variation of same service"; break;
-        case 0x03: name = u"associated service"; break;
-        default:   name = u"unknown"; break;
-    }
-    strm << margin << UString::Format(u"Hand-over type: 0x%X, %s, Origin: %s", {hand_over, name, origin ? u"SDT" : u"NIT"}) << std::endl;
-
-    if ((hand_over == 0x01 || hand_over == 0x02 || hand_over == 0x03) && size >= 2) {
-        uint16_t nwid = GetUInt16(data);
-        data += 2; size -= 2;
-        strm << margin << UString::Format(u"Network id: %d (0x%X)", {nwid, nwid}) << std::endl;
-    }
-
-    if (origin == 0x00 && size >= 2) {
-        uint16_t org_servid = GetUInt16(data);
-        data += 2; size -= 2;
-        strm << margin << UString::Format(u"Original service id: %d (0x%X)", {org_servid, org_servid}) << std::endl;
-    }
-}
-
-
-//----------------------------------------------------------------------------
-// Display linkage private data for System Software Update (ETSI TS 102 006)
-//----------------------------------------------------------------------------
-
-void ts::LinkageDescriptor::DisplayPrivateSSU(TablesDisplay& display, const uint8_t*& data, size_t& size, int indent, uint8_t ltype)
-{
-    if (size < 1) {
-        return;
-    }
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    uint8_t dlength = data[0];
-    data += 1; size -= 1;
-    if (dlength > size) {
-        dlength = uint8_t(size);
-    }
-
-    while (dlength >= 4) {
-        uint32_t oui = GetUInt24(data);
-        uint8_t slength = data[3];
-        data += 4; size -= 4; dlength -= 4;
-        const uint8_t* sdata = data;
-        if (slength > dlength) {
-            slength = dlength;
+        const UChar* name = u"";
+        switch (hand_over) {
+            case 0x01: name = u"identical service in neighbour country"; break;
+            case 0x02: name = u"local variation of same service"; break;
+            case 0x03: name = u"associated service"; break;
+            default:   name = u"unknown"; break;
         }
-        data += slength; size -= slength; dlength -= slength;
-        strm << margin << "OUI: " << names::OUI(oui, names::FIRST) << std::endl;
-        display.displayPrivateData(u"Selector data", sdata, slength, indent);
+        disp << margin << UString::Format(u"Hand-over type: 0x%X, %s, Origin: %s", {hand_over, name, origin ? u"SDT" : u"NIT"}) << std::endl;
+
+        if (hand_over >= 1 && hand_over <= 3 && buf.canReadBytes(2)) {
+            disp << margin << UString::Format(u"Network id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
+        }
+        if (origin == 0x00 && buf.canReadBytes(2)) {
+            disp << margin << UString::Format(u"Original service id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
+        }
     }
 }
 
 
 //----------------------------------------------------------------------------
-// Display linkage private data for TS with System Software Update
-// BAT or NIT (ETSI TS 102 006)
+// Display linkage private data for System Software Update.
+// See ETSI TS 102 006, section 6.1, system_software_update_link_structure()
 //----------------------------------------------------------------------------
 
-void ts::LinkageDescriptor::DisplayPrivateTableSSU(TablesDisplay& display, const uint8_t*& data, size_t& size, int indent, uint8_t ltype)
+void ts::LinkageDescriptor::DisplayPrivateSSU(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, uint8_t ltype)
 {
-    if (size >= 1) {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
+    buf.pushReadSizeFromLength(8); // OUI_data_length
+    while (buf.canReadBytes(4)) {
+        disp << margin << "OUI: " << names::OUI(buf.getUInt24(), names::FIRST) << std::endl;
+        const size_t len = buf.getUInt8();
+        disp.displayPrivateData(u"Selector data", buf, len, margin);
+    }
+    disp.displayPrivateData(u"Extraneous OUI data", buf, NPOS, margin);
+    buf.popState(); // end of OUI_data_length
+}
 
-        uint8_t ttype = data[0];
-        data += 1; size -= 1;
 
-        strm << margin << "SSU table type: ";
+//----------------------------------------------------------------------------
+// Display linkage private data for TS with System Software Update BAT or NIT
+// See ETSI TS 102 006, section 6.1.1
+//----------------------------------------------------------------------------
+
+void ts::LinkageDescriptor::DisplayPrivateTableSSU(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, uint8_t ltype)
+{
+    if (buf.canReadBytes(1)) {
+        const uint8_t ttype = buf.getUInt8();
+        disp << margin << "SSU table type: ";
         switch (ttype) {
-            case 0x01: strm << "NIT"; break;
-            case 0x02: strm << "BAT"; break;
-            default:   strm << UString::Hexa(ttype); break;
+            case 1:  disp << "NIT"; break;
+            case 2:  disp << "BAT"; break;
+            default: disp << UString::Hexa(ttype); break;
         }
-        strm << std::endl;
+        disp << std::endl;
     }
 }
 
 
 //----------------------------------------------------------------------------
 // Display linkage private data for INT.
+// See ETSI EN 301 192, section 8.2.1.
 //----------------------------------------------------------------------------
 
-void ts::LinkageDescriptor::DisplayPrivateINT(TablesDisplay& display, const uint8_t*& data, size_t& size, int indent, uint8_t ltype)
+void ts::LinkageDescriptor::DisplayPrivateINT(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, uint8_t ltype)
 {
-    if (size < 1) {
-        return;
-    }
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    uint8_t data_length = data[0];
-    data += 1; size -= 1;
-    if (data_length > size) {
-        data_length = uint8_t(size);
-    }
-
-    while (data_length >= 4) {
-
-        uint32_t plf_id = GetUInt24(data);
-        uint8_t loop_length = data[3];
-        data += 4; size -= 4; data_length -= 4;
-        if (loop_length > data_length) {
-            loop_length = data_length;
+    buf.pushReadSizeFromLength(8); // platform_id_data_length
+    while (buf.canReadBytes(4)) {
+        disp << margin << UString::Format(u"- Platform id: %s", {ts::names::PlatformId(buf.getUInt24(), names::HEXA_FIRST)}) << std::endl;
+        buf.pushReadSizeFromLength(8); // platform_name_loop_length
+        while (buf.canReadBytes(4)) {
+            disp << margin << "  Language: " << buf.getLanguageCode();
+            disp << ", name: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
         }
-
-        strm << margin << UString::Format(u"- Platform id: %s", {ts::names::PlatformId(plf_id, names::HEXA_FIRST)}) << std::endl;
-
-        while (loop_length >= 4) {
-            const UString lang(DeserializeLanguageCode(data));
-            uint8_t name_length = data[3];
-            data += 4; size -= 4;  data_length -= 4; loop_length -= 4;
-            if (name_length > loop_length) {
-                name_length = loop_length;
-            }
-
-            const UString name(duck.decoded(data, name_length));
-            data += name_length; size -= name_length; data_length -= name_length; loop_length -= name_length;
-
-            strm << margin << "  Language: " << lang << ", name: \"" << name << "\"" << std::endl;
-        }
+        disp.displayPrivateData(u"Extraneous platform name data", buf, NPOS, margin + u"  ");
+        buf.popState(); // end of platform_name_loop_length
     }
+    disp.displayPrivateData(u"Extraneous platform data", buf, NPOS, margin);
+    buf.popState(); // end of platform_id_data_length
 }
 
 
 //----------------------------------------------------------------------------
 // Display linkage private data for deferred INT.
+// See ETSI EN 301 192, section 8.2.2.
 //----------------------------------------------------------------------------
 
-void ts::LinkageDescriptor::DisplayPrivateDeferredINT(TablesDisplay& display, const uint8_t*& data, size_t& size, int indent, uint8_t ltype)
+void ts::LinkageDescriptor::DisplayPrivateDeferredINT(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, uint8_t ltype)
 {
-    if (size >= 1) {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
-        uint8_t ttype = data[0];
-        data += 1; size -= 1;
-
-        strm << margin << "INT linkage table type: ";
+    if (buf.canReadBytes(1)) {
+        const uint8_t ttype = buf.getUInt8();
+        disp << margin << "INT linkage table type: ";
         switch (ttype) {
-            case 0x00: strm << "unspecified"; break;
-            case 0x01: strm << "NIT"; break;
-            case 0x02: strm << "BAT"; break;
-            default:   strm << UString::Hexa(ttype); break;
+            case 0:  disp << "unspecified"; break;
+            case 1:  disp << "NIT"; break;
+            case 2:  disp << "BAT"; break;
+            default: disp << UString::Hexa(ttype); break;
         }
-        strm << std::endl;
-
-        if (ttype == 0x02 && size >= 2) {
-            const uint16_t bid = GetUInt16(data);
-            data += 2; size -= 2;
-            strm << margin << UString::Format(u"Bouquet id: 0x%X (%d)", {bid, bid}) << std::endl;
+        disp << std::endl;
+        if (ttype == 0x02 && buf.canReadBytes(2)) {
+            disp << margin << UString::Format(u"Bouquet id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
         }
     }
 }
@@ -597,7 +463,7 @@ void ts::LinkageDescriptor::buildXML(DuckContext& duck, xml::Element* root) cons
     }
     else if (linkage_type >= LINKAGE_EXT_EVENT_MIN && linkage_type <= LINKAGE_EXT_EVENT_MAX) {
         xml::Element* extInfo = root->addElement(u"extended_event_linkage_info");
-        for (ExtendedEventLinkageList::const_iterator it = extended_event_linkage_info.begin(); it != extended_event_linkage_info.end(); ++it) {
+        for (auto it = extended_event_linkage_info.begin(); it != extended_event_linkage_info.end(); ++it) {
             xml::Element* e = extInfo->addElement(u"event");
             e->setIntAttribute(u"target_event_id", it->target_event_id, true);
             e->setBoolAttribute(u"target_listed", it->target_listed);
@@ -607,21 +473,21 @@ void ts::LinkageDescriptor::buildXML(DuckContext& duck, xml::Element* root) cons
             if (it->target_id_type == 3) {
                 e->setIntAttribute(u"user_defined_id", it->user_defined_id, true);
             }
-            if (it->target_id_type == 1) {
-                e->setIntAttribute(u"target_transport_stream_id", it->target_transport_stream_id, true);
-            }
-            if (it->target_original_network_id.set()) {
-                e->setIntAttribute(u"target_original_network_id", it->target_original_network_id.value(), true);
-            }
-            if (it->target_service_id.set()) {
-                e->setIntAttribute(u"target_service_id", it->target_service_id.value(), true);
+            else {
+                if (it->target_id_type == 1) {
+                    e->setIntAttribute(u"target_transport_stream_id", it->target_transport_stream_id, true);
+                }
+                if (it->target_original_network_id.set()) {
+                    e->setIntAttribute(u"target_original_network_id", it->target_original_network_id.value(), true);
+                }
+                if (it->target_service_id.set()) {
+                    e->setIntAttribute(u"target_service_id", it->target_service_id.value(), true);
+                }
             }
         }
     }
 
-    if (!private_data.empty()) {
-        root->addHexaTextChild(u"private_data", private_data);
-    }
+    root->addHexaTextChild(u"private_data", private_data, true);
 }
 
 
@@ -632,10 +498,10 @@ void ts::LinkageDescriptor::buildXML(DuckContext& duck, xml::Element* root) cons
 bool ts::LinkageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     bool ok =
-        element->getIntAttribute<uint16_t>(ts_id, u"transport_stream_id", true) &&
-        element->getIntAttribute<uint16_t>(onetw_id, u"original_network_id", true) &&
-        element->getIntAttribute<uint16_t>(service_id, u"service_id", true) &&
-        element->getIntAttribute<uint8_t>(linkage_type, u"linkage_type", true) &&
+        element->getIntAttribute(ts_id, u"transport_stream_id", true) &&
+        element->getIntAttribute(onetw_id, u"original_network_id", true) &&
+        element->getIntAttribute(service_id, u"service_id", true) &&
+        element->getIntAttribute(linkage_type, u"linkage_type", true) &&
         element->getHexaTextChild(private_data, u"private_data", false);
 
     xml::ElementVector mobileElements;
@@ -652,16 +518,16 @@ bool ts::LinkageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* el
     }
 
     if (ok && !mobileElements.empty()) {
-        ok = mobileElements[0]->getIntAttribute<uint8_t>(mobile_handover_info.handover_type, u"handover_type", true, 0, 0, 0x0F) &&
+        ok = mobileElements[0]->getIntAttribute(mobile_handover_info.handover_type, u"handover_type", true, 0, 0, 0x0F) &&
              mobileElements[0]->getIntEnumAttribute(mobile_handover_info.origin_type, OriginTypeNames, u"origin_type", true) &&
-             mobileElements[0]->getIntAttribute<uint16_t>(mobile_handover_info.network_id, u"network_id",
+             mobileElements[0]->getIntAttribute(mobile_handover_info.network_id, u"network_id",
                                                           mobile_handover_info.handover_type >= 1 && mobile_handover_info.handover_type <= 3) &&
-             mobileElements[0]->getIntAttribute<uint16_t>(mobile_handover_info.initial_service_id, u"initial_service_id",
+             mobileElements[0]->getIntAttribute(mobile_handover_info.initial_service_id, u"initial_service_id",
                                                           mobile_handover_info.origin_type == 0x00);
     }
 
     if (ok && !eventElements.empty()) {
-        ok = eventElements[0]->getIntAttribute<uint16_t>(event_linkage_info.target_event_id, u"target_event_id", true) &&
+        ok = eventElements[0]->getIntAttribute(event_linkage_info.target_event_id, u"target_event_id", true) &&
              eventElements[0]->getBoolAttribute(event_linkage_info.target_listed, u"target_listed", true) &&
              eventElements[0]->getBoolAttribute(event_linkage_info.event_simulcast, u"event_simulcast", true);
     }
@@ -670,15 +536,15 @@ bool ts::LinkageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* el
         ok = extEventElements[0]->getChildren(eventElements, u"event");
         for (size_t i = 0; ok && i < eventElements.size(); ++i) {
             ExtendedEventLinkageInfo info;
-            ok = eventElements[i]->getIntAttribute<uint16_t>(info.target_event_id, u"target_event_id", true) &&
+            ok = eventElements[i]->getIntAttribute(info.target_event_id, u"target_event_id", true) &&
                  eventElements[i]->getBoolAttribute(info.target_listed, u"target_listed", true) &&
                  eventElements[i]->getBoolAttribute(info.event_simulcast, u"event_simulcast", true) &&
-                 eventElements[i]->getIntAttribute<uint8_t>(info.link_type, u"link_type", true, 0, 0, 3) &&
-                 eventElements[i]->getIntAttribute<uint8_t>(info.target_id_type, u"target_id_type", true, 0, 0, 3) &&
-                 eventElements[i]->getIntAttribute<uint16_t>(info.user_defined_id, u"user_defined_id", info.target_id_type == 3) &&
-                 eventElements[i]->getIntAttribute<uint16_t>(info.target_transport_stream_id, u"target_transport_stream_id", info.target_id_type == 1) &&
-                 eventElements[i]->getOptionalIntAttribute<uint16_t>(info.target_original_network_id, u"target_original_network_id") &&
-                 eventElements[i]->getOptionalIntAttribute<uint16_t>(info.target_service_id, u"target_service_id");
+                 eventElements[i]->getIntAttribute(info.link_type, u"link_type", true, 0, 0, 3) &&
+                 eventElements[i]->getIntAttribute(info.target_id_type, u"target_id_type", true, 0, 0, 3) &&
+                 eventElements[i]->getIntAttribute(info.user_defined_id, u"user_defined_id", info.target_id_type == 3) &&
+                 eventElements[i]->getIntAttribute(info.target_transport_stream_id, u"target_transport_stream_id", info.target_id_type == 1) &&
+                 eventElements[i]->getOptionalIntAttribute(info.target_original_network_id, u"target_original_network_id") &&
+                 eventElements[i]->getOptionalIntAttribute(info.target_service_id, u"target_service_id");
             extended_event_linkage_info.push_back(info);
         }
     }

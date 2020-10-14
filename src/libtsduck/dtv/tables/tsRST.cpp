@@ -31,6 +31,7 @@
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -89,36 +90,18 @@ void ts::RST::clearContent()
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::RST::deserializeContent(DuckContext& duck, const BinaryTable& table)
+void ts::RST::deserializePayload(PSIBuffer& buf, const Section& section)
 {
-    // Clear table content
-    events.clear();
-
-    // This is a short table, must have only one section
-    if (table.sectionCount() != 1) {
-        return;
-    }
-
-    // Reference to single section
-    const Section& sect(*table.sectionAt(0));
-    const uint8_t* data = sect.payload();
-    size_t remain = sect.payloadSize();
-
-    // Analyze the section payload.
-    while (remain >= 9) {
+    while (buf.canRead()) {
         Event event;
-        event.transport_stream_id = GetUInt16(data);
-        event.original_network_id = GetUInt16(data + 2);
-        event.service_id = GetUInt16(data + 4);
-        event.event_id = GetUInt16(data + 6);
-        event.running_status = data[8] & 0x07;
-
+        event.transport_stream_id = buf.getUInt16();
+        event.original_network_id = buf.getUInt16();
+        event.service_id = buf.getUInt16();
+        event.event_id = buf.getUInt16();
+        buf.skipBits(5);
+        buf.getBits(event.running_status, 3);
         events.push_back(event);
-        data += 9;
-        remain -= 9;
     }
-
-    _is_valid = remain == 0;
 }
 
 
@@ -126,28 +109,16 @@ void ts::RST::deserializeContent(DuckContext& duck, const BinaryTable& table)
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::RST::serializeContent(DuckContext& duck, BinaryTable& table) const
+void ts::RST::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
-    // Build the section
-    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
-    uint8_t* data = payload;
-    size_t remain = sizeof(payload);
-
-    for (EventList::const_iterator it = events.begin(); it != events.end() && remain >= 9; ++it) {
-        PutUInt16(data, it->transport_stream_id);
-        PutUInt16(data + 2, it->original_network_id);
-        PutUInt16(data + 4, it->service_id);
-        PutUInt16(data + 6, it->event_id);
-        PutUInt8(data + 8, it->running_status | 0xF8);
-        data += 9;
-        remain -= 9;
+    for (auto it = events.begin(); it != events.end(); ++it) {
+        buf.putUInt16(it->transport_stream_id);
+        buf.putUInt16(it->original_network_id);
+        buf.putUInt16(it->service_id);
+        buf.putUInt16(it->event_id);
+        buf.putBits(0xFF, 5);
+        buf.putBits(it->running_status, 3);
     }
-
-    // Add the section in the table.
-    table.addSection(new Section(MY_TID,
-                                 true,   // is_private_section
-                                 payload,
-                                 data - payload));
 }
 
 
@@ -155,35 +126,16 @@ void ts::RST::serializeContent(DuckContext& duck, BinaryTable& table) const
 // A static method to display a RST section.
 //----------------------------------------------------------------------------
 
-void ts::RST::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::RST::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    const uint8_t* data = section.payload();
-    size_t size = section.payloadSize();
-
-    while (size >= 9) {
-        const uint16_t transport_stream_id = GetUInt16(data);
-        const uint16_t original_network_id = GetUInt16(data + 2);
-        const uint16_t service_id = GetUInt16(data + 4);
-        const uint16_t event_id = GetUInt16(data + 6);
-        const uint8_t running_status = data[8] & 0x07;
-        data += 9;
-        size -= 9;
-
-        strm << margin
-             << UString::Format(u"TS: %d (0x%X), Orig. Netw.: %d (0x%X), Service: %d (0x%X), Event: %d (0x%X), Status: %s",
-                       {transport_stream_id, transport_stream_id,
-                        original_network_id, original_network_id,
-                        service_id, service_id,
-                        event_id, event_id,
-                        RunningStatusNames.name(running_status)})
-             << std::endl;
+    while (buf.canReadBytes(9)) {
+        disp << margin << UString::Format(u"TS: %d (0x%<X)", {buf.getUInt16()});
+        disp << UString::Format(u", Orig. Netw.: %d (0x%<X)", {buf.getUInt16()});
+        disp << UString::Format(u", Service: %d (0x%<X)", {buf.getUInt16()});
+        disp << UString::Format(u", Event: %d (0x%<X)", {buf.getUInt16()});
+        buf.skipBits(5);
+        disp << ", Status: " << RunningStatusNames.name(buf.getBits<uint8_t>(3)) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -215,11 +167,11 @@ bool ts::RST::analyzeXML(DuckContext& duck, const xml::Element* element)
 
     for (size_t index = 0; ok && index < children.size(); ++index) {
         Event event;
-        ok = children[index]->getIntAttribute<uint16_t>(event.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
-             children[index]->getIntAttribute<uint16_t>(event.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
-             children[index]->getIntAttribute<uint16_t>(event.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
-             children[index]->getIntAttribute<uint16_t>(event.event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
-             children[index]->getIntEnumAttribute<uint8_t>(event.running_status, RunningStatusNames, u"running_status", true);
+        ok = children[index]->getIntAttribute(event.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntAttribute(event.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntAttribute(event.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntAttribute(event.event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntEnumAttribute(event.running_status, RunningStatusNames, u"running_status", true);
         if (ok) {
             events.push_back(event);
         }

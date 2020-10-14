@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -72,15 +73,14 @@ ts::DVBHTMLApplicationDescriptor::DVBHTMLApplicationDescriptor(DuckContext& duck
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DVBHTMLApplicationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DVBHTMLApplicationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(application_ids.size() * sizeof(uint16_t)));
+    buf.pushWriteSequenceWithLeadingLength(8); // appid_set_length
     for (size_t i = 0; i < application_ids.size(); ++i) {
-        bbp->appendUInt16(application_ids[i]);
+        buf.putUInt16(application_ids[i]);
     }
-    bbp->append(duck.encoded(parameter));
-    serializeEnd(desc, bbp);
+    buf.popState(); // update appid_set_length
+    buf.putString(parameter);
 }
 
 
@@ -88,28 +88,14 @@ void ts::DVBHTMLApplicationDescriptor::serialize(DuckContext& duck, Descriptor& 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DVBHTMLApplicationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DVBHTMLApplicationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    application_ids.clear();
-    parameter.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    if (_is_valid) {
-        size_t len = data[0];
-        data++; size--;
-        _is_valid = len % 2 == 0 && len <= size;
-        if (_is_valid) {
-            while (len >= 2) {
-                application_ids.push_back(GetUInt16(data));
-                data += 2; size -= 2; len -= 2;
-            }
-            duck.decode(parameter, data, size);
-        }
+    buf.pushReadSizeFromLength(8); // appid_set_length
+    while (buf.canRead()) {
+        application_ids.push_back(buf.getUInt16());
     }
+    buf.popState(); // end of appid_set_length
+    buf.getString(parameter);
 }
 
 
@@ -117,27 +103,14 @@ void ts::DVBHTMLApplicationDescriptor::deserialize(DuckContext& duck, const Desc
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DVBHTMLApplicationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DVBHTMLApplicationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        size_t len = data[0];
-        if (len % 2 == 0 && len + 1 <= size) {
-            data++; size--;
-            while (len >= 2) {
-                const uint16_t id = GetUInt16(data);
-                data += 2; size -= 2; len -= 2;
-                strm << margin << UString::Format(u"Application id: 0x%X (%d)", {id, id}) << std::endl;
-            }
-            strm << margin << "Parameter: \"" << duck.decoded(data, size) << "\"" << std::endl;
-            size = 0;
-        }
+    buf.pushReadSizeFromLength(8); // appid_set_length
+    while (buf.canReadBytes(2)) {
+        disp << margin << UString::Format(u"Application id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
+    buf.popState(); // end of appid_set_length
+    disp << margin << "Parameter: \"" << buf.getString() << "\"" << std::endl;
 }
 
 
@@ -165,7 +138,7 @@ bool ts::DVBHTMLApplicationDescriptor::analyzeXML(DuckContext& duck, const xml::
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         uint16_t id;
-        ok = children[i]->getIntAttribute<uint16_t>(id, u"id", true);
+        ok = children[i]->getIntAttribute(id, u"id", true);
         application_ids.push_back(id);
     }
     return ok;

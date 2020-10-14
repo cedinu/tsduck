@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsBCD.h"
@@ -89,42 +90,41 @@ ts::NetworkChangeNotifyDescriptor::Change::Change() :
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::NetworkChangeNotifyDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::NetworkChangeNotifyDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::NetworkChangeNotifyDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
     for (auto it1 = cells.begin(); it1 != cells.end(); ++it1) {
-        bbp->appendUInt16(it1->cell_id);
-
-        // Place-holder for length field.
-        const size_t len_index = bbp->size();
-        bbp->enlarge(1);
-
+        buf.putUInt16(it1->cell_id);
+        buf.pushWriteSequenceWithLeadingLength(8); // loop_length
         for (auto it2 = it1->changes.begin(); it2 != it1->changes.end(); ++it2) {
             const bool invariant_ts_present = it2->invariant_ts_tsid.set() && it2->invariant_ts_onid.set();
-            bbp->appendUInt8(it2->network_change_id);
-            bbp->appendUInt8(it2->network_change_version);
-            EncodeMJD(it2->start_time_of_change, bbp->enlarge(MJD_SIZE), MJD_SIZE);
-            bbp->appendUInt8(EncodeBCD(int(it2->change_duration) / 3660));
-            bbp->appendUInt8(EncodeBCD((int(it2->change_duration) / 60) % 60));
-            bbp->appendUInt8(EncodeBCD(int(it2->change_duration) % 60));
-            bbp->appendUInt8(uint8_t(it2->receiver_category << 5) |
-                             (invariant_ts_present ? 0x10 : 0x00) |
-                             (it2->change_type & 0x0F));
-            bbp->appendUInt8(it2->message_id);
+            buf.putUInt8(it2->network_change_id);
+            buf.putUInt8(it2->network_change_version);
+            buf.putMJD(it2->start_time_of_change, MJD_SIZE);
+            buf.putSecondsBCD(it2->change_duration);
+            buf.putBits(it2->receiver_category, 3);
+            buf.putBit(invariant_ts_present);
+            buf.putBits(it2->change_type, 4);
+            buf.putUInt8(it2->message_id);
             if (invariant_ts_present) {
-                bbp->appendUInt16(it2->invariant_ts_tsid.value());
-                bbp->appendUInt16(it2->invariant_ts_onid.value());
+                buf.putUInt16(it2->invariant_ts_tsid.value());
+                buf.putUInt16(it2->invariant_ts_onid.value());
             }
         }
-
-        // Update length field.
-        (*bbp)[len_index] = uint8_t(bbp->size() - len_index - 1);
+        buf.popState(); // update loop_length
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -132,48 +132,31 @@ void ts::NetworkChangeNotifyDescriptor::serialize(DuckContext& duck, Descriptor&
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::NetworkChangeNotifyDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::NetworkChangeNotifyDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1 && data[0] == MY_EDID;
-    data++; size--;
-    cells.clear();
-
-    while (_is_valid && size >= 3) {
+    while (buf.canRead()) {
         Cell cell;
-        cell.cell_id = GetUInt16(data);
-        size_t len = data[2];
-        data += 3; size -= 3;
-
-        while (_is_valid && size >= len && len >= 12) {
+        cell.cell_id = buf.getUInt16();
+        buf.pushReadSizeFromLength(8); // loop_length
+        while (buf.canRead()) {
             Change ch;
-            ch.network_change_id = data[0];
-            ch.network_change_version = data[1];
-            DecodeMJD(data + 2, 5, ch.start_time_of_change);
-            ch.change_duration = (DecodeBCD(data[7]) * 3600) + (DecodeBCD(data[8]) * 60) + DecodeBCD(data[9]);
-            ch.receiver_category = (data[10] >> 5) & 0x07;
-            const bool invariant_ts_present = (data[10] & 0x10) != 0;
-            ch.change_type = data[10] & 0x0F;
-            ch.message_id = data[11];
-            data += 12; size -= 12; len -= 12;
+            ch.network_change_id = buf.getUInt8();
+            ch.network_change_version = buf.getUInt8();
+            ch.start_time_of_change = buf.getMJD(MJD_SIZE);
+            ch.change_duration = buf.getSecondsBCD();
+            buf.getBits(ch.receiver_category, 3);
+            const bool invariant_ts_present = buf.getBool();
+            buf.getBits(ch.change_type, 4);
+            ch.message_id = buf.getUInt8();
             if (invariant_ts_present) {
-                _is_valid = len >= 4;
-                if (_is_valid) {
-                    ch.invariant_ts_tsid = GetUInt16(data);
-                    ch.invariant_ts_onid = GetUInt16(data + 2);
-                    data += 4; size -= 4; len -= 4;
-                }
+                ch.invariant_ts_tsid = buf.getUInt16();
+                ch.invariant_ts_onid = buf.getUInt16();
             }
             cell.changes.push_back(ch);
         }
-
-        _is_valid = _is_valid && len == 0;
+        buf.popState(); // loop_length
         cells.push_back(cell);
     }
-
-    // Make sure there is no truncated trailing data.
-    _is_valid = _is_valid && size == 0;
 }
 
 
@@ -181,56 +164,30 @@ void ts::NetworkChangeNotifyDescriptor::deserialize(DuckContext& duck, const Des
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::NetworkChangeNotifyDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::NetworkChangeNotifyDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    bool ok = true;
-
-    while (ok && size >= 3) {
-        strm << margin << UString::Format(u"- Cell id: 0x%X", {GetUInt16(data)}) << std::endl;
-        size_t len = data[2];
-        data += 3; size -= 3;
-
-        while (ok && size >= len && len >= 12) {
-            Time start;
-            DecodeMJD(data + 2, 5, start);
-            strm << margin
-                 << UString::Format(u"  - Network change id: 0x%X, version: 0x%X", {data[0], data[1]})
-                 << std::endl
-                 << margin
-                 << UString::Format(u"    Start: %s, duration: %02d:%02d:%02d", {start.format(Time::DATE | Time::TIME), DecodeBCD(data[7]), DecodeBCD(data[8]), DecodeBCD(data[9])})
-                 << std::endl
-                 << margin
-                 << UString::Format(u"    Receiver category: 0x%X", {uint8_t((data[10] >> 5) & 0x07)})
-                 << std::endl
-                 << margin
-                 << "    Change type: " << NameFromSection(u"NetworkChangeType", data[10] & 0x0F, names::HEXA_FIRST)
-                 << std::endl
-                 << margin
-                 << UString::Format(u"    Message id: 0x%X", {data[11]})
-                 << std::endl;
-            const bool invariant_ts_present = (data[10] & 0x10) != 0;
-            data += 12; size -= 12; len -= 12;
-            if (invariant_ts_present) {
-                ok = len >= 4;
-                if (ok) {
-                    strm << margin
-                         << UString::Format(u"    Invariant TS id: 0x%X, orig. net. id: 0x%X", {GetUInt16(data), GetUInt16(data + 2)})
-                         << std::endl;
-                    data += 4; size -= 4; len -= 4;
-                }
+    while (buf.canReadBytes(3)) {
+        disp << margin << UString::Format(u"- Cell id: 0x%X", {buf.getUInt16()}) << std::endl;
+        buf.pushReadSizeFromLength(8); // loop_length
+        while (buf.canReadBytes(12)) {
+            disp << margin << UString::Format(u"  - Network change id: 0x%X", {buf.getUInt8()});
+            disp << UString::Format(u", version: 0x%X", {buf.getUInt8()}) << std::endl;
+            disp << margin << "    Start: " << buf.getMJD(MJD_SIZE).format(Time::DATETIME);
+            disp << UString::Format(u", duration: %02d", {buf.getBCD<uint8_t>(2)});
+            disp << UString::Format(u":%02d", {buf.getBCD<uint8_t>(2)});
+            disp << UString::Format(u":%02d", {buf.getBCD<uint8_t>(2)}) << std::endl;
+            disp << margin << UString::Format(u"    Receiver category: 0x%X", {buf.getBits<uint8_t>(3)}) << std::endl;
+            const bool invariant_ts_present = buf.getBool();
+            disp << margin << "    Change type: " << NameFromSection(u"NetworkChangeType", buf.getBits<uint8_t>(4), names::HEXA_FIRST) << std::endl;
+            disp << margin << UString::Format(u"    Message id: 0x%X", {buf.getUInt8()}) << std::endl;
+            if (invariant_ts_present && buf.canReadBytes(4)) {
+                disp << margin << UString::Format(u"    Invariant TS id: 0x%X", {buf.getUInt16()});
+                disp << UString::Format(u", orig. net. id: 0x%X", {buf.getUInt16()}) << std::endl;
             }
         }
-        ok = ok && len == 0;
+        disp.displayPrivateData(u"Extraneous cell data", buf, NPOS, margin + u"  ");
+        buf.popState(); // loop_length
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -271,19 +228,19 @@ bool ts::NetworkChangeNotifyDescriptor::analyzeXML(DuckContext& duck, const xml:
     for (size_t i1 = 0; ok && i1 < xcells.size(); ++i1) {
         Cell cell;
         xml::ElementVector xchanges;
-        ok = xcells[i1]->getIntAttribute<uint16_t>(cell.cell_id, u"cell_id", true) &&
+        ok = xcells[i1]->getIntAttribute(cell.cell_id, u"cell_id", true) &&
              xcells[i1]->getChildren(xchanges, u"change");
         for (size_t i2 = 0; ok && i2 < xchanges.size(); ++i2) {
             Change ch;
-            ok = xchanges[i2]->getIntAttribute<uint8_t>(ch.network_change_id, u"network_change_id", true) &&
-                 xchanges[i2]->getIntAttribute<uint8_t>(ch.network_change_version, u"network_change_version", true) &&
+            ok = xchanges[i2]->getIntAttribute(ch.network_change_id, u"network_change_id", true) &&
+                 xchanges[i2]->getIntAttribute(ch.network_change_version, u"network_change_version", true) &&
                  xchanges[i2]->getDateTimeAttribute(ch.start_time_of_change, u"start_time_of_change", true) &&
                  xchanges[i2]->getTimeAttribute(ch.change_duration, u"change_duration", true) &&
-                 xchanges[i2]->getIntAttribute<uint8_t>(ch.receiver_category, u"receiver_category", true, 0, 0x00, 0x07) &&
-                 xchanges[i2]->getIntAttribute<uint8_t>(ch.change_type, u"change_type", true, 0, 0x00, 0x0F) &&
-                 xchanges[i2]->getIntAttribute<uint8_t>(ch.message_id, u"message_id", true) &&
-                 xchanges[i2]->getOptionalIntAttribute<uint16_t>(ch.invariant_ts_tsid, u"invariant_ts_tsid") &&
-                 xchanges[i2]->getOptionalIntAttribute<uint16_t>(ch.invariant_ts_onid, u"invariant_ts_onid");
+                 xchanges[i2]->getIntAttribute(ch.receiver_category, u"receiver_category", true, 0, 0x00, 0x07) &&
+                 xchanges[i2]->getIntAttribute(ch.change_type, u"change_type", true, 0, 0x00, 0x0F) &&
+                 xchanges[i2]->getIntAttribute(ch.message_id, u"message_id", true) &&
+                 xchanges[i2]->getOptionalIntAttribute(ch.invariant_ts_tsid, u"invariant_ts_tsid") &&
+                 xchanges[i2]->getOptionalIntAttribute(ch.invariant_ts_onid, u"invariant_ts_onid");
             cell.changes.push_back(ch);
         }
         cells.push_back(cell);

@@ -94,20 +94,14 @@ void ts::ServiceDescriptor::deserializePayload(PSIBuffer& buf)
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ServiceDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ServiceDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    std::ostream& strm(display.out());
-    const std::string margin(indent, ' ');
-    PSIBuffer buf(display.duck(), data, size);
-
-    if (size >= 1) {
-        strm << margin << "Service type: " << names::ServiceType(buf.getUInt8(), names::FIRST) << std::endl;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Service type: " << names::ServiceType(buf.getUInt8(), names::FIRST) << std::endl;
         const UString provider(buf.getStringWithByteLength());
         const UString service(buf.getStringWithByteLength());
-        strm << margin << "Service: \"" << service << "\", Provider: \"" << provider << "\"" << std::endl;
+        disp << margin << "Service: \"" << service << "\", Provider: \"" << provider << "\"" << std::endl;
     }
-
-    display.displayExtraData(buf, indent);
 }
 
 
@@ -124,7 +118,7 @@ void ts::ServiceDescriptor::buildXML(DuckContext& duck, xml::Element* root) cons
 
 bool ts::ServiceDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(service_type, u"service_type", true) &&
+    return element->getIntAttribute(service_type, u"service_type", true) &&
            element->getAttribute(provider_name, u"service_provider_name", true) &&
            element->getAttribute(service_name, u"service_name", true);
 }

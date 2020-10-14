@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -69,35 +70,19 @@ ts::CopyrightDescriptor::CopyrightDescriptor(DuckContext& duck, const Descriptor
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// Serialization / deserialization.
 //----------------------------------------------------------------------------
 
-void ts::CopyrightDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::CopyrightDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt32(copyright_identifier);
-    bbp->append(additional_copyright_info);
-    serializeEnd(desc, bbp);
+    buf.putUInt32(copyright_identifier);
+    buf.putBytes(additional_copyright_info);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::CopyrightDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::CopyrightDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    additional_copyright_info.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4;
-
-    if (_is_valid) {
-        copyright_identifier = GetUInt32(data);
-        additional_copyright_info.copy(data + 4, size - 4);
-    }
+    copyright_identifier = buf.getUInt32();
+    buf.getBytes(additional_copyright_info);
 }
 
 
@@ -105,26 +90,18 @@ void ts::CopyrightDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::CopyrightDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::CopyrightDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 4) {
+    if (buf.canReadBytes(4)) {
         // Sometimes, the copyright identifier is made of ASCII characters. Try to display them.
-        strm << margin << UString::Format(u"Copyright identifier: 0x%X", {GetUInt32(data)});
-        duck.displayIfASCII(data, 4, u" (\"", u"\")") << std::endl;
-        display.displayPrivateData(u"Additional copyright info", data + 4, size - 4, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+        disp.displayIntAndASCII(u"Copyright identifier: 0x%08X", buf, 4, margin);
+        disp.displayPrivateData(u"Additional copyright info", buf, NPOS, margin);
     }
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML serialization / deserialization.
 //----------------------------------------------------------------------------
 
 void ts::CopyrightDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -133,13 +110,8 @@ void ts::CopyrightDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
     root->addHexaTextChild(u"additional_copyright_info", additional_copyright_info, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::CopyrightDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint32_t>(copyright_identifier, u"copyright_identifier", true) &&
+    return element->getIntAttribute(copyright_identifier, u"copyright_identifier", true) &&
            element->getHexaTextChild(additional_copyright_info, u"additional_copyright_info", false, 0, MAX_DESCRIPTOR_SIZE - 6);
 }

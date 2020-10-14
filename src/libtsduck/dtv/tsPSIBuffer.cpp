@@ -31,6 +31,8 @@
 #include "tsDuckContext.h"
 #include "tsDescriptorList.h"
 #include "tsSection.h"
+#include "tsMJD.h"
+#include "tsATSCMultipleString.h"
 TSDUCK_SOURCE;
 
 
@@ -133,22 +135,30 @@ bool ts::PSIBuffer::putLanguageCode(const UString& str, bool allow_empty)
 
 ts::UString ts::PSIBuffer::getLanguageCode()
 {
+    UString str;
+    getLanguageCode(str);
+    return str;
+}
+
+bool ts::PSIBuffer::getLanguageCode(UString& str)
+{
+    str.clear();
+
     if (readError() || remainingReadBytes() < 3 || !readIsByteAligned()) {
         // No partial string read if not enough bytes are present.
         // Cannot read unaligned character codes.
         setReadError();
-        return UString();
+        return false;
     }
     else {
         // Read 3 characters. Ignore non-ASCII characters.
-        UString str;
         for (size_t i = 0; i < 3; ++i) {
             const uint8_t c = getUInt8();
             if (c >= 0x20 && c <= 0x7F) {
                 str.push_back(UChar(c));
             }
         }
-        return str;
+        return true;
     }
 }
 
@@ -157,7 +167,7 @@ ts::UString ts::PSIBuffer::getLanguageCode()
 // Common code the various putString functions.
 //----------------------------------------------------------------------------
 
-size_t ts::PSIBuffer::putStringCommon(const UString& str, size_t start, size_t count, EncodeMethod em, bool partial, size_t min_req_size)
+size_t ts::PSIBuffer::putStringCommon(const UString& str, size_t start, size_t count, EncodeMethod em, bool partial, size_t min_req_size, const Charset* charset)
 {
     // Make sure we can write in the buffer and has the minimum required free size.
     if (readOnly() || writeError() || remainingWriteBytes() < min_req_size) {
@@ -173,7 +183,7 @@ size_t ts::PSIBuffer::putStringCommon(const UString& str, size_t start, size_t c
     uint8_t* data = currentWriteAddress();
     const size_t prev_size = remainingWriteBytes();
     size_t size = prev_size;
-    const size_t nchars = (_duck.charsetOut()->*em)(data, size, str, start, count);
+    const size_t nchars = (_duck.charsetOut(charset)->*em)(data, size, str, start, count);
 
     if (partial || nchars >= count) {
         // Some or all characters were serialized.
@@ -193,14 +203,14 @@ size_t ts::PSIBuffer::putStringCommon(const UString& str, size_t start, size_t c
 // Deserialize a string
 //----------------------------------------------------------------------------
 
-ts::UString ts::PSIBuffer::getString(size_t size)
+ts::UString ts::PSIBuffer::getString(size_t size, const Charset* charset)
 {
     UString str;
-    getString(str, size);
+    getString(str, size, charset);
     return str;
 }
 
-bool ts::PSIBuffer::getString(ts::UString& str, size_t size)
+bool ts::PSIBuffer::getString(ts::UString& str, size_t size, const Charset* charset)
 {
     // NPOS means exact size of the buffer.
     if (size == NPOS) {
@@ -212,17 +222,12 @@ bool ts::PSIBuffer::getString(ts::UString& str, size_t size)
         return false;
     }
 
-    // Decode characters.
-    if (_duck.charsetIn()->decode(str, currentReadAddress(), size)) {
-        // Include the deserialized bytes in the read part.
-        readSeek(currentReadByteOffset() + size);
-        return true;
-    }
-    else {
-        // Set read error and let bytes as unread.
-        setReadError();
-        return false;
-    }
+    // Decode characters. Ignore decoding errors since it could be simply an unsupported character.
+    _duck.charsetIn(charset)->decode(str, currentReadAddress(), size);
+
+    // Include the deserialized bytes in the read part.
+    readSeek(currentReadByteOffset() + size);
+    return true;
 }
 
 
@@ -230,29 +235,86 @@ bool ts::PSIBuffer::getString(ts::UString& str, size_t size)
 // Deserialize a string with byte length.
 //----------------------------------------------------------------------------
 
-ts::UString ts::PSIBuffer::getStringWithByteLength()
+ts::UString ts::PSIBuffer::getStringWithByteLength(const Charset* charset)
 {
     UString str;
-    getStringWithByteLength(str);
+    getStringWithByteLength(str, charset);
     return str;
 }
 
-bool ts::PSIBuffer::getStringWithByteLength(ts::UString& str)
+bool ts::PSIBuffer::getStringWithByteLength(ts::UString& str, const Charset* charset)
 {
-    const uint8_t* data = currentReadAddress();
-    const size_t prev_size = remainingReadBytes();
-    size_t size = prev_size;
+    const size_t size = getUInt8();
+    return getString(str, std::min<size_t>(size, remainingReadBytes()), charset);
+}
 
-    if (!readError() && _duck.charsetIn()->decodeWithByteLength(str, data, size)) {
-        // Include the deserialized bytes in the read part.
-        readSeek(currentReadByteOffset() + prev_size - size);
-        return true;
-    }
-    else {
-        // Set read error and let bytes as unread.
-        setReadError();
+
+//----------------------------------------------------------------------------
+// Serialize and deserialize dates and times.
+//----------------------------------------------------------------------------
+
+bool ts::PSIBuffer::putMJD(const Time& time, size_t mjd_size)
+{
+    if (readOnly() || writeError() || !writeIsByteAligned() || remainingWriteBytes() < mjd_size || !EncodeMJD(time, currentWriteAddress(), mjd_size)) {
+        // Write is not byte-aligned or there is not enough room or encoding error.
+        setWriteError();
         return false;
     }
+    else {
+        // Successfully serialized, move write pointer.
+        writeSeek(currentWriteByteOffset() + mjd_size);
+        return true;
+    }
+}
+
+ts::Time ts::PSIBuffer::getMJD(size_t mjd_size)
+{
+    // Invalid MJD decoding: We filter invalid mjd_size as an error.
+    // But we accept invalid MJD values (returns Unix Epoch) because
+    // too many EIT's have invalid dates in the field.
+    Time result;
+    if (readError() || !readIsByteAligned() || remainingReadBytes() < mjd_size || mjd_size < MJD_MIN_SIZE || mjd_size > MJD_SIZE) {
+        setReadError();
+        return Time::Epoch;
+    }
+    else {
+        DecodeMJD(currentReadAddress(), mjd_size, result);
+        skipBytes(mjd_size);
+        return result;
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// Serialize and deserialize durations in BCD digits.
+//----------------------------------------------------------------------------
+
+bool ts::PSIBuffer::putMinutesBCD(SubSecond duration)
+{
+    return putBCD(std::abs(duration) / 60, 2) &&
+           putBCD(std::abs(duration) % 60, 2);
+}
+
+bool ts::PSIBuffer::putSecondsBCD(Second duration)
+{
+    return putBCD(std::abs(duration) / 3600, 2) &&
+           putBCD((std::abs(duration) / 60) % 60, 2) &&
+           putBCD(std::abs(duration) % 60, 2);
+}
+
+ts::SubSecond ts::PSIBuffer::getMinutesBCD()
+{
+    const SubSecond hours = getBCD<SubSecond>(2);
+    const SubSecond minutes = getBCD<SubSecond>(2);
+    return (hours * 60) + minutes;
+}
+
+ts::Second ts::PSIBuffer::getSecondsBCD()
+{
+    const SubSecond hours = getBCD<SubSecond>(2);
+    const SubSecond minutes = getBCD<SubSecond>(2);
+    const SubSecond seconds = getBCD<SubSecond>(2);
+    return (hours * 3600) + (minutes * 60) + seconds;
 }
 
 
@@ -266,7 +328,7 @@ bool ts::PSIBuffer::putDescriptorList(const DescriptorList& descs, size_t start,
     start = std::min(start, descs.size());
     count = std::min(count, descs.size() - start);
 
-    if (readOnly() || !writeIsByteAligned() || descs.binarySize(start, count) > remainingWriteBytes()) {
+    if (readOnly() || writeError() || !writeIsByteAligned() || descs.binarySize(start, count) > remainingWriteBytes()) {
         // Write is not byte-aligned or there is not enough room to serialize the descriptors.
         setWriteError();
         return false;
@@ -292,7 +354,7 @@ size_t ts::PSIBuffer::putPartialDescriptorList(const DescriptorList& descs, size
     const size_t last = start + count;
 
     // Write error if not byte-aligned.
-    if (readOnly() || !writeIsByteAligned()) {
+    if (readOnly() || writeError() || !writeIsByteAligned()) {
         setWriteError();
         return start;
     }
@@ -340,7 +402,7 @@ size_t ts::PSIBuffer::putPartialDescriptorListWithLength(const DescriptorList& d
     start = std::min(start, descs.size());
 
     // Filter incorrect length or length alignment.
-    if (readOnly() || remainingWriteBytes() < 2 || length_bits == 0 || length_bits > 16 || (!writeIsByteAligned() && currentWriteBitOffset() % 8 != 16 - length_bits)) {
+    if (readOnly() || writeError() || remainingWriteBytes() < 2 || length_bits == 0 || length_bits > 16 || (!writeIsByteAligned() && currentWriteBitOffset() % 8 != 16 - length_bits)) {
         setWriteError();
         return start;
     }
@@ -351,21 +413,13 @@ size_t ts::PSIBuffer::putPartialDescriptorListWithLength(const DescriptorList& d
     }
 
     // Save state where the length will be written later.
-    pushReadWriteState();
-
-    // Write a zero as place-holder for length.
-    putBits(0, length_bits);
-    assert(writeIsByteAligned());
+    pushWriteSequenceWithLeadingLength(length_bits);
 
     // Serialize as many descriptors as we can. Compute written size.
-    size_t size_in_bytes = currentWriteByteOffset();
     start = putPartialDescriptorList(descs, start, count);
-    size_in_bytes = currentWriteByteOffset() - size_in_bytes;
 
     // Update the length field.
-    swapReadWriteState();
-    putBits(size_in_bytes, length_bits);
-    popReadWriteState();
+    popState();
 
     return start;
 }
@@ -426,7 +480,7 @@ bool ts::PSIBuffer::getDescriptorListWithLength(DescriptorList& descs, size_t le
 
 size_t ts::PSIBuffer::getUnalignedLength(size_t length_bits)
 {
-    if (readError() || remainingReadBytes() < 2 || length_bits == 0 || length_bits > 16 || (!readIsByteAligned() && currentReadBitOffset() % 8 != 16 - length_bits)) {
+    if (readError() || remainingReadBytes() < 2 || length_bits == 0 || length_bits > 16 || (!readIsByteAligned() && (currentReadBitOffset() + length_bits) % 8 != 0)) {
         setReadError();
         return 0;
     }
@@ -440,4 +494,123 @@ size_t ts::PSIBuffer::getUnalignedLength(size_t length_bits)
         setReadError();
     }
     return actual_length;
+}
+
+
+//----------------------------------------------------------------------------
+// Get an ATSC multiple_string_structure.
+//----------------------------------------------------------------------------
+
+bool ts::PSIBuffer::getMultipleString(ATSCMultipleString& mss, size_t mss_size, bool ignore_empty)
+{
+    mss.clear();
+
+    // Must start on a byte boundary.
+    if (readError() || !readIsByteAligned()) {
+        setReadError();
+        return false;
+    }
+
+    // These pointers will be updated by mss.deserialize().
+    const uint8_t* data = currentReadAddress();
+    size_t size = remainingReadBytes();
+
+    // Make sure mss_size is actually used if lower than NPOS but larger than buffer size.
+    if (mss_size != NPOS && mss_size > size) {
+        mss_size = size;
+    }
+
+    // Deserialize the multiple string structure.
+    if (mss.deserialize(_duck, data, size, mss_size, ignore_empty)) {
+        assert(size <= remainingReadBytes());
+        skipBytes(remainingReadBytes() - size);
+        return true;
+    }
+    else {
+        setReadError();
+        return false;
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// Get an ATSC multiple_string_structure with a leading byte length.
+//----------------------------------------------------------------------------
+
+bool ts::PSIBuffer::getMultipleStringWithLength(ATSCMultipleString& mss, size_t length_bytes)
+{
+    mss.clear();
+
+    // Must start on a byte boundary.
+    if (readError() || !readIsByteAligned()) {
+        setReadError();
+        return false;
+    }
+
+    // These pointers will be updated by mss.deserialize().
+    const uint8_t* data = currentReadAddress();
+    size_t size = remainingReadBytes();
+
+    // Deserialize the multiple string structure.
+    if (mss.lengthDeserialize(_duck, data, size, length_bytes)) {
+        assert(size <= remainingReadBytes());
+        skipBytes(remainingReadBytes() - size);
+        return true;
+    }
+    else {
+        setReadError();
+        return false;
+    }
+}
+
+
+//----------------------------------------------------------------------------
+// Put an ATSC multiple_string_structure.
+//----------------------------------------------------------------------------
+
+bool ts::PSIBuffer::putMultipleString(const ATSCMultipleString& mss, size_t max_size, bool ignore_empty)
+{
+    // Must start on a byte boundary.
+    if (readOnly() || writeError() || !writeIsByteAligned()) {
+        setReadError();
+        return false;
+    }
+
+    // These pointers will be updated by mss.deserialize().
+    uint8_t* data = currentWriteAddress();
+    size_t size = remainingWriteBytes();
+
+    // Serialize the structure.
+    size_t count = mss.serialize(_duck, data, size, max_size, ignore_empty);
+
+    // Successfully serialized, move write pointer.
+    assert(count <= remainingWriteBytes());
+    writeSeek(currentWriteByteOffset() + count);
+    return true;
+}
+
+
+//----------------------------------------------------------------------------
+// Put an ATSC multiple_string_structure with a leading byte length.
+//----------------------------------------------------------------------------
+
+bool ts::PSIBuffer::putMultipleStringWithLength(const ATSCMultipleString& mss, size_t length_bytes)
+{
+    // Must start on a byte boundary.
+    if (readOnly() || writeError() || !writeIsByteAligned()) {
+        setReadError();
+        return false;
+    }
+
+    // These pointers will be updated by mss.deserialize().
+    uint8_t* data = currentWriteAddress();
+    size_t size = remainingWriteBytes();
+
+    // Serialize the structure.
+    mss.lengthSerialize(_duck, data, size, length_bytes);
+
+    // Successfully serialized, move write pointer.
+    assert(size <= remainingWriteBytes());
+    writeSeek(currentWriteByteOffset() + remainingWriteBytes() - size);
+    return true;
 }

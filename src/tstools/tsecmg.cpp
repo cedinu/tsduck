@@ -302,9 +302,11 @@ class ECMGClientHandler: public ts::Thread
     TS_NOBUILD_NOCOPY(ECMGClientHandler);
 public:
     // Constructor.
-    // When deleteWhenTerminated is true, this object is automatically deleted
-    // when the thread terminates.
+    // When deleteWhenTerminated is true, this object is automatically deleted when the thread terminates.
     ECMGClientHandler(const ECMGOptions& opt, const ECMGConnectionPtr& conn, ECMGSharedData* shared, bool deleteWhenTerminated);
+
+    // Destructor.
+    virtual ~ECMGClientHandler();
 
     // Main code of the thread.
     virtual void main() override;
@@ -344,7 +346,7 @@ private:
 
 
 //----------------------------------------------------------------------------
-// ECMG client constructor.
+// ECMG client constructor and destructor.
 //----------------------------------------------------------------------------
 
 ECMGClientHandler::ECMGClientHandler(const ECMGOptions& opt, const ECMGConnectionPtr& conn, ECMGSharedData* shared, bool deleteWhenTerminated) :
@@ -361,6 +363,12 @@ ECMGClientHandler::ECMGClientHandler(const ECMGOptions& opt, const ECMGConnectio
     attr.setStackSize(CLIENT_STACK_SIZE);
     attr.setDeleteWhenTerminated(deleteWhenTerminated);
     setAttributes(attr);
+}
+
+ECMGClientHandler::~ECMGClientHandler()
+{
+    // Wait for completion of the thread.
+    waitForTermination();
 }
 
 
@@ -617,10 +625,14 @@ bool ECMGClientHandler::handleCWProvision(ts::ecmgscs::CWProvision* msg)
         resp.stream_id = msg->stream_id;
         resp.CP_number = msg->CP_number;
 
+        // Check if 16-bit crypto-period numbers wrap over 0xFFFF.
+        const uint16_t cpMax = msg->CP_number + _opt.channelStatus.lead_CW;
+        const bool cpWrap = cpMax < msg->CP_number;
+
         // Add all CW's in the ECM (in the clear, yeah, but that's a fake/test ECMG).
         ts::duck::ClearECM ecm;
         for (auto it = msg->CP_CW_combination.begin(); it != msg->CP_CW_combination.end(); ++it) {
-            if (it->CP < msg->CP_number || it->CP > msg->CP_number + _opt.channelStatus.lead_CW) {
+            if ((!cpWrap && (it->CP < msg->CP_number || it->CP > cpMax)) || (cpWrap && it->CP > cpMax && it->CP < msg->CP_number)) {
                 // Incorrect CP/CW combination.
                 return sendErrorResponse(msg, ts::ecmgscs::Errors::not_enough_CW);
             }

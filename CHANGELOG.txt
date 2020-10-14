@@ -2,7 +2,68 @@ TSDUCK CHANGE LOG AND RELEASE NOTES
 
 -------------------------------------------------------------------------------
 
-VERSION 3.22-1911
+VERSION 3.24-2015
+
+[NEW] New commands and plugins:
+
+  * For developers who use the TSDuck library on Linux and macOS, the new
+    command "tsconfig" generates the various build options for the applications
+    depending on the current operating system.
+
+[IMP] Improvements on existing commands and plugins:
+
+  * In all commands and plugins which produce "normalized" output, a JSON output
+    format has been added. The traditional "normalized" format was designed for
+    use with grep & sed and dates back from a time where JSON did not exist.
+  * In all commands and plugins which define the option --format (file format),
+    the new value "RS204" designates TS files containing 204-byte packets with
+    trailing Reed-Solomon code.
+  * New options in exiting commands and plugins:
+    - Option --subtitles-pid in plugin "zap".
+    - Option --json in "tscmp" an "tsdektec".
+    - Options --json and --deterministic in "tsanalyze" and plugin "analyze".
+    - Option --save-pes in plugin "pes".
+
+[BUG] Bug fixes:
+
+  * Fixed issue #646: Several commands and plugins crashed in case of invalid
+    PES packets when the specified PES length was not zero but lower than the
+    PES header size.
+  * Fixed issue #651: When fixing the PCR's in the "merge" plugin, there was a
+    slow drift on merged PCR values after several hours.
+
+-------------------------------------------------------------------------------
+
+VERSION 3.23-1964
+
+[IMP] Improvements on existing commands and plugins:
+
+  * At most once a day, the "tsp" command interrogates GitHub in the background
+    to check the availability of a new release of TSDuck. Define the environment
+    variable TSDUCK_NO_VERSION_CHECK do disable this.
+  * With commands and plugins which access the Internet such as the "http"
+    plugin, the environment variables "http_proxy" and "https_proxy" are now
+    used on Windows also.
+
+[BUG] Bug fixes:
+
+  * Fixed issue #632: When the input plugin "http" was used with --ignore-errors
+    and either --infinite or --repeat, restarting the plugin from "tspcontrol"
+    entered an infinite loop.
+  * Fixed issue #633: In version 3.22, a regression was introduced which crashed
+    the plugin "fork" in the packet processor version ("-P fork").
+
+-------------------------------------------------------------------------------
+
+VERSION 3.22-1924
+
+[NEW] New commands and plugins:
+
+  * On Linux and macOS, the installation of TSDuck files are no longer all
+    inside /usr/bin. Shared libraries are in /usr/lib, plugins are in
+    /usr/lib/tsduck, configuration files are in /usr/share/tsduck. On macOS,
+    /usr/local is used instead of /usr. On some 64-bit Linux distros,
+    /usr/lib64 is used instead of /usr/lib.
 
 [IMP] Improvements on existing commands and plugins:
 
@@ -20,6 +81,7 @@ VERSION 3.22-1911
     - Option --size-of-packet in "tsftrunc".
     - Options --eit-normalization, --eit-base-date and --pack-and-flush in
       "tspacketize", "tstabcomp" and plugin "inject".
+    - Option --pack-sections in plugin "mpeinject".
 
 [BUG] Bug fixes:
 
@@ -28,6 +90,8 @@ VERSION 3.22-1911
   * Sections of some DVB, ATSC and ARIB tables, when serialized, were limited
     to 1024 bytes instead of 4096. Only MPEG-defined PSI sections should be
     limited to 1024 bytes.
+  * Fixed issue #619: "tsecmg" failed to process an ECM request with crypto-
+    period numbers wrapping over 0xFFFF (eg. CP = 0xFFFF and 0x0000).
 
 -------------------------------------------------------------------------------
 

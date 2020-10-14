@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -69,28 +70,19 @@ ts::MPEG2StereoscopicVideoFormatDescriptor::MPEG2StereoscopicVideoFormatDescript
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::MPEG2StereoscopicVideoFormatDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::MPEG2StereoscopicVideoFormatDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(arrangement_type.set() ? (0x80 | arrangement_type.value()) : 0x7F);
-    serializeEnd(desc, bbp);
+    buf.putBit(arrangement_type.set());
+    buf.putBits(arrangement_type.set() ? arrangement_type.value() : 0xFF, 7);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::MPEG2StereoscopicVideoFormatDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::MPEG2StereoscopicVideoFormatDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 1;
-    arrangement_type.clear();
-
-    if (_is_valid && (data[0] & 0x80) != 0) {
-        arrangement_type = data[0] & 0x7F;
+    if (buf.getBool()) {
+        buf.getBits(arrangement_type, 7);
+    }
+    else {
+        buf.skipBits(7);
     }
 }
 
@@ -99,26 +91,21 @@ void ts::MPEG2StereoscopicVideoFormatDescriptor::deserialize(DuckContext& duck, 
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::MPEG2StereoscopicVideoFormatDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::MPEG2StereoscopicVideoFormatDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        if ((data[0] & 0x80) != 0) {
-            const uint8_t type = data[0] & 0x7F;
-            strm << margin << UString::Format(u"Arrangement type: 0x%X (%d)", {type, type}) << std::endl;
+    if (buf.canReadBytes(1)) {
+        if (buf.getBool()) {
+            disp << margin << UString::Format(u"Arrangement type: 0x%X (%<d)", {buf.getBits<uint8_t>(7)}) << std::endl;
         }
-        data += 1; size -= 1;
+        else {
+            buf.skipBits(7);
+        }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML
+// XML serialization
 //----------------------------------------------------------------------------
 
 void ts::MPEG2StereoscopicVideoFormatDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -128,5 +115,5 @@ void ts::MPEG2StereoscopicVideoFormatDescriptor::buildXML(DuckContext& duck, xml
 
 bool ts::MPEG2StereoscopicVideoFormatDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getOptionalIntAttribute<uint8_t>(arrangement_type, u"arrangement_type", 0x00, 0x7F);
+    return element->getOptionalIntAttribute(arrangement_type, u"arrangement_type", 0x00, 0x7F);
 }

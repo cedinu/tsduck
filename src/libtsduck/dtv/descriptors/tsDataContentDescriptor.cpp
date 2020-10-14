@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -81,21 +82,16 @@ ts::DataContentDescriptor::DataContentDescriptor(DuckContext& duck, const Descri
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DataContentDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DataContentDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(data_component_id);
-    bbp->appendUInt8(entry_component);
-    bbp->appendUInt8(uint8_t(selector_bytes.size()));
-    bbp->append(selector_bytes);
-    bbp->appendUInt8(uint8_t(component_refs.size()));
-    bbp->append(component_refs);
-    if (!SerializeLanguageCode(*bbp, ISO_639_language_code)) {
-        desc.invalidate();
-        return;
-    }
-    bbp->append(duck.encodedWithByteLength(text));
-    serializeEnd(desc, bbp);
+    buf.putUInt16(data_component_id);
+    buf.putUInt8(entry_component);
+    buf.putUInt8(uint8_t(selector_bytes.size()));
+    buf.putBytes(selector_bytes);
+    buf.putUInt8(uint8_t(component_refs.size()));
+    buf.putBytes(component_refs);
+    buf.putLanguageCode(ISO_639_language_code);
+    buf.putStringWithByteLength(text);
 }
 
 
@@ -103,40 +99,16 @@ void ts::DataContentDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DataContentDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DataContentDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4;
-
-    selector_bytes.clear();
-    component_refs.clear();
-    ISO_639_language_code.clear();
-    text.clear();
-
-    if (_is_valid) {
-        data_component_id = GetUInt16(data);
-        entry_component = data[2];
-        size_t len1 = data[3];
-        data += 4; size -= 4;
-        _is_valid = len1 < size;
-
-        if (_is_valid) {
-            selector_bytes.copy(data, len1);
-            size_t len2 = data[len1];
-            data += len1 + 1; size -= len1 + 1;
-            _is_valid = len2 + 4 <= size;
-
-            if (_is_valid) {
-                component_refs.copy(data, len2);
-                ISO_639_language_code = DeserializeLanguageCode(data + len2);
-                data += len2 + 3; size -= len2 + 3;
-
-                _is_valid = duck.decodeWithByteLength(text, data, size) && size == 0;
-            }
-        }
-    }
+    data_component_id = buf.getUInt16();
+    entry_component = buf.getUInt8();
+    size_t len = buf.getUInt8();
+    buf.getBytes(selector_bytes, len);
+    len = buf.getUInt8();
+    buf.getBytes(component_refs, len);
+    buf.getLanguageCode(ISO_639_language_code);
+    buf.getStringWithByteLength(text);
 }
 
 
@@ -144,39 +116,22 @@ void ts::DataContentDescriptor::deserialize(DuckContext& duck, const Descriptor&
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DataContentDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DataContentDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 4) {
-        strm << margin << "Data component id: " << NameFromSection(u"ISDBDataComponentId", GetUInt16(data), names::HEXA_FIRST) << std::endl
-             << margin << UString::Format(u"Entry component: 0x%X (%d)", {data[2], data[2]}) << std::endl;
-
-        size_t len = data[3];
-        data += 4; size -= 4;
-        len = std::min(len, size);
-        display.displayPrivateData(u"Selector bytes", data, len, indent);
-        data += len; size -= len;
-
-        if (size > 0) {
-            len = data[0];
-            data++; size--;
-            for (size_t i = 0; size > 0 && i < len; ++i) {
-                strm << margin << UString::Format(u"Component ref: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-                data++; size--;
-            }
-
-            if (size >= 4) {
-                strm << margin << "Language: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-                data += 3; size -= 3;
-                strm << margin << "Text: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
-            }
+    if (buf.canReadBytes(4)) {
+        disp << margin << "Data component id: " << NameFromSection(u"ISDBDataComponentId", buf.getUInt16(), names::HEXA_FIRST) << std::endl;
+        disp << margin << UString::Format(u"Entry component: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        size_t len = buf.getUInt8();
+        disp.displayPrivateData(u"Selector bytes", buf, len, margin);
+        len = buf.canRead() ? buf.getUInt8() : 0;
+        for (size_t i = 0; buf.canRead() && i < len; ++i) {
+            disp << margin << UString::Format(u"Component ref: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        }
+        if (buf.canReadBytes(3)) {
+            disp << margin << "Language: \"" << buf.getLanguageCode() << "\"" << std::endl;
+            disp << margin << "Text: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -205,8 +160,8 @@ bool ts::DataContentDescriptor::analyzeXML(DuckContext& duck, const xml::Element
 {
     xml::ElementVector xcomp;
     bool ok =
-        element->getIntAttribute<uint16_t>(data_component_id, u"data_component_id", true) &&
-        element->getIntAttribute<uint8_t>(entry_component, u"entry_component", true) &&
+        element->getIntAttribute(data_component_id, u"data_component_id", true) &&
+        element->getIntAttribute(entry_component, u"entry_component", true) &&
         element->getAttribute(ISO_639_language_code, u"ISO_639_language_code", true, UString(), 3, 3) &&
         element->getAttribute(text, u"text", true) &&
         element->getHexaTextChild(selector_bytes, u"selector_bytes", false, 0, MAX_DESCRIPTOR_SIZE - 8) &&
@@ -214,7 +169,7 @@ bool ts::DataContentDescriptor::analyzeXML(DuckContext& duck, const xml::Element
 
     for (auto it = xcomp.begin(); ok && it != xcomp.end(); ++it) {
         uint8_t ref = 0;
-        ok = (*it)->getIntAttribute<uint8_t>(ref, u"ref", true);
+        ok = (*it)->getIntAttribute(ref, u"ref", true);
         component_refs.push_back(ref);
     }
     return ok;

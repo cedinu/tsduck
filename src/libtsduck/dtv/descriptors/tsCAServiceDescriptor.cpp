@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -77,16 +78,14 @@ ts::CAServiceDescriptor::CAServiceDescriptor(DuckContext& duck, const Descriptor
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::CAServiceDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::CAServiceDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(CA_system_id);
-    bbp->appendUInt8(ca_broadcaster_group_id);
-    bbp->appendUInt8(message_control);
+    buf.putUInt16(CA_system_id);
+    buf.putUInt8(ca_broadcaster_group_id);
+    buf.putUInt8(message_control);
     for (auto it = service_ids.begin(); it != service_ids.end(); ++it) {
-        bbp->appendUInt16(*it);
+        buf.putUInt16(*it);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -94,22 +93,13 @@ void ts::CAServiceDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::CAServiceDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::CAServiceDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    service_ids.clear();
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4 && size % 2 == 0;
-
-    if (_is_valid) {
-        CA_system_id = GetUInt16(data);
-        ca_broadcaster_group_id = data[2];
-        message_control = data[3];
-        data += 4; size -= 4;
-        while (size >= 2) {
-            service_ids.push_back(GetUInt16(data));
-            data += 2; size -= 2;
-        }
+    CA_system_id = buf.getUInt16();
+    ca_broadcaster_group_id = buf.getUInt8();
+    message_control = buf.getUInt8();
+    while (buf.canRead()) {
+        service_ids.push_back(buf.getUInt16());
     }
 }
 
@@ -118,24 +108,16 @@ void ts::CAServiceDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::CAServiceDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::CAServiceDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 4) {
-        strm << margin << "CA System Id: " << names::CASId(duck, GetUInt16(data), names::FIRST) << std::endl
-             << margin << UString::Format(u"CA broadcaster group id: 0x%X (%d)", {data[2], data[2]}) << std::endl
-             << margin << UString::Format(u"Delay time: %d days", {data[3]}) << std::endl;
-        data += 4; size -= 4;
-        while (size >= 2) {
-            strm << margin << UString::Format(u"Service id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl;
-            data += 2; size -= 2;
+    if (buf.canReadBytes(4)) {
+        disp << margin << "CA System Id: " << names::CASId(disp.duck(), buf.getUInt16(), names::FIRST) << std::endl;
+        disp << margin << UString::Format(u"CA broadcaster group id: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        disp << margin << UString::Format(u"Delay time: %d days", {buf.getUInt8()}) << std::endl;
+        while (buf.canReadBytes(2)) {
+            disp << margin << UString::Format(u"Service id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -162,14 +144,14 @@ bool ts::CAServiceDescriptor::analyzeXML(DuckContext& duck, const xml::Element* 
 {
     xml::ElementVector xserv;
     bool ok =
-        element->getIntAttribute<uint16_t>(CA_system_id, u"CA_system_id", true) &&
-        element->getIntAttribute<uint8_t>(ca_broadcaster_group_id, u"ca_broadcaster_group_id", true) &&
-        element->getIntAttribute<uint8_t>(message_control, u"message_control", true) &&
+        element->getIntAttribute(CA_system_id, u"CA_system_id", true) &&
+        element->getIntAttribute(ca_broadcaster_group_id, u"ca_broadcaster_group_id", true) &&
+        element->getIntAttribute(message_control, u"message_control", true) &&
         element->getChildren(xserv, u"service", 0, 125);
 
     for (auto it = xserv.begin(); ok && it != xserv.end(); ++it) {
         uint16_t id = 0;
-        ok = (*it)->getIntAttribute<uint16_t>(id, u"id", true);
+        ok = (*it)->getIntAttribute(id, u"id", true);
         service_ids.push_back(id);
     }
     return ok;

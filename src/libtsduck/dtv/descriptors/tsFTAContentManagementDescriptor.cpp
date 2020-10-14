@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -76,14 +77,13 @@ ts::FTAContentManagementDescriptor::FTAContentManagementDescriptor(DuckContext& 
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::FTAContentManagementDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::FTAContentManagementDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8((user_defined ? 0xF0 : 0x70) |
-                     (do_not_scramble ? 0x08 : 0x00) |
-                     uint8_t((control_remote_access_over_internet & 0x03) << 1) |
-                     (do_not_apply_revocation ? 0x01 : 0x00));
-    serializeEnd(desc, bbp);
+    buf.putBit(user_defined);
+    buf.putBits(0xFF, 3);
+    buf.putBit(do_not_scramble);
+    buf.putBits(control_remote_access_over_internet, 2);
+    buf.putBit(do_not_apply_revocation);
 }
 
 
@@ -91,17 +91,13 @@ void ts::FTAContentManagementDescriptor::serialize(DuckContext& duck, Descriptor
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::FTAContentManagementDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::FTAContentManagementDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 1;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        user_defined = (data[0] & 0x80) != 0;
-        do_not_scramble = (data[0] & 0x08) != 0;
-        control_remote_access_over_internet = (data[0] >> 1) & 0x03;
-        do_not_apply_revocation = (data[0] & 0x01) != 0;
-    }
+    user_defined = buf.getBool();
+    buf.skipBits(3);
+    do_not_scramble = buf.getBool();
+    buf.getBits(control_remote_access_over_internet, 2);
+    do_not_apply_revocation = buf.getBool();
 }
 
 
@@ -109,21 +105,15 @@ void ts::FTAContentManagementDescriptor::deserialize(DuckContext& duck, const De
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::FTAContentManagementDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::FTAContentManagementDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        strm << margin << UString::Format(u"User-defined: %s", {(data[0] & 0x80) != 0}) << std::endl
-             << margin << UString::Format(u"Do not scramble: %s", {(data[0] & 0x08) != 0}) << std::endl
-             << margin << UString::Format(u"Access over Internet: %s", {NameFromSection(u"FTARemoteAccessInternet", (data[0] >> 1) & 0x03), names::FIRST}) << std::endl
-             << margin << UString::Format(u"Do not apply revocation: %s", {(data[0] & 0x01) != 0}) << std::endl;
-        data++; size--;
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"User-defined: %s", {buf.getBool()}) << std::endl;
+        buf.skipBits(3);
+        disp << margin << UString::Format(u"Do not scramble: %s", {buf.getBool()}) << std::endl;
+        disp << margin << "Access over Internet: " << NameFromSection(u"FTARemoteAccessInternet", buf.getBits<uint8_t>(2), names::DECIMAL_FIRST) << std::endl;
+        disp << margin << UString::Format(u"Do not apply revocation: %s", {buf.getBool()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -148,6 +138,6 @@ bool ts::FTAContentManagementDescriptor::analyzeXML(DuckContext& duck, const xml
 {
     return element->getBoolAttribute(user_defined, u"user_defined", true) &&
            element->getBoolAttribute(do_not_scramble, u"do_not_scramble", true) &&
-           element->getIntAttribute<uint8_t>(control_remote_access_over_internet, u"control_remote_access_over_internet", true, 0, 0, 3) &&
+           element->getIntAttribute(control_remote_access_over_internet, u"control_remote_access_over_internet", true, 0, 0, 3) &&
            element->getBoolAttribute(do_not_apply_revocation, u"do_not_apply_revocation", true);
 }

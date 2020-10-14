@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -77,13 +78,12 @@ ts::ISDBAccessControlDescriptor::ISDBAccessControlDescriptor(DuckContext& duck, 
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ISDBAccessControlDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ISDBAccessControlDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(CA_system_id);
-    bbp->appendUInt16(uint16_t(uint16_t(transmission_type & 0x07) << 13) | pid);
-    bbp->append(private_data);
-    serializeEnd(desc, bbp);
+    buf.putUInt16(CA_system_id);
+    buf.putBits(transmission_type, 3);
+    buf.putPID(pid);
+    buf.putBytes(private_data);
 }
 
 
@@ -91,18 +91,12 @@ void ts::ISDBAccessControlDescriptor::serialize(DuckContext& duck, Descriptor& d
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ISDBAccessControlDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ISDBAccessControlDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 4;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        CA_system_id = GetUInt16(data);
-        transmission_type = (data[2] >> 5) & 0x07;
-        pid = GetUInt16(data + 2) & 0x1FFF;
-        private_data.copy(data + 4, size - 4);
-    }
+    CA_system_id = buf.getUInt16();
+    buf.getBits(transmission_type, 3);
+    pid = buf.getPID();
+    buf.getBytes(private_data);
 }
 
 
@@ -110,28 +104,14 @@ void ts::ISDBAccessControlDescriptor::deserialize(DuckContext& duck, const Descr
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ISDBAccessControlDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ISDBAccessControlDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    if (size < 4) {
-        display.displayExtraData(data, size, indent);
-    }
-    else {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
-        // Extract common part
-        const uint16_t casid = GetUInt16(data);
-        const uint8_t type = (data[2] >> 5) & 0x07;
-        uint16_t pid = GetUInt16(data + 2) & 0x1FFF;
+    if (buf.canReadBytes(4)) {
         const UChar* const dtype = tid == TID_CAT ? u"EMM" : (tid == TID_PMT ? u"ECM" : u"CA");
-        data += 4; size -= 4;
-
-        strm << margin << "CA System Id: " << names::CASId(duck, casid, names::FIRST) << std::endl
-             << margin << "Transmission type: " << NameFromSection(u"ISDBCATransmissionType", type, names::DECIMAL_FIRST) << std::endl
-             << margin << UString::Format(u"%s PID: 0x%X (%d)", {dtype, pid, pid}) << std::endl;
-
-        display.displayPrivateData(u"Private CA data", data, size, indent);
+        disp << margin << "CA System Id: " << names::CASId(disp.duck(), buf.getUInt16(), names::FIRST) << std::endl;
+        disp << margin << "Transmission type: " << NameFromSection(u"ISDBCATransmissionType", buf.getBits<uint8_t>(3), names::DECIMAL_FIRST) << std::endl;
+        disp << margin << UString::Format(u"%s PID: 0x%X (%<d)", {dtype, buf.getPID()}) << std::endl;
+        disp.displayPrivateData(u"Private CA data", buf, NPOS, margin);
     }
 }
 
@@ -155,8 +135,8 @@ void ts::ISDBAccessControlDescriptor::buildXML(DuckContext& duck, xml::Element* 
 
 bool ts::ISDBAccessControlDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint16_t>(CA_system_id, u"CA_system_id", true) &&
-           element->getIntAttribute<uint8_t>(transmission_type, u"transmission_type", false, 7, 0, 7) &&
+    return element->getIntAttribute(CA_system_id, u"CA_system_id", true) &&
+           element->getIntAttribute(transmission_type, u"transmission_type", false, 7, 0, 7) &&
            element->getIntAttribute<PID>(pid, u"PID", true, 0, 0x0000, 0x1FFF) &&
            element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 4);
 }

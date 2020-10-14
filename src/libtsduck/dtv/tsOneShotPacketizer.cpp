@@ -53,14 +53,24 @@ ts::OneShotPacketizer::~OneShotPacketizer()
 // Get complete cycle as one list of packets
 //----------------------------------------------------------------------------
 
-void ts::OneShotPacketizer::getPackets (TSPacketVector& packets)
+void ts::OneShotPacketizer::getPackets(TSPacketVector& packets)
 {
     packets.clear();
 
     if (storedSectionCount() > 0) {
         do {
-            packets.resize (packets.size() + 1);
-            CyclingPacketizer::getNextPacket (packets[packets.size() - 1]);
+            packets.resize(packets.size() + 1);
+            CyclingPacketizer::getNextPacket(packets[packets.size() - 1]);
         } while (!atCycleBoundary());
     }
+}
+
+
+//----------------------------------------------------------------------------
+// Hidden methods
+//----------------------------------------------------------------------------
+
+bool ts::OneShotPacketizer::getNextPacket(TSPacket&)
+{
+    return false;
 }

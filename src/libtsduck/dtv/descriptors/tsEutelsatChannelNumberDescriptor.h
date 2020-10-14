@@ -66,13 +66,7 @@ namespace ts {
             //! @param [in] service_id_ Service id.
             //! @param [in] ecn_ Eutelsat channel number.
             //!
-            Entry(uint16_t onetw_id_ = 0, uint16_t ts_id_ = 0, uint16_t service_id_ = 0, uint16_t ecn_ = 0):
-                onetw_id(onetw_id_),
-                ts_id(ts_id_),
-                service_id(service_id_),
-                ecn(ecn_)
-            {
-            }
+            Entry(uint16_t onetw_id_ = 0, uint16_t ts_id_ = 0, uint16_t service_id_ = 0, uint16_t ecn_ = 0);
         };
 
         //!
@@ -101,14 +95,14 @@ namespace ts {
         EutelsatChannelNumberDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

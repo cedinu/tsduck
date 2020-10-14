@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -108,59 +109,57 @@ void ts::ATSCEAC3AudioDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ATSCEAC3AudioDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ATSCEAC3AudioDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(0x80 |
-                     (bsid.set() ? 0x40 : 0x00) |
-                     (mainid.set() && priority.set() ? 0x20 : 0x00) |
-                     (asvc.set() ? 0x10 : 0x00) |
-                     (mixinfoexists ? 0x08 : 0x00) |
-                     (substream1.set() ? 0x04 : 0x00) |
-                     (substream2.set() ? 0x02 : 0x00) |
-                     (substream3.set() ? 0x01 : 0x00));
-    bbp->appendUInt8(0x80 |
-                     (full_service ? 0x40 : 0x00) |
-                     uint8_t((audio_service_type & 0x07) << 3) |
-                     (number_of_channels & 0x07));
-    bbp->appendUInt8((language.empty() ? 0x00 : 0x80) |
-                     (language_2.empty() ? 0x00 : 0x40) |
-                     0x20 |
-                     (bsid.value(0x00) & 0x1F));
+    buf.putBit(1);
+    buf.putBit(bsid.set());
+    buf.putBit(mainid.set() && priority.set());
+    buf.putBit(asvc.set());
+    buf.putBit(mixinfoexists);
+    buf.putBit(substream1.set());
+    buf.putBit(substream2.set());
+    buf.putBit(substream3.set());
+    buf.putBit(1);
+    buf.putBit(full_service);
+    buf.putBits(audio_service_type, 3);
+    buf.putBits(number_of_channels, 3);
+    buf.putBit(!language.empty());
+    buf.putBit(!language_2.empty());
+    buf.putBit(1);
+    buf.putBits(bsid.value(0x00), 5);
     if (mainid.set() && priority.set()) {
-        bbp->appendUInt8(0xE0 |
-                         uint8_t((priority.value() & 0x03) << 3) |
-                         (mainid.value() & 0x07));
+        buf.putBits(0xFF, 3);
+        buf.putBits(priority.value(), 2);
+        buf.putBits(mainid.value(), 3);
     }
     if (asvc.set()) {
-        bbp->appendUInt8(asvc.value());
+        buf.putUInt8(asvc.value());
     }
     if (substream1.set()) {
-        bbp->appendUInt8(substream1.value());
+        buf.putUInt8(substream1.value());
     }
     if (substream2.set()) {
-        bbp->appendUInt8(substream2.value());
+        buf.putUInt8(substream2.value());
     }
     if (substream3.set()) {
-        bbp->appendUInt8(substream3.value());
+        buf.putUInt8(substream3.value());
     }
-    if (!language.empty() && !SerializeLanguageCode(*bbp, language)) {
-        return; // invalid language code size
+    if (!language.empty()) {
+        buf.putLanguageCode(language);
     }
-    if (!language_2.empty() && !SerializeLanguageCode(*bbp, language_2)) {
-        return; // invalid language code size
+    if (!language_2.empty()) {
+        buf.putLanguageCode(language_2);
     }
-    if (substream1.set() && !SerializeLanguageCode(*bbp, substream1_lang)) {
-        return; // invalid language code size
+    if (substream1.set()) {
+        buf.putLanguageCode(substream1_lang);
     }
-    if (substream2.set() && !SerializeLanguageCode(*bbp, substream2_lang)) {
-        return; // invalid language code size
+    if (substream2.set()) {
+        buf.putLanguageCode(substream2_lang);
     }
-    if (substream3.set() && !SerializeLanguageCode(*bbp, substream3_lang)) {
-        return; // invalid language code size
+    if (substream3.set()) {
+        buf.putLanguageCode(substream3_lang);
     }
-    bbp->append(additional_info);
-    serializeEnd(desc, bbp);
+    buf.putBytes(additional_info);
 }
 
 
@@ -168,113 +167,70 @@ void ts::ATSCEAC3AudioDescriptor::serialize(DuckContext& duck, Descriptor& desc)
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ATSCEAC3AudioDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ATSCEAC3AudioDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    clear();
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 2;
-
-    if (!_is_valid) {
-        return;
-    }
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    // Fixed initial size: 2 bytes.
-    const bool bsid_flag = (data[0] & 0x40) != 0;
-    const bool mainid_flag = (data[0] & 0x20) != 0;
-    const bool asvc_flag = (data[0] & 0x10) != 0;
-    mixinfoexists = (data[0] & 0x08) != 0;
-    const bool substream1_flag = (data[0] & 0x04) != 0;
-    const bool substream2_flag = (data[0] & 0x02) != 0;
-    const bool substream3_flag = (data[0] & 0x01) != 0;
-    full_service = (data[1] & 0x40) != 0;
-    audio_service_type = (data[1] >> 3) & 0x07;
-    number_of_channels = data[1] & 0x07;
-    data += 2; size -= 2;
+    buf.skipBits(1);
+    const bool bsid_flag = buf.getBool();
+    const bool mainid_flag = buf.getBool();
+    const bool asvc_flag = buf.getBool();
+    mixinfoexists = buf.getBool();
+    const bool substream1_flag = buf.getBool();
+    const bool substream2_flag = buf.getBool();
+    const bool substream3_flag = buf.getBool();
+    buf.skipBits(1);
+    full_service = buf.getBool();
+    buf.getBits(audio_service_type, 3);
+    buf.getBits(number_of_channels, 3);
 
     // End of descriptor allowed here
-    if (size == 0) {
+    if (buf.endOfRead()) {
         return;
     }
 
     // Decode one byte depending on bsid.
-    const bool language_flag = (data[0] & 0x80) != 0;
-    const bool language_2_flag = (data[0] & 0x40) != 0;
+    const bool language_flag = buf.getBool();
+    const bool language_2_flag = buf.getBool();
+    buf.skipBits(1);
     if (bsid_flag) {
-        bsid = data[0] & 0x1F;
+        buf.getBits(bsid, 5);
     }
-    data++; size--;
+    else {
+        buf.skipBits(5);
+    }
 
-    if (mainid_flag && size > 0) {
-        priority = (data[0] >> 3) & 0x03;
-        mainid = data[0] & 0x07;
-        data++; size--;
+    if (mainid_flag) {
+        buf.skipBits(3);
+        buf.getBits(priority, 2);
+        buf.getBits(mainid, 3);
     }
-    if (asvc_flag && size > 0) {
-        asvc = data[0];
-        data++; size--;
+    if (asvc_flag) {
+        asvc = buf.getUInt8();
     }
-    if (substream1_flag && size > 0) {
-        substream1 = data[0];
-        data++; size--;
+    if (substream1_flag) {
+        substream1 = buf.getUInt8();
     }
-    if (substream2_flag && size > 0) {
-        substream2 = data[0];
-        data++; size--;
+    if (substream2_flag) {
+        substream2 = buf.getUInt8();
     }
-    if (substream3_flag && size > 0) {
-        substream3 = data[0];
-        data++; size--;
+    if (substream3_flag) {
+        substream3 = buf.getUInt8();
     }
     if (language_flag) {
-        if (size < 3) {
-            _is_valid = false;
-        }
-        else {
-            language = DeserializeLanguageCode(data);
-            data += 3; size -= 3;
-        }
+        buf.getLanguageCode(language);
     }
-    if (_is_valid && language_2_flag) {
-        if (size < 3) {
-            _is_valid = false;
-        }
-        else {
-            language_2 = DeserializeLanguageCode(data);
-            data += 3; size -= 3;
-        }
+    if (language_2_flag) {
+        buf.getLanguageCode(language_2);
     }
-    if (_is_valid && substream1_flag) {
-        if (size < 3) {
-            _is_valid = false;
-        }
-        else {
-            substream1_lang = DeserializeLanguageCode(data);
-            data += 3; size -= 3;
-        }
+    if (substream1_flag) {
+        buf.getLanguageCode(substream1_lang);
     }
-    if (_is_valid && substream2_flag) {
-        if (size < 3) {
-            _is_valid = false;
-        }
-        else {
-            substream2_lang = DeserializeLanguageCode(data);
-            data += 3; size -= 3;
-        }
+    if (substream2_flag) {
+        buf.getLanguageCode(substream2_lang);
     }
-    if (_is_valid && substream3_flag) {
-        if (size < 3) {
-            _is_valid = false;
-        }
-        else {
-            substream3_lang = DeserializeLanguageCode(data);
-            data += 3; size -= 3;
-        }
+    if (substream3_flag) {
+        buf.getLanguageCode(substream3_lang);
     }
-    if (_is_valid) {
-        additional_info.copy(data, size);
-    }
+    buf.getBytes(additional_info);
 }
 
 
@@ -282,90 +238,72 @@ void ts::ATSCEAC3AudioDescriptor::deserialize(DuckContext& duck, const Descripto
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ATSCEAC3AudioDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ATSCEAC3AudioDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    if (size >= 2) {
-
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
+    if (buf.canReadBytes(2)) {
         // Fixed initial size: 2 bytes.
-        const bool bsid_flag = (data[0] & 0x40) != 0;
-        const bool mainid_flag = (data[0] & 0x20) != 0;
-        const bool asvc_flag = (data[0] & 0x10) != 0;
-        const bool mixinfo = (data[0] & 0x08) != 0;
-        const bool sub1_flag = (data[0] & 0x04) != 0;
-        const bool sub2_flag = (data[0] & 0x02) != 0;
-        const bool sub3_flag = (data[0] & 0x01) != 0;
-        const bool full = (data[1] & 0x40) != 0;
-        const uint8_t svc_type = (data[1] >> 3) & 0x07;
-        const uint8_t channels = data[1] & 0x07;
-        const bool lang_flag = size > 2 && (data[2] & 0x80) != 0;   // in next byte
-        const bool lang2_flag = size > 2 && (data[2] & 0x40) != 0;  // in next byte
-        data += 2; size -= 2;
+        buf.skipBits(1);
+        const bool bsid_flag = buf.getBool();
+        const bool mainid_flag = buf.getBool();
+        const bool asvc_flag = buf.getBool();
+        const bool mixinfo = buf.getBool();
+        const bool sub1_flag = buf.getBool();
+        const bool sub2_flag = buf.getBool();
+        const bool sub3_flag = buf.getBool();
+        bool lang_flag = false;
+        bool lang2_flag = false;
 
-        strm << margin << UString::Format(u"Mixinfo exists: %s", {mixinfo}) << std::endl
-             << margin << UString::Format(u"Full service: %s", {full}) << std::endl
-             << margin << UString::Format(u"Audio service type: %s", {NameFromSection(u"EAC3AudioServiceType", svc_type, names::VALUE)}) << std::endl
-             << margin << UString::Format(u"Num. channels: %s", {NameFromSection(u"ATSCEAC3NumChannels", channels, names::VALUE)}) << std::endl;
+        buf.skipBits(1);
+        disp << margin << UString::Format(u"Mixinfo exists: %s", {mixinfo}) << std::endl;
+        disp << margin << UString::Format(u"Full service: %s", {buf.getBool()}) << std::endl;
+        disp << margin << "Audio service type: " << NameFromSection(u"EAC3AudioServiceType", buf.getBits<uint8_t>(3), names::VALUE) << std::endl;
+        disp << margin << "Num. channels: " << NameFromSection(u"ATSCEAC3NumChannels", buf.getBits<uint8_t>(3), names::VALUE) << std::endl;
 
-        if (size > 0) {
+        if (buf.canRead()) {
+            lang_flag = buf.getBool();
+            lang2_flag = buf.getBool();
+            buf.skipBits(1);
             if (bsid_flag) {
-                const uint8_t id = data[0] & 0x1F;
-                strm << margin << UString::Format(u"Bit stream id (bsid): 0x%X (%d)", {id, id}) << std::endl;
+                disp << margin << UString::Format(u"Bit stream id (bsid): 0x%X (%<d)", {buf.getBits<uint8_t>(5)}) << std::endl;
             }
-            data++; size--;
+            else {
+                buf.skipBits(5);
+            }
         }
-        if (mainid_flag && size > 0) {
-            const uint8_t id = data[0] & 0x07;
-            strm << margin << UString::Format(u"Priority: %d", {(data[0] >> 3) & 0x03}) << std::endl
-                 << margin << UString::Format(u"Main id: 0x%X (%d)", {id, id}) << std::endl;
-            data++; size--;
+        if (mainid_flag && buf.canRead()) {
+            buf.skipBits(3);
+            disp << margin << UString::Format(u"Priority: %d", {buf.getBits<uint8_t>(2)}) << std::endl;
+            disp << margin << UString::Format(u"Main id: 0x%X (%<d)", {buf.getBits<uint8_t>(3)}) << std::endl;
         }
-        if (asvc_flag && size > 0) {
-            strm << margin << UString::Format(u"Associated service (asvc): 0x%X (%d)", {data[0], data[0]}) << std::endl;
-            data++; size--;
+        if (asvc_flag && buf.canRead()) {
+            disp << margin << UString::Format(u"Associated service (asvc): 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
         }
-        if (sub1_flag && size > 0) {
-            strm << margin << UString::Format(u"Substream 1: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-            data++; size--;
+        if (sub1_flag && buf.canRead()) {
+            disp << margin << UString::Format(u"Substream 1: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
         }
-        if (sub2_flag && size > 0) {
-            strm << margin << UString::Format(u"Substream 2: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-            data++; size--;
+        if (sub2_flag && buf.canRead()) {
+            disp << margin << UString::Format(u"Substream 2: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
         }
-        if (sub3_flag && size > 0) {
-            strm << margin << UString::Format(u"Substream 3: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-            data++; size--;
+        if (sub3_flag && buf.canRead()) {
+            disp << margin << UString::Format(u"Substream 3: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
         }
-        if (lang_flag && size >= 3) {
-            strm << margin << "Language: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-            data += 3; size -= 3;
+        if (lang_flag && buf.canReadBytes(3)) {
+            disp << margin << "Language: \"" << buf.getLanguageCode() << "\"" << std::endl;
         }
-        if (lang2_flag && size >= 3) {
-            strm << margin << "Language 2: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-            data += 3; size -= 3;
+        if (lang2_flag && buf.canReadBytes(3)) {
+            disp << margin << "Language 2: \"" << buf.getLanguageCode() << "\"" << std::endl;
         }
-        if (sub1_flag && size >= 3) {
-            strm << margin << "Substream 1 language: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-            data += 3; size -= 3;
+        if (sub1_flag && buf.canReadBytes(3)) {
+            disp << margin << "Substream 1 language: \"" << buf.getLanguageCode() << "\"" << std::endl;
         }
-        if (sub2_flag && size >= 3) {
-            strm << margin << "Substream 2 language: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-            data += 3; size -= 3;
+        if (sub2_flag && buf.canReadBytes(3)) {
+            disp << margin << "Substream 2 language: \"" << buf.getLanguageCode() << "\"" << std::endl;
         }
-        if (sub3_flag && size >= 3) {
-            strm << margin << "Substream 3 language: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-            data += 3; size -= 3;
+        if (sub3_flag && buf.canReadBytes(3)) {
+            disp << margin << "Substream 3 language: \"" << buf.getLanguageCode() << "\"" << std::endl;
         }
-        if (size > 0) {
-            display.displayPrivateData(u"Additional information", data, size, indent);
-            data += size; size = 0;
-        }
+        disp.displayPrivateData(u"Additional information", buf, NPOS, margin);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -405,15 +343,15 @@ bool ts::ATSCEAC3AudioDescriptor::analyzeXML(DuckContext& duck, const xml::Eleme
 {
     return  element->getBoolAttribute(mixinfoexists, u"mixinfoexists", true) &&
             element->getBoolAttribute(full_service, u"full_service", true) &&
-            element->getIntAttribute<uint8_t>(audio_service_type, u"audio_service_type", true, 0, 0, 0x07) &&
-            element->getIntAttribute<uint8_t>(number_of_channels, u"number_of_channels", true, 0, 0, 0x07) &&
-            element->getOptionalIntAttribute<uint8_t>(bsid, u"bsid", 0, 0x1F) &&
-            element->getOptionalIntAttribute<uint8_t>(priority, u"priority", 0, 0x03) &&
-            element->getOptionalIntAttribute<uint8_t>(mainid, u"mainid", 0, 0x07) &&
-            element->getOptionalIntAttribute<uint8_t>(asvc, u"asvc") &&
-            element->getOptionalIntAttribute<uint8_t>(substream1, u"substream1") &&
-            element->getOptionalIntAttribute<uint8_t>(substream2, u"substream2") &&
-            element->getOptionalIntAttribute<uint8_t>(substream3, u"substream3") &&
+            element->getIntAttribute(audio_service_type, u"audio_service_type", true, 0, 0, 0x07) &&
+            element->getIntAttribute(number_of_channels, u"number_of_channels", true, 0, 0, 0x07) &&
+            element->getOptionalIntAttribute(bsid, u"bsid", 0, 0x1F) &&
+            element->getOptionalIntAttribute(priority, u"priority", 0, 0x03) &&
+            element->getOptionalIntAttribute(mainid, u"mainid", 0, 0x07) &&
+            element->getOptionalIntAttribute(asvc, u"asvc") &&
+            element->getOptionalIntAttribute(substream1, u"substream1") &&
+            element->getOptionalIntAttribute(substream2, u"substream2") &&
+            element->getOptionalIntAttribute(substream3, u"substream3") &&
             element->getAttribute(language, u"language", false, UString(), 0, 3) &&
             element->getAttribute(language_2, u"language_2", false, UString(), 0, 3) &&
             element->getAttribute(substream1_lang, u"substream1_lang", false, UString(), 0, 3) &&

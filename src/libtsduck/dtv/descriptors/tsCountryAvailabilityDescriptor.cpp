@@ -26,15 +26,12 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Representation of a country_availability_descriptor
-//
-//----------------------------------------------------------------------------
 
 #include "tsCountryAvailabilityDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -84,17 +81,13 @@ ts::CountryAvailabilityDescriptor::CountryAvailabilityDescriptor(bool availabili
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::CountryAvailabilityDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::CountryAvailabilityDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(country_availability ? 0xFF : 0x7F);
+    buf.putBit(country_availability);
+    buf.putBits(0xFF, 7);
     for (size_t n = 0; n < country_codes.size(); ++n) {
-        if (!SerializeLanguageCode(*bbp, country_codes[n])) {
-            desc.invalidate();
-            return;
-        }
+        buf.putLanguageCode(country_codes[n]);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -102,21 +95,12 @@ void ts::CountryAvailabilityDescriptor::serialize(DuckContext& duck, Descriptor&
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::CountryAvailabilityDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::CountryAvailabilityDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 3 == 1;
-    country_codes.clear();
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        country_availability = (data[0] & 0x80) != 0;
-        data++; size--;
-        while (size >= 3) {
-            country_codes.push_back(DeserializeLanguageCode(data));
-            data += 3;
-            size -= 3;
-        }
+    country_availability = buf.getBool();
+    buf.skipBits(7);
+    while (buf.canRead()) {
+        country_codes.push_back(buf.getLanguageCode());
     }
 }
 
@@ -125,23 +109,15 @@ void ts::CountryAvailabilityDescriptor::deserialize(DuckContext& duck, const Des
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::CountryAvailabilityDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::CountryAvailabilityDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        bool available = (data[0] & 0x80) != 0;
-        data += 1; size -= 1;
-        strm << margin << "Available: " << UString::YesNo(available) << std::endl;
-        while (size >= 3) {
-            strm << margin << "Country code: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-            data += 3; size -= 3;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Available: " << UString::YesNo(buf.getBool()) << std::endl;
+        buf.skipBits(7);
+        while (buf.canReadBytes(3)) {
+            disp << margin << "Country code: \"" << buf.getLanguageCode() << "\"" << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 

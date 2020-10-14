@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -67,29 +68,19 @@ void ts::StreamModeDescriptor::clearContent()
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// Serialization / deserialization.
 //----------------------------------------------------------------------------
 
-void ts::StreamModeDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::StreamModeDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(stream_mode);
-    bbp->appendUInt8(0xFF); // reserved
-    serializeEnd(desc, bbp);
+    buf.putUInt8(stream_mode);
+    buf.putUInt8(0xFF); // reserved
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::StreamModeDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::StreamModeDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 2;
-
-    if (_is_valid) {
-        stream_mode = GetUInt8(desc.payload());
-    }
+    stream_mode = buf.getUInt8();
+    buf.skipBits(8);
 }
 
 
@@ -97,24 +88,17 @@ void ts::StreamModeDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::StreamModeDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::StreamModeDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 2) {
-        const uint8_t mode = GetUInt8(data);
-        data += 2; size -= 2;
-        strm << margin << UString::Format(u"Stream mode: %s", {NameFromSection(u"DSMCCStreamMode", mode, names::HEXA_FIRST)}) << std::endl;
+    if (buf.canReadBytes(2)) {
+        disp << margin << UString::Format(u"Stream mode: %s", {NameFromSection(u"DSMCCStreamMode", buf.getUInt8(), names::HEXA_FIRST)}) << std::endl;
+        buf.skipBits(8);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML serialization / deserialization.
 //----------------------------------------------------------------------------
 
 void ts::StreamModeDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -122,12 +106,7 @@ void ts::StreamModeDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
     root->setIntAttribute(u"stream_mode", stream_mode, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::StreamModeDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(stream_mode, u"stream_mode", true);
+    return element->getIntAttribute(stream_mode, u"stream_mode", true);
 }

@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -67,21 +68,24 @@ ts::ProtectionMessageDescriptor::ProtectionMessageDescriptor(DuckContext& duck, 
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::ProtectionMessageDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ProtectionMessageDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ProtectionMessageDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    if (component_tags.size() > 15) {
-        desc.invalidate();
-        return;
-    }
-
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
-    bbp->appendUInt8(0xF0 | uint8_t(component_tags.size()));
-    bbp->append(component_tags);
-    serializeEnd(desc, bbp);
+    buf.putBits(0xFF, 4);
+    buf.putBits(component_tags.size(), 4);
+    buf.putBytes(component_tags);
 }
 
 
@@ -89,21 +93,11 @@ void ts::ProtectionMessageDescriptor::serialize(DuckContext& duck, Descriptor& d
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ProtectionMessageDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ProtectionMessageDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    component_tags.clear();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID;
-
-    if (_is_valid) {
-        const size_t count = data[1] & 0x0F;
-        _is_valid = size == 2 + count;
-        if (_is_valid) {
-            component_tags.copy(data + 2, count);
-        }
-    }
+    buf.skipBits(4);
+    const size_t count = buf.getBits<size_t>(4);
+    buf.getBytes(component_tags, count);
 }
 
 
@@ -111,27 +105,16 @@ void ts::ProtectionMessageDescriptor::deserialize(DuckContext& duck, const Descr
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ProtectionMessageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ProtectionMessageDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        size_t count = data[0] & 0x0F;
-        data++; size--;
-        strm << margin << UString::Format(u"Component count: %d", {count}) << std::endl;
-        while (count > 0 && size > 0) {
-            strm << margin << UString::Format(u"Component tag: 0x%0X (%d)", {data[0], data[0]}) << std::endl;
-            data++; size--; count--;
+    if (buf.canReadBytes(1)) {
+        buf.skipBits(4);
+        size_t count = buf.getBits<size_t>(4);
+        disp << margin << UString::Format(u"Component count: %d", {count}) << std::endl;
+        while (count > 0 && buf.canReadBytes(1)) {
+            disp << margin << UString::Format(u"Component tag: 0x%0X (%<d)", {buf.getUInt8()}) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -158,7 +141,7 @@ bool ts::ProtectionMessageDescriptor::analyzeXML(DuckContext& duck, const xml::E
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         uint8_t t = 0;
-        ok = children[i]->getIntAttribute<uint8_t>(t, u"tag", true);
+        ok = children[i]->getIntAttribute(t, u"tag", true);
         component_tags.push_back(t);
     }
     return ok;

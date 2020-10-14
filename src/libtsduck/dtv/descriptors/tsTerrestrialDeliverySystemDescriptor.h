@@ -38,7 +38,7 @@
 namespace ts {
     //!
     //! Representation of a terrestrial_delivery_system_descriptor.
-    //! @see ETSI 300 468, 6.2.13.4.
+    //! @see ETSI EN 300 468, 6.2.13.4.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL TerrestrialDeliverySystemDescriptor : public AbstractDeliverySystemDescriptor
@@ -71,14 +71,14 @@ namespace ts {
         TerrestrialDeliverySystemDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

@@ -32,6 +32,7 @@
 #include "tsBCD.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -82,14 +83,14 @@ ts::CableDeliverySystemDescriptor::CableDeliverySystemDescriptor(DuckContext& du
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::CableDeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::CableDeliverySystemDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendBCD(uint32_t(frequency / 100), 8);  // coded in 100 Hz units
-    bbp->appendUInt16(0xFFF0 | FEC_outer);
-    bbp->appendUInt8(modulation);
-    bbp->appendBCD(uint32_t(symbol_rate / 100), 7, true, FEC_inner);  // coded in 100 sym/s units, FEC in last nibble
-    serializeEnd(desc, bbp);
+    buf.putBCD(frequency / 100, 8);  // coded in 100 Hz units
+    buf.putBits(0xFFFF, 12);
+    buf.putBits(FEC_outer, 4);
+    buf.putUInt8(modulation);
+    buf.putBCD(symbol_rate / 100, 7);  // coded in 100 sym/s units
+    buf.putBits(FEC_inner, 4);
 }
 
 
@@ -97,19 +98,14 @@ void ts::CableDeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor&
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::CableDeliverySystemDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::CableDeliverySystemDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 11)) {
-        return;
-    }
-
-    const uint8_t* data = desc.payload();
-
-    frequency = 100 * uint64_t(DecodeBCD(data, 8));  // coded in 100 Hz units
-    FEC_outer = data[5] & 0x0F;
-    modulation = data[6];
-    symbol_rate = 100 * uint64_t(DecodeBCD(data + 7, 7, true));  // coded in 100 sym/s units.
-    FEC_inner = data[10] & 0x0F;
+    frequency = 100 * buf.getBCD<uint64_t>(8);  // coded in 100 Hz units
+    buf.skipBits(12);
+    buf.getBits(FEC_outer, 4);
+    modulation = buf.getUInt8();
+    symbol_rate = 100 * buf.getBCD<uint64_t>(7);  // coded in 100 sym/s units.
+    buf.getBits(FEC_inner, 4);
 }
 
 
@@ -168,10 +164,10 @@ void ts::CableDeliverySystemDescriptor::buildXML(DuckContext& duck, xml::Element
 
 bool ts::CableDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint64_t>(frequency, u"frequency", true) &&
-           element->getIntEnumAttribute<uint8_t>(FEC_outer, OuterFecNames, u"FEC_outer", false, 2) &&
-           element->getIntEnumAttribute<uint8_t>(modulation, ModulationNames, u"modulation", false, 1) &&
-           element->getIntAttribute<uint64_t>(symbol_rate, u"symbol_rate", true) &&
+    return element->getIntAttribute(frequency, u"frequency", true) &&
+           element->getIntEnumAttribute(FEC_outer, OuterFecNames, u"FEC_outer", false, 2) &&
+           element->getIntEnumAttribute(modulation, ModulationNames, u"modulation", false, 1) &&
+           element->getIntAttribute(symbol_rate, u"symbol_rate", true) &&
            element->getIntEnumAttribute(FEC_inner, InnerFecNames, u"FEC_inner", true);
 }
 
@@ -180,57 +176,50 @@ bool ts::CableDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml:
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::CableDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::CableDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 11) {
-        uint8_t fec_outer = data[5] & 0x0F;
-        uint8_t modulation = data[6];
-        uint8_t fec_inner = data[10] & 0x0F;
-        std::string freq, srate;
-        BCDToString(freq, data, 8, 4);
-        BCDToString(srate, data + 7, 7, 3, true);
-        data += 11; size -= 11;
-
-        strm << margin << "Frequency: " << freq << " MHz" << std::endl
-             << margin << "Symbol rate: " << srate << " Msymbol/s" << std::endl
-             << margin << "Modulation: ";
+    if (buf.canReadBytes(11)) {
+        disp << margin << UString::Format(u"Frequency: %d", {buf.getBCD<uint32_t>(4)});
+        disp << UString::Format(u".%04d MHz", {buf.getBCD<uint32_t>(4)}) << std::endl;
+        buf.skipBits(12);
+        const uint8_t fec_outer = buf.getBits<uint8_t>(4);
+        const uint8_t modulation = buf.getUInt8();
+        disp << margin << UString::Format(u"Symbol rate: %d", {buf.getBCD<uint32_t>(3)});
+        disp << UString::Format(u".%04d Msymbol/s", {buf.getBCD<uint32_t>(4)}) << std::endl;
+        disp << margin << "Modulation: ";
         switch (modulation) {
-            case 0:  strm << "not defined"; break;
-            case 1:  strm << "16-QAM"; break;
-            case 2:  strm << "32-QAM"; break;
-            case 3:  strm << "64-QAM"; break;
-            case 4:  strm << "128-QAM"; break;
-            case 5:  strm << "256-QAM"; break;
-            default: strm << "code " << int(modulation) << " (reserved)"; break;
+            case 0:  disp << "not defined"; break;
+            case 1:  disp << "16-QAM"; break;
+            case 2:  disp << "32-QAM"; break;
+            case 3:  disp << "64-QAM"; break;
+            case 4:  disp << "128-QAM"; break;
+            case 5:  disp << "256-QAM"; break;
+            default: disp << "code " << int(modulation) << " (reserved)"; break;
         }
-        strm << std::endl << margin << "Outer FEC: ";
+        disp << std::endl;
+        disp << margin << "Outer FEC: ";
         switch (fec_outer) {
-            case 0:  strm << "not defined"; break;
-            case 1:  strm << "none"; break;
-            case 2:  strm << "RS(204/188)"; break;
-            default: strm << "code " << int(fec_outer) << " (reserved)"; break;
+            case 0:  disp << "not defined"; break;
+            case 1:  disp << "none"; break;
+            case 2:  disp << "RS(204/188)"; break;
+            default: disp << "code " << int(fec_outer) << " (reserved)"; break;
         }
-        strm << ", Inner FEC: ";
+        const uint8_t fec_inner = buf.getBits<uint8_t>(4);
+        disp << ", Inner FEC: ";
         switch (fec_inner) {
-            case 0:  strm << "not defined"; break;
-            case 1:  strm << "1/2 conv. code rate"; break;
-            case 2:  strm << "2/3 conv. code rate"; break;
-            case 3:  strm << "3/4 conv. code rate"; break;
-            case 4:  strm << "5/6 conv. code rate"; break;
-            case 5:  strm << "7/8 conv. code rate"; break;
-            case 6:  strm << "8/9 conv. code rate"; break;
-            case 7:  strm << "3/5 conv. code rate"; break;
-            case 8:  strm << "4/5 conv. code rate"; break;
-            case 9:  strm << "9/10 conv. code rate"; break;
-            case 15: strm << "none"; break;
-            default: strm << "code " << int(fec_inner) << " (reserved)"; break;
+            case 0:  disp << "not defined"; break;
+            case 1:  disp << "1/2 conv. code rate"; break;
+            case 2:  disp << "2/3 conv. code rate"; break;
+            case 3:  disp << "3/4 conv. code rate"; break;
+            case 4:  disp << "5/6 conv. code rate"; break;
+            case 5:  disp << "7/8 conv. code rate"; break;
+            case 6:  disp << "8/9 conv. code rate"; break;
+            case 7:  disp << "3/5 conv. code rate"; break;
+            case 8:  disp << "4/5 conv. code rate"; break;
+            case 9:  disp << "9/10 conv. code rate"; break;
+            case 15: disp << "none"; break;
+            default: disp << "code " << int(fec_inner) << " (reserved)"; break;
         }
-        strm << std::endl;
+        disp << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }

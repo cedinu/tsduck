@@ -101,11 +101,12 @@ namespace ts {
 
     protected:
         // Inherited methods
+        virtual bool useTrailingCRC32() const override;
         virtual void clearContent() override;
-        virtual void serializeContent(DuckContext&, BinaryTable&) const override;
-        virtual void deserializeContent(DuckContext&, const BinaryTable&) override;
+        virtual void serializePayload(BinaryTable&, PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&, const Section&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
 
     private:
         // Add descriptors, filling regions from local_time_offset_descriptor's.

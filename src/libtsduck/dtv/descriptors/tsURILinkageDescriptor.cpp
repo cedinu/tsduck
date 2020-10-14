@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -74,20 +75,27 @@ ts::URILinkageDescriptor::URILinkageDescriptor(DuckContext& duck, const Descript
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::URILinkageDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::URILinkageDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::URILinkageDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
-    bbp->appendUInt8(uri_linkage_type);
-    bbp->append(duck.encodedWithByteLength(uri));
+    buf.putUInt8(uri_linkage_type);
+    buf.putStringWithByteLength(uri);
     if (uri_linkage_type == 0x00 || uri_linkage_type == 0x01) {
-        bbp->appendUInt16(min_polling_interval);
+        buf.putUInt16(min_polling_interval);
     }
-    bbp->append(private_data);
-    serializeEnd(desc, bbp);
+    buf.putBytes(private_data);
 }
 
 
@@ -95,26 +103,14 @@ void ts::URILinkageDescriptor::serialize(DuckContext& duck, Descriptor& desc) co
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::URILinkageDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::URILinkageDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    private_data.clear();
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 3 && data[0] == MY_EDID;
-
-    if (_is_valid) {
-        uri_linkage_type = data[1];
-        data += 2; size -= 2;
-        duck.decodeWithByteLength(uri, data, size);
-        if (uri_linkage_type == 0x00 || uri_linkage_type == 0x01) {
-            _is_valid = size >= 2;
-            if (_is_valid) {
-                min_polling_interval = GetUInt16(data);
-                data += 2; size -= 2;
-            }
-        }
-        private_data.copy(data, size);
+    uri_linkage_type = buf.getUInt8();
+    buf.getStringWithByteLength(uri);
+    if (uri_linkage_type == 0x00 || uri_linkage_type == 0x01) {
+        min_polling_interval = buf.getUInt16();
     }
+    buf.getBytes(private_data);
 }
 
 
@@ -122,31 +118,17 @@ void ts::URILinkageDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::URILinkageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::URILinkageDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    if (size >= 2) {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
-        const uint8_t type = data[0];
-        strm << margin << "URI linkage type: " << NameFromSection(u"URILinkageType", type, names::HEXA_FIRST) << std::endl;
-        data++; size--;
-        strm << margin << "URI: " << duck.decodedWithByteLength(data, size) << std::endl;
-
-        if ((type == 0x00 || type == 0x01) && size >= 2) {
-            const int interval = GetUInt16(data);
-            data += 2; size -= 2;
-            strm << margin << UString::Format(u"Min polling interval: %d (%d seconds)", {interval, 2 * interval}) << std::endl;
+    if (buf.canReadBytes(2)) {
+        const uint8_t type = buf.getUInt8();
+        disp << margin << "URI linkage type: " << NameFromSection(u"URILinkageType", type, names::HEXA_FIRST) << std::endl;
+        disp << margin << "URI: " << buf.getStringWithByteLength() << std::endl;
+        if ((type == 0x00 || type == 0x01) && buf.canReadBytes(2)) {
+            const int interval = buf.getUInt16();
+            disp << margin << UString::Format(u"Min polling interval: %d (%d seconds)", {interval, 2 * interval}) << std::endl;
         }
-        display.displayPrivateData(u"Private data", data, size, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+        disp.displayPrivateData(u"Private data", buf, NPOS, margin);
     }
 }
 
@@ -174,8 +156,8 @@ void ts::URILinkageDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 
 bool ts::URILinkageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(uri_linkage_type, u"uri_linkage_type", true) &&
+    return element->getIntAttribute(uri_linkage_type, u"uri_linkage_type", true) &&
            element->getAttribute(uri, u"uri", true) &&
-           element->getIntAttribute<uint16_t>(min_polling_interval, u"min_polling_interval", uri_linkage_type <= 1) &&
+           element->getIntAttribute(min_polling_interval, u"min_polling_interval", uri_linkage_type <= 1) &&
            element->getHexaTextChild(private_data, u"private_data", false);
 }

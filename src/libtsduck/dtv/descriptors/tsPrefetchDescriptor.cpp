@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
@@ -68,20 +69,24 @@ ts::PrefetchDescriptor::PrefetchDescriptor(DuckContext& duck, const Descriptor& 
     deserialize(duck, desc);
 }
 
+ts::PrefetchDescriptor::Entry::Entry(const UString& str, uint8_t pri) :
+    label(str),
+    prefetch_priority(pri)
+{
+}
+
 
 //----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::PrefetchDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::PrefetchDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(transport_protocol_label);
+    buf.putUInt8(transport_protocol_label);
     for (auto it = entries.begin(); it != entries.end(); ++it) {
-        bbp->append(duck.encodedWithByteLength(it->label));
-        bbp->appendUInt8(it->prefetch_priority);
+        buf.putStringWithByteLength(it->label);
+        buf.putUInt8(it->prefetch_priority);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -89,30 +94,15 @@ void ts::PrefetchDescriptor::serialize(DuckContext& duck, Descriptor& desc) cons
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::PrefetchDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::PrefetchDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    entries.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    if (_is_valid) {
-        transport_protocol_label = data[0];
-        data++; size--;
-        while (_is_valid && size >= 1) {
-            const size_t len = data[0];
-            data++; size--;
-            _is_valid = len + 1 <= size;
-            if (_is_valid) {
-                entries.push_back(Entry(duck.decoded(data, len), data[len]));
-                data += len + 1; size -= len + 1;
-            }
-        }
+    transport_protocol_label = buf.getUInt8();
+    while (buf.canRead()) {
+        Entry e;
+        buf.getStringWithByteLength(e.label);
+        e.prefetch_priority = buf.getUInt8();
+        entries.push_back(e);
     }
-
-    _is_valid = _is_valid && size == 0;
 }
 
 
@@ -120,28 +110,18 @@ void ts::PrefetchDescriptor::deserialize(DuckContext& duck, const Descriptor& de
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::PrefetchDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::PrefetchDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        strm << margin << UString::Format(u"Transport protocol label: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-        data++; size--;
-        while (size >= 1) {
-            const size_t len = data[0];
-            if (len + 2 > size) {
-                break;
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Transport protocol label: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        while (buf.canReadBytes(1)) {
+            disp << margin << "Label: \"" << buf.getStringWithByteLength() << "\"";
+            if (buf.canReadBytes(1)) {
+                disp << UString::Format(u", prefetch priority: %d", {buf.getUInt8()});
             }
-            strm << margin
-                 << UString::Format(u"Label: \"%s\", prefetch priority: %d", {duck.decoded(data + 1, len), data[len + 1]})
-                 << std::endl;
-            data += len + 2; size -= len + 2;
+            disp << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -168,13 +148,13 @@ bool ts::PrefetchDescriptor::analyzeXML(DuckContext& duck, const xml::Element* e
 {
     xml::ElementVector children;
     bool ok =
-        element->getIntAttribute<uint8_t>(transport_protocol_label, u"transport_protocol_label", true) &&
+        element->getIntAttribute(transport_protocol_label, u"transport_protocol_label", true) &&
         element->getChildren(children, u"module");
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
         ok = children[i]->getAttribute(entry.label, u"label", true) &&
-             children[i]->getIntAttribute<uint8_t>(entry.prefetch_priority, u"prefetch_priority", true, 1, 1, 100);
+             children[i]->getIntAttribute(entry.prefetch_priority, u"prefetch_priority", true, 1, 1, 100);
         entries.push_back(entry);
     }
     return ok;

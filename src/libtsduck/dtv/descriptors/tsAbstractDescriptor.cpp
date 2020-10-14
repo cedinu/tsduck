@@ -51,19 +51,14 @@ ts::AbstractDescriptor::~AbstractDescriptor()
 
 
 //----------------------------------------------------------------------------
-// Default implementations for serialization handlers.
+// Get the extended descriptor tag (first byte in payload).
 //----------------------------------------------------------------------------
 
-void ts::AbstractDescriptor::serializePayload(ts::PSIBuffer& buf) const
+ts::DID ts::AbstractDescriptor::extendedTag() const
 {
-    // Generate an error to invalidate the serialization.
-    buf.setUserError();
-}
-
-void ts::AbstractDescriptor::deserializePayload(ts::PSIBuffer& buf)
-{
-    // Generate an error to invalidate the serialization.
-    buf.setUserError();
+    // By default, there no extended descriptor tag.
+    // MPEG-defined and DVB-defined extension descriptors must override this virtual method.
+    return EDID_NULL;
 }
 
 
@@ -84,6 +79,12 @@ void ts::AbstractDescriptor::serialize(DuckContext& duck, Descriptor& bin) const
 
         // Map a serialization buffer over the payload part.
         PSIBuffer buf(duck, bbp->data() + 2, bbp->size() - 2, false);
+
+        // If this is an extension descriptor, add extended tag.
+        const DID etag = extendedTag();
+        if (etag != EDID_NULL) {
+            buf.putUInt8(etag);
+        }
 
         // Let the subclass serialize the payload in the buffer.
         serializePayload(buf);
@@ -123,6 +124,13 @@ void ts::AbstractDescriptor::deserialize(DuckContext& duck, const Descriptor& bi
         // Map a deserialization read-only buffer over the payload part.
         PSIBuffer buf(duck, bin.payload(), bin.payloadSize());
 
+        // If this is an extension descriptor, check that the expected extended tag is present in the payload.
+        const DID etag = extendedTag();
+        if (etag != EDID_NULL && (buf.getUInt8() != etag || buf.error())) {
+            invalidate();
+            return;
+        }
+
         // Let the subclass deserialize the payload in the buffer.
         deserializePayload(buf);
 
@@ -146,35 +154,5 @@ void ts::AbstractDescriptor::deserialize(DuckContext& duck, const DescriptorList
     }
     else {
         deserialize(duck, *dlist[index]);
-    }
-}
-
-
-//----------------------------------------------------------------------------
-// Legacy tools for serialization
-//----------------------------------------------------------------------------
-
-ts::ByteBlockPtr ts::AbstractDescriptor::serializeStart() const
-{
-    ByteBlockPtr bbp(new ByteBlock(2));
-    CheckNonNull(bbp.pointer());
-    (*bbp)[0] = _tag;
-    (*bbp)[1] = 0;
-    return bbp;
-}
-
-bool ts::AbstractDescriptor::serializeEnd(Descriptor& desc, const ByteBlockPtr& bbp) const
-{
-    if (!_is_valid || bbp.isNull() || bbp->size() < 2 || bbp->size() > MAX_DESCRIPTOR_SIZE) {
-        // Invalid descriptor instance or invalid serialized descriptor.
-        desc.invalidate();
-        return false;
-    }
-    else {
-        // Update descriptor tag and size.
-        (*bbp)[0] = _tag;
-        (*bbp)[1] = uint8_t(bbp->size() - 2);
-        desc = Descriptor(bbp, ShareMode::SHARE);
-        return true;
     }
 }

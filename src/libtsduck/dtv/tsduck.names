@@ -389,8 +389,8 @@ Bits = 8
 0x21 = MuxCode
 0x22 = FmxBufferSize
 0x23 = MultiplexBuffer
-0x24 = Content labeling
-0x25 = Metadata Association
+0x24 = Content Labelling
+0x25 = Metadata Pointer
 0x26 = Metadata
 0x27 = Metadata STD
 0x28 = AVC Video
@@ -1653,6 +1653,18 @@ Bits = 3
 4 = running
 5 = off-air
 
+[TVARunningStatus]
+# In TVA_id_descriptor
+Bits = 3
+0 = reserved
+1 = not yet running
+2 = starting
+3 = paused
+4 = running
+5 = cancelled
+6 = completed
+7 = reserved
+
 [AudioType]
 # In ISO-639_language_descriptor
 Bits = 8
@@ -2026,6 +2038,21 @@ Bits = 8
 1 = Stereo
 2 = Multi-channel
 3 = Reserved
+
+[SuppAudioMixType]
+# In supplementary_audio_descriptor
+Bits = 1
+0 = supplementary stream
+1 = complete and independent stream
+
+[SuppAudioClass]
+# In supplementary_audio_descriptor
+Bits = 5
+0 = main audio
+1 = audio description for the visually impaired
+2 = clean audio for the hearing impaired
+3 = spoken subtitles for the visually impaired
+4 = dependent parametric data stream
 
 [ScramblingControl]
 # In TS header
@@ -3586,6 +3613,14 @@ Bits = 2
 2 = GSE high efficiency mode
 3 = Transport Stream
 
+[TSGSS2Mode]
+# In DVB S2_satellite_delivery_system_descriptor.
+Bits = 2
+0 = generic packetized
+1 = GSE
+2 = Transport Stream
+3 = reserved
+
 [NetworkChangeType]
 # In network_change_notify_descriptor
 Bits = 4
@@ -4068,3 +4103,118 @@ Bits = 4
 1 = Concatenation (sequential)
 2 = Selection (alternate)
 3 = Parallel
+
+[HEVCExtensionDimensionBits]
+# In HEVC_hierarchy_extension_descriptor
+0 = Multi-view enhancement
+1 = Spatial scalability, including SNR quality or fidelity enhancement
+2 = Depth enhancement
+3 = Temporal enhancement
+4 = Auxiliary enhancement
+5-15 = Reserved
+
+[MetadataApplicationFormat]
+# In MPEG-defined content_labelling_descriptor and metadata_pointer_descriptor
+Bits = 16
+0x0000-0x000F = Reserved
+0x0010 = ISO 15706 (ISAN) encoded in its binary form
+0x0011 = ISO 15706-2 (V-ISAN) encoded in its binary form
+0x0012-0x00FF = Reserved
+0x0100-0xFFFE = User defined
+0xFFFF = Defined by the metadata_application_format_identifier field
+
+[MetadataFormat]
+# In MPEG-defined metadata_pointer_descriptor
+Bits = 8
+0x00-0x0F = Reserved
+0x10 = ISO/IEC 15938-1 TeM
+0x11 = ISO/IEC 15938-1 BiM
+0x12-0x3E = Reserved
+0x40-0xFE = Defined by metadata application format Private use
+0xFF = Defined by metadata_format_identifier field
+
+[ContentTimeBaseIndicator]
+# In MPEG-defined content_labelling_descriptor
+Bits = 4
+0 = No content time base defined in this descriptor
+1 = Use of STC
+2 = Use of NPT
+3-7 = Reserved
+8-15 = Use of privately defined content time base
+
+[MetadataCarriageFlags]
+# In MPEG-defined metadata_pointer_descriptor
+Bits = 2
+0 = Carriage in the same TS
+1 = Carriage in a different TS
+2 = Carriage in a program stream
+3 = Undefined
+
+[MetadataDecoderConfigFlags]
+# In MPEG-defined metadata_descriptor
+Bits = 3
+0 = None
+1 = Configuration is in the decoder_config_byte field
+2 = Configuration is in the same metadata service
+3 = Configuration is in a DSM-CC carousel
+4 = Configuration is in another metadata service
+5 = Reserved
+6 = Reserved
+7 = Privately defined
+
+[RNTContextIdType]
+# In Resolution provider Notification Table
+Bits = 8
+0x00 = context_id is a bouquet_id
+0x01 = context_id is an original_network_id
+0x02 = context_id is a network_id
+0x03-0x7F = DVB reserved
+0x80-0xFF = User defined
+
+[CRIDAuthorityPolicy]
+# In Resolution provider Notification Table
+Bits = 2
+0 = CRID's are permanent
+1 = CRID's are transient
+2 = CRID's may be either transient or permanent
+3 = Reserved
+
+[CRIDType]
+# In content_identifier_descriptor
+Bits = 6
+0x00 = No type defined
+0x01 = CRID references the item of content that this event is an instance of
+0x02 = CRID references a series that this event belongs to
+0x03 = CRID references a recommendation (group or single item of content)
+0x04-0x1F = DVB reserved
+0x20-0x3F = User private
+
+[CRIDLocation]
+# In content_identifier_descriptor
+Bits = 2
+0 = Carried explicitly within descriptor
+1 = Carried in Content Identifier Table (CIT)
+2 = DVB reserved
+3 = DVB reserved
+
+[BasicLocalEventSegmentation]
+# In ISDB basic_local_event_descriptor
+Bits = 4
+0 = Invalid
+1 = NPT
+2 = Relative time
+3 = Relative time (STC reference descriptor is used together)
+4 = JST time
+5 = JST time (STC reference descriptor is used together)
+6-15 = Reserved
+
+[STCReferenceMode]
+# In ISDB STC_reference_descriptor
+Bits = 4
+0 = Invalid
+1 = NPT
+2 = Undefined
+3 = Relative time
+4 = Undefined
+5 = JST time
+6-15 = Reserved

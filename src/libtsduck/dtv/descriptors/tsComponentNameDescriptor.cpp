@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -67,27 +68,17 @@ ts::ComponentNameDescriptor::ComponentNameDescriptor(DuckContext& duck, const De
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// Serialization / deserialization
 //----------------------------------------------------------------------------
 
-void ts::ComponentNameDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ComponentNameDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    component_name_string.serialize(duck, *bbp);
-    serializeEnd(desc, bbp);
+    buf.putMultipleString(component_name_string);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::ComponentNameDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ComponentNameDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    component_name_string.clear();
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && component_name_string.deserialize(duck, data, size);
+    buf.getMultipleString(component_name_string);
 }
 
 
@@ -95,15 +86,14 @@ void ts::ComponentNameDescriptor::deserialize(DuckContext& duck, const Descripto
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ComponentNameDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ComponentNameDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    ATSCMultipleString::Display(display, u"Component name: ", indent, data, size);
-    display.displayExtraData(data, size, indent);
+    disp.displayATSCMultipleString(buf, 0, margin, u"Component name: ");
 }
 
 
 //----------------------------------------------------------------------------
-// XML
+// XML serialization / deserialization
 //----------------------------------------------------------------------------
 
 void ts::ComponentNameDescriptor::buildXML(DuckContext& duck, xml::Element* root) const

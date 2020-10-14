@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -79,16 +80,15 @@ void ts::CAContractInfoDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::CAContractInfoDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::CAContractInfoDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(CA_system_id);
-    bbp->appendUInt8(uint8_t(CA_unit_id << 4) | uint8_t(component_tags.size() & 0x0F));
-    bbp->append(component_tags);
-    bbp->appendUInt8(uint8_t(contract_verification_info.size()));
-    bbp->append(contract_verification_info);
-    bbp->append(duck.encodedWithByteLength(fee_name));
-    serializeEnd(desc, bbp);
+    buf.putUInt16(CA_system_id);
+    buf.putBits(CA_unit_id, 4);
+    buf.putBits(component_tags.size(), 4);
+    buf.putBytes(component_tags);
+    buf.putUInt8(uint8_t(contract_verification_info.size()));
+    buf.putBytes(contract_verification_info);
+    buf.putStringWithByteLength(fee_name);
 }
 
 
@@ -96,34 +96,15 @@ void ts::CAContractInfoDescriptor::serialize(DuckContext& duck, Descriptor& desc
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::CAContractInfoDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::CAContractInfoDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    component_tags.clear();
-    contract_verification_info.clear();
-    fee_name.clear();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 5;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        CA_system_id = GetUInt16(data);
-        CA_unit_id = (data[2] >> 4) & 0x0F;
-        const size_t len1 = data[2] & 0x0F;
-        data += 3; size -= 3;
-        _is_valid = size >= len1 + 2;
-        if (_is_valid) {
-            component_tags.copy(data, len1);
-            const size_t len2 = data[len1];
-            data += len1 + 1; size -= len1 + 1;
-            _is_valid = size >= len2 + 1;
-            if (_is_valid) {
-                contract_verification_info.copy(data, len2);
-                data += len2; size -= len2;
-                duck.decodeWithByteLength(fee_name, data, size);
-            }
-        }
-    }
+    CA_system_id = buf.getUInt16();
+    buf.getBits(CA_unit_id, 4);
+    const size_t len1 = buf.getBits<size_t>(4);
+    buf.getBytes(component_tags, len1);
+    const size_t len2 = buf.getUInt8();
+    buf.getBytes(contract_verification_info, len2);
+    buf.getStringWithByteLength(fee_name);
 }
 
 
@@ -131,32 +112,21 @@ void ts::CAContractInfoDescriptor::deserialize(DuckContext& duck, const Descript
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::CAContractInfoDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::CAContractInfoDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 5) {
-        size_t count = data[2] & 0x0F;
-        strm << margin << "CA System Id: " << names::CASId(duck, GetUInt16(data), names::FIRST) << std::endl
-             << margin << UString::Format(u"CA unit id: %d", {(data[2] >> 4) & 0x0F}) << std::endl;
-        data += 3; size -= 3;
-        while (size > 0 && count > 0) {
-            strm << margin << UString::Format(u"Component tag: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-            data++; size--; count--;
+    if (buf.canReadBytes(5)) {
+        disp << margin << "CA System Id: " << names::CASId(disp.duck(), buf.getUInt16(), names::FIRST) << std::endl;
+        disp << margin << UString::Format(u"CA unit id: %d", {buf.getBits<uint8_t>(4)}) << std::endl;
+        for (size_t count = buf.getBits<size_t>(4); buf.canRead() && count > 0; count--) {
+            disp << margin << UString::Format(u"Component tag: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
         }
-        if (size > 0) {
-            count = std::min<size_t>(data[0], size - 1);
-            display.displayPrivateData(u"Contract verification info", data + 1, count, indent);
-            data += count + 1; size -= count + 1;
+        if (buf.canReadBytes(1)) {
+            disp.displayPrivateData(u"Contract verification info", buf, buf.getUInt8(), margin);
         }
-        if (size > 0) {
-            strm << margin << "Fee name: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
+        if (buf.canReadBytes(1)) {
+            disp << margin << "Fee name: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -184,15 +154,15 @@ bool ts::CAContractInfoDescriptor::analyzeXML(DuckContext& duck, const xml::Elem
 {
     xml::ElementVector xcomp;
     bool ok =
-        element->getIntAttribute<uint16_t>(CA_system_id, u"CA_system_id", true) &&
-        element->getIntAttribute<uint8_t>(CA_unit_id, u"CA_unit_id", true, 0, 0x00, 0x0F) &&
+        element->getIntAttribute(CA_system_id, u"CA_system_id", true) &&
+        element->getIntAttribute(CA_unit_id, u"CA_unit_id", true, 0, 0x00, 0x0F) &&
         element->getAttribute(fee_name, u"fee_name") &&
         element->getChildren(xcomp, u"component", 0, 15) &&
         element->getHexaTextChild(contract_verification_info, u"contract_verification_info", false);
 
     for (auto it = xcomp.begin(); ok && it != xcomp.end(); ++it) {
         uint8_t tag = 0;
-        ok = (*it)->getIntAttribute<uint8_t>(tag, u"tag", true);
+        ok = (*it)->getIntAttribute(tag, u"tag", true);
         component_tags.push_back(tag);
     }
     return ok;

@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -70,13 +71,11 @@ void ts::PartialReceptionDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::PartialReceptionDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::PartialReceptionDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
     for (auto it = service_ids.begin(); it != service_ids.end(); ++it) {
-        bbp->appendUInt16(*it);
+        buf.putUInt16(*it);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -84,18 +83,10 @@ void ts::PartialReceptionDescriptor::serialize(DuckContext& duck, Descriptor& de
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::PartialReceptionDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::PartialReceptionDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size % 2 == 0;
-
-    service_ids.clear();
-    if (_is_valid) {
-        while (size >= 2) {
-            service_ids.push_back(GetUInt16(data));
-            data += 2; size -= 2;
-        }
+    while (buf.canRead()) {
+        service_ids.push_back(buf.getUInt16());
     }
 }
 
@@ -104,19 +95,11 @@ void ts::PartialReceptionDescriptor::deserialize(DuckContext& duck, const Descri
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::PartialReceptionDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::PartialReceptionDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 2) {
-        const uint16_t id = GetUInt16(data);
-        strm << margin << UString::Format(u"Service id: 0x%X (%d)", {id,id}) << std::endl;
-        data += 2; size -= 2;
+    while (buf.canReadBytes(2)) {
+        disp << margin << UString::Format(u"Service id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -143,7 +126,7 @@ bool ts::PartialReceptionDescriptor::analyzeXML(DuckContext& duck, const xml::El
 
     for (auto it = xserv.begin(); ok && it != xserv.end(); ++it) {
         uint16_t id = 0;
-        ok = (*it)->getIntAttribute<uint16_t>(id, u"id", true);
+        ok = (*it)->getIntAttribute(id, u"id", true);
         service_ids.push_back(id);
     }
     return ok;

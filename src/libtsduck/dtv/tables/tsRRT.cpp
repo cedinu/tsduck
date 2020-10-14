@@ -31,6 +31,7 @@
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -79,14 +80,12 @@ ts::RRT::Dimension::Dimension() :
     dimension_name(),
     values()
 {
-
 }
 
 ts::RRT::RatingValue::RatingValue() :
     abbrev_rating_value(),
     rating_value()
 {
-
 }
 
 
@@ -118,83 +117,34 @@ void ts::RRT::clearContent()
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::RRT::deserializeContent(DuckContext& duck, const BinaryTable& table)
+void ts::RRT::deserializePayload(PSIBuffer& buf, const Section& section)
 {
-    clear();
+    rating_region = uint8_t(section.tableIdExtension());
+    protocol_version = buf.getUInt8();
+    buf.getMultipleStringWithLength(rating_region_name);
 
-    // Loop on all sections (although an RRT is not allowed to use more than one section, see A/65, section 6.4)
-    for (size_t si = 0; si < table.sectionCount(); ++si) {
+    // Loop on all dimensions.
+    size_t dim_count = buf.getUInt8();
+    while (!buf.error() && dim_count-- > 0) {
+        Dimension dim;
+        buf.getMultipleStringWithLength(dim.dimension_name);
+        buf.skipBits(3);
+        dim.graduated_scale = buf.getBool();
+        size_t val_count = buf.getBits<size_t>(4);
 
-        // Reference to current section
-        const Section& sect(*table.sectionAt(si));
-
-        // Get common properties (should be identical in all sections)
-        version = sect.version();
-        is_current = sect.isCurrent(); // should be true
-        rating_region = uint8_t(sect.tableIdExtension());
-
-        // Analyze the section payload:
-        const uint8_t* data = sect.payload();
-        size_t remain = sect.payloadSize();
-        if (remain < 1) {
-            return; // invalid table, too short
+        // Loop on all values.
+        while (val_count-- > 0) {
+            RatingValue val;
+            buf.getMultipleStringWithLength(val.abbrev_rating_value);
+            buf.getMultipleStringWithLength(val.rating_value);
+            dim.values.push_back(val);
         }
 
-        // Get fixed fields.
-        protocol_version = data[0];
-        data++; remain--;
-
-        // Get region name.
-        if (!rating_region_name.lengthDeserialize(duck, data, remain)) {
-            return;
-        }
-
-        // Get number of dimensions.
-        if (remain < 1) {
-            return; // invalid table, too short
-        }
-        size_t dim_count = data[0];
-        data++; remain--;
-
-        // Loop on all defined dimensions.
-        while (dim_count > 0 && remain >= 1) {
-
-            Dimension dim;
-            if (!dim.dimension_name.lengthDeserialize(duck, data, remain) || remain < 1) {
-                return;
-            }
-            dim.graduated_scale = (data[0] & 0x10) != 0;
-            size_t val_count = data[0] & 0x0F;
-            data++; remain--;
-
-            // Loop on all values.
-            while (val_count > 0) {
-                RatingValue val;
-                if (!val.abbrev_rating_value.lengthDeserialize(duck, data, remain) || !val.rating_value.lengthDeserialize(duck, data, remain)) {
-                    return;
-                }
-                dim.values.push_back(val);
-                val_count--;
-            }
-
-            // One dimension was successfully deserialized.
-            dimensions.push_back(dim);
-            dim_count--;
-        }
-        if (dim_count > 0 || remain < 2) {
-            return; // truncated table.
-        }
-
-        // Get program information descriptor list
-        size_t info_length = GetUInt16(data) & 0x03FF;
-        data += 2; remain -= 2;
-        info_length = std::min(info_length, remain);
-        descs.add(data, info_length);
-        data += info_length;
-        remain -= info_length;
+        dimensions.push_back(dim);
     }
 
-    _is_valid = true;
+    // Get global descriptor list (with 10-bit length field).
+    buf.getDescriptorListWithLength(descs, 10);
 }
 
 
@@ -202,54 +152,39 @@ void ts::RRT::deserializeContent(DuckContext& duck, const BinaryTable& table)
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::RRT::serializeContent(DuckContext& duck, BinaryTable& table) const
+void ts::RRT::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
-    // Build the section. Note that an RRT is not allowed to use more than one section, see A/65, section 6.4.
-    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
-    payload[0] = protocol_version;
-    uint8_t* data = payload + 1;
-    size_t remain = sizeof(payload) - 1;
+    // An RRT is not allowed to use more than one section, see A/65, section 6.4.
 
-    // Serialize rating_region_name_text.
-    rating_region_name.lengthSerialize(duck, data, remain);
-
-    // Number of dimensions.
     if (dimensions.size() > 255) {
-        return; // too many dimensions, invalid.
+        // Too many dimensions, invalid.
+        buf.setUserError();
+        return;
     }
-    *data++ = uint8_t(dimensions.size());
-    remain--;
 
-    // Add description of all dimensions.
-    for (auto dim = dimensions.begin(); dim != dimensions.end(); ++dim) {
-        dim->dimension_name.lengthSerialize(duck, data, remain);
-        if (remain < 1 || dim->values.size() > 15) {
-            return; // invalid, too long
+    buf.putUInt8(protocol_version);
+    buf.putMultipleStringWithLength(rating_region_name);
+    buf.putUInt8(uint8_t(dimensions.size()));
+
+    // Loop on dimensions definitions.
+    for (auto dim = dimensions.begin(); !buf.error() && dim != dimensions.end(); ++dim) {
+        if (dim->values.size() > 15) {
+            // Too many value, invalid.
+            buf.setUserError();
+            return;
         }
-        *data++ = uint8_t(0xE0 | (dim->graduated_scale ? 0x10 : 0x00) | dim->values.size());
-        remain--;
-        for (auto val = dim->values.begin(); val != dim->values.end(); ++val) {
-            val->abbrev_rating_value.lengthSerialize(duck, data, remain);
-            val->rating_value.lengthSerialize(duck, data, remain);
+        buf.putMultipleStringWithLength(dim->dimension_name);
+        buf.putBits(0xFF, 3);
+        buf.putBit(dim->graduated_scale);
+        buf.putBits(dim->values.size(), 4);
+        for (auto val = dim->values.begin(); !buf.error() && val != dim->values.end(); ++val) {
+            buf.putMultipleStringWithLength(val->abbrev_rating_value);
+            buf.putMultipleStringWithLength(val->rating_value);
         }
     }
 
-    // Insert common descriptor list (with leading length field)
-    if (remain < 2) {
-        return; // invalid, too long.
-    }
-    descs.lengthSerialize(data, remain, 0, 0x003F, 10);
-
-    // Add one single section in the table
-    table.addSection(new Section(MY_TID,           // tid
-                                 true,             // is_private_section
-                                 tableIdExtension(),
-                                 version,
-                                 is_current,       // should be true
-                                 0,                // section_number,
-                                 0,                // last_section_number
-                                 payload,
-                                 data - payload)); // payload_size,
+    // Insert common descriptor list (with leading 10-bit length field)
+    buf.putPartialDescriptorListWithLength(descs, 0, NPOS, 10);
 }
 
 
@@ -257,78 +192,38 @@ void ts::RRT::serializeContent(DuckContext& duck, BinaryTable& table) const
 // A static method to display an RRT section.
 //----------------------------------------------------------------------------
 
-void ts::RRT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::RRT::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
+    disp << margin << UString::Format(u"Rating region: 0x%X (%<d)", {uint8_t(section.tableIdExtension())}) << std::endl;
 
-    const uint8_t* data = section.payload();
-    size_t size = section.payloadSize();
+    if (!buf.canReadBytes(2)) {
+        buf.setUserError();
+    }
+    else {
+        disp << margin << UString::Format(u"Protocol version: %d", {buf.getUInt8()}) << std::endl;
+        disp.displayATSCMultipleString(buf, 1, margin, u"Rating region name: ");
+    }
 
-    strm << margin << UString::Format(u"Rating region: 0x%X (%d)", {uint8_t(section.tableIdExtension()), uint8_t(section.tableIdExtension())}) << std::endl;
+    // Display all dimensions.
+    const size_t dim_count = buf.error() ? 0 : buf.getUInt8();
+    disp << margin << "Number of dimensions: " << dim_count << std::endl;
+    for (size_t dim_index = 0; !buf.error() && dim_index < dim_count; ++dim_index) {
+        disp << margin << "- Dimension " << dim_index << std::endl;
+        disp.displayATSCMultipleString(buf, 1, margin + u"  ", u"Dimension name: ");
+        buf.skipBits(3);
+        disp << margin << UString::Format(u"  Graduated scale: %s", {buf.getBool()});
+        size_t val_count = buf.getBits<size_t>(4);
+        disp << ", number of rating values: " << val_count << std::endl;
 
-    if (size >= 2) {
-        strm << margin << UString::Format(u"Protocol version: %d", {data[0]}) << std::endl;
-        size_t len = data[1];
-        data += 2; size -= 2;
-        ATSCMultipleString::Display(display, u"Rating region name: ", indent, data, size, len);
-
-        // Get number of dimensions.
-        size_t dim_count = 0;
-        size_t dim_index = 0;
-        if (size > 0) {
-            dim_count = data[0];
-            data++; size--;
-        }
-        strm << margin << "Number of dimensions: " << dim_count << std::endl;
-
-        // Loop on all defined dimensions.
-        while (dim_count > 0 && size >= 1) {
-            strm << margin << "- Dimension " << dim_index << std::endl;
-
-            len = *data++;
-            size--;
-            ATSCMultipleString::Display(display, u"Dimension name: ", indent + 2, data, size, len);
-
-            if (size == 0) {
-                break;
-            }
-            size_t val_count = data[0] & 0x0F;
-            strm << margin << UString::Format(u"  Graduated scale: %s, number of rating values: %d", {(data[0] & 0x10) != 0, val_count}) << std::endl;
-            data++; size--;
-
-            // Loop on all values.
-            while (val_count > 0 && size > 0) {
-                len = *data++;
-                size--;
-                ATSCMultipleString::Display(display, u"- Abbreviated rating value: ", indent + 2, data, size, len);
-                if (size > 0) {
-                    len = *data++;
-                    size--;
-                    ATSCMultipleString::Display(display, u"  Rating value: ", indent + 2, data, size, len);
-                }
-                val_count--;
-            }
-
-            dim_count--;
-            dim_index++;
-        }
-
-        // Display descriptors.
-        if (dim_count == 0 && size >= 2) {
-            size_t info_length = GetUInt16(data) & 0x03FF;
-            data += 2; size -= 2;
-            info_length = std::min(info_length, size);
-            if (info_length > 0) {
-                strm << margin << "- Descriptors:" << std::endl;
-                display.displayDescriptorList(section, data, info_length, indent + 2);
-                data += info_length; size -= info_length;
-            }
+        // Display all values.
+        while (val_count-- > 0) {
+            disp.displayATSCMultipleString(buf, 1, margin + u"  ", u"- Abbreviated rating value: ");
+            disp.displayATSCMultipleString(buf, 1, margin + u"  ", u"  Rating value: ");
         }
     }
 
-    display.displayExtraData(data, size, indent);
+    // Common descriptors.
+    disp.displayDescriptorListWithLength(section, buf, margin, u"Descriptors", UString(), 10);
 }
 
 
@@ -366,9 +261,9 @@ bool ts::RRT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     xml::ElementVector xdim;
     bool ok =
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
-        element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
-        element->getIntAttribute<uint8_t>(rating_region, u"rating_region", true) &&
+        element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
+        element->getIntAttribute(protocol_version, u"protocol_version", false, 0) &&
+        element->getIntAttribute(rating_region, u"rating_region", true) &&
         rating_region_name.fromXML(duck, element, u"rating_region_name", false) &&
         descs.fromXML(duck, xdim, element, u"rating_region_name,dimension");
 

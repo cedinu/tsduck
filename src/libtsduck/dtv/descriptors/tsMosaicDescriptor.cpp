@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -89,41 +90,45 @@ ts::MosaicDescriptor::Cell::Cell() :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::MosaicDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::MosaicDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8((mosaic_entry_point ? 0x88 : 0x08) |
-                     uint8_t((number_of_horizontal_elementary_cells & 0x07) << 4) |
-                     (number_of_vertical_elementary_cells & 0x07));
+    buf.putBit(mosaic_entry_point);
+    buf.putBits(number_of_horizontal_elementary_cells, 3);
+    buf.putBit(1);
+    buf.putBits(number_of_vertical_elementary_cells, 3);
+
     for (auto it = cells.begin(); it != cells.end(); ++it) {
-        bbp->appendUInt8(uint8_t(it->logical_cell_id << 2) | 0x03);
-        bbp->appendUInt8(0xF8 | (it->logical_cell_presentation_info & 0x07));
-        bbp->appendUInt8(uint8_t(it->elementary_cell_ids.size()));
+        buf.putBits(it->logical_cell_id, 6);
+        buf.putBits(0xFF, 7);
+        buf.putBits(it->logical_cell_presentation_info, 3);
+        buf.pushWriteSequenceWithLeadingLength(8); // elementary_cell_field_length
         for (size_t i = 0; i < it->elementary_cell_ids.size(); ++i) {
-            bbp->appendUInt8(0xC0 | it->elementary_cell_ids[i]);
+            buf.putBits(0xFF, 2);
+            buf.putBits(it->elementary_cell_ids[i], 6);
         }
-        bbp->appendUInt8(it->cell_linkage_info);
+        buf.popState(); // update elementary_cell_field_length
+        buf.putUInt8(it->cell_linkage_info);
+
         switch (it->cell_linkage_info) {
             case 0x01:
-                bbp->appendUInt16(it->bouquet_id);
+                buf.putUInt16(it->bouquet_id);
                 break;
             case 0x02:
             case 0x03:
-                bbp->appendUInt16(it->original_network_id);
-                bbp->appendUInt16(it->transport_stream_id);
-                bbp->appendUInt16(it->service_id);
+                buf.putUInt16(it->original_network_id);
+                buf.putUInt16(it->transport_stream_id);
+                buf.putUInt16(it->service_id);
                 break;
             case 0x04:
-                bbp->appendUInt16(it->original_network_id);
-                bbp->appendUInt16(it->transport_stream_id);
-                bbp->appendUInt16(it->service_id);
-                bbp->appendUInt16(it->event_id);
+                buf.putUInt16(it->original_network_id);
+                buf.putUInt16(it->transport_stream_id);
+                buf.putUInt16(it->service_id);
+                buf.putUInt16(it->event_id);
                 break;
             default:
                 break;
         }
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -131,75 +136,47 @@ void ts::MosaicDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::MosaicDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::MosaicDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-    cells.clear();
+    mosaic_entry_point = buf.getBool();
+    buf.getBits(number_of_horizontal_elementary_cells, 3);
+    buf.skipBits(1);
+    buf.getBits(number_of_vertical_elementary_cells, 3);
 
-    if (_is_valid) {
-        mosaic_entry_point = (data[0] & 0x80) != 0;
-        number_of_horizontal_elementary_cells = (data[0] >> 4) & 0x07;
-        number_of_vertical_elementary_cells = data[0] & 0x07;
-        data++; size--;
-    }
-
-    while (_is_valid && size >= 3) {
+    while (buf.canRead()) {
         Cell cell;
-        cell.logical_cell_id = (data[0] >> 2) & 0x3F;
-        cell.logical_cell_presentation_info = data[1] & 0x07;
-        size_t len = data[2];
-        data += 3; size -= 3;
-
-        _is_valid = size > len;
-        if (_is_valid) {
-            for (size_t i = 0; i < len; ++i) {
-                cell.elementary_cell_ids.push_back(data[i] & 0x3F);
-            }
-            cell.cell_linkage_info = data[len];
-            data += len + 1; size -= len + 1;
-
-            switch (cell.cell_linkage_info) {
-                case 0x01:
-                    _is_valid = size >= 2;
-                    if (_is_valid) {
-                        cell.bouquet_id = GetUInt16(data);
-                        data += 2; size -= 2;
-                    }
-                    break;
-                case 0x02:
-                case 0x03:
-                    _is_valid = size >= 6;
-                    if (_is_valid) {
-                        cell.original_network_id = GetUInt16(data);
-                        cell.transport_stream_id = GetUInt16(data + 2);
-                        cell.service_id = GetUInt16(data + 4);
-                        data += 6; size -= 6;
-                    }
-                    break;
-                case 0x04:
-                    _is_valid = size >= 8;
-                    if (_is_valid) {
-                        cell.original_network_id = GetUInt16(data);
-                        cell.transport_stream_id = GetUInt16(data + 2);
-                        cell.service_id = GetUInt16(data + 4);
-                        cell.event_id = GetUInt16(data + 6);
-                        data += 8; size -= 8;
-                    }
-                    break;
-                default:
-                    break;
-            }
+        buf.getBits(cell.logical_cell_id, 6);
+        buf.skipBits(7);
+        buf.getBits(cell.logical_cell_presentation_info, 3);
+        buf.pushReadSizeFromLength(8); // elementary_cell_field_length
+        while (buf.canRead()) {
+            buf.skipBits(2);
+            cell.elementary_cell_ids.push_back(buf.getBits<uint8_t>(6));
         }
+        buf.popState(); // end of elementary_cell_field_length
+        cell.cell_linkage_info = buf.getUInt8();
 
-        if (_is_valid) {
-            cells.push_back(cell);
+        switch (cell.cell_linkage_info) {
+            case 0x01:
+                cell.bouquet_id = buf.getUInt16();
+                break;
+            case 0x02:
+            case 0x03:
+                cell.original_network_id = buf.getUInt16();
+                cell.transport_stream_id = buf.getUInt16();
+                cell.service_id = buf.getUInt16();
+                break;
+            case 0x04:
+                cell.original_network_id = buf.getUInt16();
+                cell.transport_stream_id = buf.getUInt16();
+                cell.service_id = buf.getUInt16();
+                cell.event_id = buf.getUInt16();
+                break;
+            default:
+                break;
         }
+        cells.push_back(cell);
     }
-
-    // Make sure there is no truncated trailing data.
-    _is_valid = _is_valid && size == 0;
 }
 
 
@@ -207,76 +184,47 @@ void ts::MosaicDescriptor::deserialize(DuckContext& duck, const Descriptor& desc
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::MosaicDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::MosaicDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    bool ok = size >= 1;
-
-    if (ok) {
-        const uint8_t hor = (data[0] >> 4) & 0x07;
-        const uint8_t ver = data[0] & 0x07;
-        strm << margin << UString::Format(u"Mosaic entry point: %s", {(data[0] & 0x80) != 0}) << std::endl
-             << margin << UString::Format(u"Horizontal elementary cells: %d (actual number: %d)", {hor, hor + 1}) << std::endl
-             << margin << UString::Format(u"Vertical elementary cells: %d (actual number: %d)", {ver, ver + 1}) << std::endl;
-        data++; size--;
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Mosaic entry point: %s", {buf.getBool()}) << std::endl;
+        const uint8_t hor = buf.getBits<uint8_t>(3);
+        disp << margin << UString::Format(u"Horizontal elementary cells: %d (actual number: %d)", {hor, hor + 1}) << std::endl;
+        buf.skipBits(1);
+        const uint8_t ver = buf.getBits<uint8_t>(3);
+        disp << margin << UString::Format(u"Vertical elementary cells: %d (actual number: %d)", {ver, ver + 1}) << std::endl;
     }
 
-    while (ok && size >= 3) {
-        const uint8_t id = (data[0] >> 2) & 0x3F;
-        const uint8_t pres = data[1] & 0x07;
-        size_t len = data[2];
-        data += 3; size -= 3;
+    while (buf.canReadBytes(3)) {
+        disp << margin << UString::Format(u"- Logical cell id: 0x%X (%<d)", {buf.getBits<uint8_t>(6)}) << std::endl;
+        buf.skipBits(7);
+        disp << margin << "  Presentation info: " << NameFromSection(u"MosaicLogicalCellPresentation", buf.getBits<uint8_t>(3), names::DECIMAL_FIRST) << std::endl;
 
-        strm << margin << UString::Format(u"- Logical cell id: 0x%X (%d)", {id, id}) << std::endl
-             << margin << "  Presentation info: " << NameFromSection(u"MosaicLogicalCellPresentation", pres, names::DECIMAL_FIRST) << std::endl;
+        buf.pushReadSizeFromLength(8); // elementary_cell_field_length
+        while (buf.canReadBytes(1)) {
+            buf.skipBits(2);
+            disp << margin << UString::Format(u"  Elementary cell id: 0x%X (%<d)", {buf.getBits<uint8_t>(6)}) << std::endl;
+        }
+        buf.popState(); // end of elementary_cell_field_length
 
-        ok = size > len;
-        if (ok) {
-            for (size_t i = 0; i < len; ++i) {
-                const uint8_t eid = data[i] & 0x3F;
-                strm << margin << UString::Format(u"  Elementary cell id: 0x%X (%d)", {eid, eid}) << std::endl;
-            }
-            const uint8_t link = data[len];
-            strm << margin << "  Cell linkage info: " << NameFromSection(u"MosaicCellLinkageInfo", link, names::DECIMAL_FIRST) << std::endl;
-            data += len + 1; size -= len + 1;
+        const uint8_t link = buf.getUInt8();
+        disp << margin << "  Cell linkage info: " << NameFromSection(u"MosaicCellLinkageInfo", link, names::DECIMAL_FIRST) << std::endl;
 
-            switch (link) {
-                case 0x01:
-                    ok = size >= 2;
-                    if (ok) {
-                        strm << margin << UString::Format(u"  Bouquet id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl;
-                        data += 2; size -= 2;
-                    }
-                    break;
-                case 0x02:
-                case 0x03:
-                    ok = size >= 6;
-                    if (ok) {
-                        strm << margin << UString::Format(u"  Original network id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                             << margin << UString::Format(u"  Transport stream id: 0x%X (%d)", {GetUInt16(data + 2), GetUInt16(data + 2)}) << std::endl
-                             << margin << UString::Format(u"  Service id: 0x%X (%d)", {GetUInt16(data + 4), GetUInt16(data + 4)}) << std::endl;
-                        data += 6; size -= 6;
-                    }
-                    break;
-                case 0x04:
-                    ok = size >= 8;
-                    if (ok) {
-                        strm << margin << UString::Format(u"  Original network id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                             << margin << UString::Format(u"  Transport stream id: 0x%X (%d)", {GetUInt16(data + 2), GetUInt16(data + 2)}) << std::endl
-                             << margin << UString::Format(u"  Service id: 0x%X (%d)", {GetUInt16(data + 4), GetUInt16(data + 4)}) << std::endl
-                             << margin << UString::Format(u"  Event id: 0x%X (%d)", {GetUInt16(data + 6), GetUInt16(data + 6)}) << std::endl;
-                        data += 8; size -= 8;
-                    }
-                    break;
-                default:
-                    break;
-            }
+        if (link == 0x01 && buf.canReadBytes(2)) {
+            disp << margin << UString::Format(u"  Bouquet id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        }
+        else if ((link == 0x02 || link == 0x03) && buf.canReadBytes(6)) {
+            disp << margin << UString::Format(u"  Original network id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+            disp << margin << UString::Format(u"  Transport stream id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+            disp << margin << UString::Format(u"  Service id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        }
+        else if (link == 0x04 && buf.canReadBytes(8)) {
+            disp << margin << UString::Format(u"  Original network id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+            disp << margin << UString::Format(u"  Transport stream id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+            disp << margin << UString::Format(u"  Service id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+            disp << margin << UString::Format(u"  Event id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -330,25 +278,25 @@ bool ts::MosaicDescriptor::analyzeXML(DuckContext& duck, const xml::Element* ele
     xml::ElementVector xcells;
     bool ok =
         element->getBoolAttribute(mosaic_entry_point, u"mosaic_entry_point", true) &&
-        element->getIntAttribute<uint8_t>(number_of_horizontal_elementary_cells, u"number_of_horizontal_elementary_cells", true, 0, 0, 7) &&
-        element->getIntAttribute<uint8_t>(number_of_vertical_elementary_cells, u"number_of_vertical_elementary_cells", true, 0, 0, 7) &&
+        element->getIntAttribute(number_of_horizontal_elementary_cells, u"number_of_horizontal_elementary_cells", true, 0, 0, 7) &&
+        element->getIntAttribute(number_of_vertical_elementary_cells, u"number_of_vertical_elementary_cells", true, 0, 0, 7) &&
         element->getChildren(xcells, u"cell");
 
     for (size_t i1 = 0; ok && i1 < xcells.size(); ++i1) {
         Cell cell;
         xml::ElementVector xids;
-        ok = xcells[i1]->getIntAttribute<uint8_t>(cell.logical_cell_id, u"logical_cell_id", true, 0, 0x00, 0x3F) &&
-             xcells[i1]->getIntAttribute<uint8_t>(cell.logical_cell_presentation_info, u"logical_cell_presentation_info", true, 0, 0x00, 0x07) &&
-             xcells[i1]->getIntAttribute<uint8_t>(cell.cell_linkage_info, u"cell_linkage_info", true) &&
-             xcells[i1]->getIntAttribute<uint16_t>(cell.bouquet_id, u"bouquet_id", cell.cell_linkage_info == 1) &&
-             xcells[i1]->getIntAttribute<uint16_t>(cell.original_network_id, u"original_network_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
-             xcells[i1]->getIntAttribute<uint16_t>(cell.transport_stream_id, u"transport_stream_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
-             xcells[i1]->getIntAttribute<uint16_t>(cell.service_id, u"service_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
-             xcells[i1]->getIntAttribute<uint16_t>(cell.event_id, u"event_id", cell.cell_linkage_info == 4) &&
+        ok = xcells[i1]->getIntAttribute(cell.logical_cell_id, u"logical_cell_id", true, 0, 0x00, 0x3F) &&
+             xcells[i1]->getIntAttribute(cell.logical_cell_presentation_info, u"logical_cell_presentation_info", true, 0, 0x00, 0x07) &&
+             xcells[i1]->getIntAttribute(cell.cell_linkage_info, u"cell_linkage_info", true) &&
+             xcells[i1]->getIntAttribute(cell.bouquet_id, u"bouquet_id", cell.cell_linkage_info == 1) &&
+             xcells[i1]->getIntAttribute(cell.original_network_id, u"original_network_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
+             xcells[i1]->getIntAttribute(cell.transport_stream_id, u"transport_stream_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
+             xcells[i1]->getIntAttribute(cell.service_id, u"service_id", cell.cell_linkage_info >= 2 && cell.cell_linkage_info <= 4) &&
+             xcells[i1]->getIntAttribute(cell.event_id, u"event_id", cell.cell_linkage_info == 4) &&
              xcells[i1]->getChildren(xids, u"elementary_cell");
         for (size_t i2 = 0; ok && i2 < xids.size(); ++i2) {
             uint8_t id = 0;
-            ok = xids[i2]->getIntAttribute<uint8_t>(id, u"id", true, 0, 0x00, 0x3F);
+            ok = xids[i2]->getIntAttribute(id, u"id", true, 0, 0x00, 0x3F);
             cell.elementary_cell_ids.push_back(id);
         }
         cells.push_back(cell);

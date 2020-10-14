@@ -39,19 +39,19 @@
 namespace ts {
     //!
     //! Representation of a component_descriptor.
-    //! @see ETSI 300 468, 6.2.8.
+    //! @see ETSI EN 300 468, 6.2.8.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL ComponentDescriptor : public AbstractDescriptor
     {
     public:
         // Public members:
-        uint8_t stream_content_ext;  //!< 4 bits, see ETSI 300 468, 6.2.8.
-        uint8_t stream_content;      //!< 4 bits, see ETSI 300 468, 6.2.8.
-        uint8_t component_type;      //!< See ETSI 300 468, 6.2.8.
-        uint8_t component_tag;       //!< See ETSI 300 468, 6.2.8.
-        UString language_code;       //!< 3 chars, see ETSI 300 468, 6.2.8.
-        UString text;                //!< See ETSI 300 468, 6.2.8.
+        uint8_t stream_content_ext;  //!< 4 bits, see ETSI EN 300 468, 6.2.8.
+        uint8_t stream_content;      //!< 4 bits, see ETSI EN 300 468, 6.2.8.
+        uint8_t component_type;      //!< See ETSI EN 300 468, 6.2.8.
+        uint8_t component_tag;       //!< See ETSI EN 300 468, 6.2.8.
+        UString language_code;       //!< 3 chars, see ETSI EN 300 468, 6.2.8.
+        UString text;                //!< See ETSI EN 300 468, 6.2.8.
 
         //!
         //! Default constructor.
@@ -66,14 +66,14 @@ namespace ts {
         ComponentDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsDescriptorList.h"
@@ -57,11 +58,6 @@ ts::CADescriptor::CADescriptor(uint16_t cas_id_, PID ca_pid_) :
 {
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
-
 void ts::CADescriptor::clearContent()
 {
     cas_id = 0;
@@ -83,13 +79,11 @@ ts::CADescriptor::CADescriptor(DuckContext& duck, const Descriptor& desc) :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::CADescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::CADescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(cas_id);
-    bbp->appendUInt16(0xE000 | (ca_pid & 0x1FFF));
-    bbp->append(private_data);
-    serializeEnd(desc, bbp);
+    buf.putUInt16(cas_id);
+    buf.putPID(ca_pid);
+    buf.putBytes(private_data);
 }
 
 
@@ -97,17 +91,11 @@ void ts::CADescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::CADescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::CADescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 4;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        cas_id = GetUInt16 (data);
-        ca_pid = GetUInt16 (data + 2) & 0x1FFF;
-        private_data.copy (data + 4, size - 4);
-    }
+    cas_id = buf.getUInt16();
+    ca_pid = buf.getPID();
+    buf.getBytes(private_data);
 }
 
 
@@ -115,34 +103,25 @@ void ts::CADescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::CADescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::CADescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    if (size < 4) {
-        display.displayExtraData(data, size, indent);
-    }
-    else {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
-        // Extract common part
-        uint16_t sysid = GetUInt16(data);
-        uint16_t pid = GetUInt16(data + 2) & 0x1FFF;
-        const UChar* const dtype = tid == TID_CAT ? u"EMM" : (tid == TID_PMT ? u"ECM" : u"CA");
-        data += 4; size -= 4;
-
-        strm << margin << UString::Format(u"CA System Id: %s, %s PID: %d (0x%X)", {names::CASId(duck, sysid, names::FIRST), dtype, pid, pid}) << std::endl;
+    if (buf.canReadBytes(4)) {
+        // Display common part
+        const uint16_t casid = buf.getUInt16();
+        disp << margin << "CA System Id: " << names::CASId(disp.duck(), casid, names::FIRST);
+        disp << ", " << (tid == TID_CAT ? u"EMM" : (tid == TID_PMT ? u"ECM" : u"CA"));
+        disp << UString::Format(u" PID: %d (0x%<X)", {buf.getPID()}) << std::endl;
 
         // CA private part.
-        if (size > 0) {
+        if (buf.canRead()) {
             // Check if a specific CAS registered its own display routine.
-            DisplayCADescriptorFunction disp = PSIRepository::Instance()->getCADescriptorDisplay(sysid);
-            if (disp != nullptr) {
+            DisplayCADescriptorFunction func = PSIRepository::Instance()->getCADescriptorDisplay(casid);
+            if (func != nullptr) {
                 // Use a CAS-specific display routine.
-                disp(display, data, size, indent, tid);
+                func(disp, buf, margin, tid);
             }
             else {
-                display.displayPrivateData(u"Private CA data", data, size, indent);
+                disp.displayPrivateData(u"Private CA data", buf, NPOS, margin);
             }
         }
     }
@@ -167,7 +146,7 @@ void ts::CADescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 
 bool ts::CADescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint16_t>(cas_id, u"CA_system_id", true, 0, 0x0000, 0xFFFF) &&
+    return element->getIntAttribute(cas_id, u"CA_system_id", true, 0, 0x0000, 0xFFFF) &&
            element->getIntAttribute<PID>(ca_pid, u"CA_PID", true, 0, 0x0000, 0x1FFF) &&
            element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 4);
 }

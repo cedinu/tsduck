@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -86,36 +87,22 @@ void ts::IPMACGenericStreamLocationDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::IPMACGenericStreamLocationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::IPMACGenericStreamLocationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(interactive_network_id);
-    bbp->appendUInt8(modulation_system_type);
-    bbp->appendUInt16(modulation_system_id);
-    bbp->appendUInt16(PHY_stream_id);
-    bbp->append(selector_bytes);
-    serializeEnd(desc, bbp);
+    buf.putUInt16(interactive_network_id);
+    buf.putUInt8(modulation_system_type);
+    buf.putUInt16(modulation_system_id);
+    buf.putUInt16(PHY_stream_id);
+    buf.putBytes(selector_bytes);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::IPMACGenericStreamLocationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::IPMACGenericStreamLocationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 7;
-
-    if (_is_valid) {
-        interactive_network_id = GetUInt16(data);
-        modulation_system_type = GetUInt8(data + 2);
-        modulation_system_id = GetUInt16(data + 3);
-        PHY_stream_id = GetUInt16(data + 5);
-        selector_bytes.copy(data + 7, size - 7);
-    }
+    interactive_network_id = buf.getUInt16();
+    modulation_system_type = buf.getUInt8();
+    modulation_system_id = buf.getUInt16();
+    PHY_stream_id = buf.getUInt16();
+    buf.getBytes(selector_bytes);
 }
 
 
@@ -123,25 +110,15 @@ void ts::IPMACGenericStreamLocationDescriptor::deserialize(DuckContext& duck, co
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::IPMACGenericStreamLocationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::IPMACGenericStreamLocationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 7) {
-        const uint16_t netid = GetUInt16(data);
-        const uint8_t systype = GetUInt8(data + 2);
-        const uint16_t sysid = GetUInt16(data + 3);
-        const uint16_t strid  = GetUInt16(data + 5);
-        strm << margin << UString::Format(u"Interactive network id: 0x%X (%d)", {netid, netid}) << std::endl
-             << margin << UString::Format(u"Modulation system type: 0x%X (%s)", {systype, ModulationTypeNames.name(systype)}) << std::endl
-             << margin << UString::Format(u"Modulation system id: 0x%X (%d)", {sysid, sysid}) << std::endl
-             << margin << UString::Format(u"Physical stream id: 0x%X (%d)", {strid, strid}) << std::endl;
-        display.displayPrivateData(u"Selector bytes", data + 7, size - 7, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+    if (buf.canReadBytes(7)) {
+        disp << margin << UString::Format(u"Interactive network id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        const uint8_t systype = buf.getUInt8();
+        disp << margin << UString::Format(u"Modulation system type: 0x%X (%s)", {systype, ModulationTypeNames.name(systype)}) << std::endl;
+        disp << margin << UString::Format(u"Modulation system id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Physical stream id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp.displayPrivateData(u"Selector bytes", buf, NPOS, margin);
     }
 }
 
@@ -158,11 +135,6 @@ void ts::IPMACGenericStreamLocationDescriptor::buildXML(DuckContext& duck, xml::
     root->setIntAttribute(u"PHY_stream_id", PHY_stream_id, true);
     root->addHexaTextChild(u"selector_bytes", selector_bytes, true);
 }
-
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
 
 bool ts::IPMACGenericStreamLocationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {

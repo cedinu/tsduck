@@ -89,7 +89,7 @@ namespace ts {
         //! @param [in,out] parent The parent node for the new XML tree.
         //! @return The new XML element.
         //!
-        virtual xml::Element* toXML(DuckContext& duck, xml::Element* parent) const final;
+        xml::Element* toXML(DuckContext& duck, xml::Element* parent) const;
 
         //!
         //! This method converts an XML structure to a table or descriptor in this object.
@@ -103,7 +103,7 @@ namespace ts {
         //! @param [in,out] duck TSDuck execution context.
         //! @param [in] element XML element to convert.
         //!
-        virtual void fromXML(DuckContext& duck, const xml::Element* element) final;
+        void fromXML(DuckContext& duck, const xml::Element* element);
 
         // Implementation of AbstractDefinedByStandards
         virtual Standards definingStandards() const override;
@@ -126,41 +126,7 @@ namespace ts {
         //!
         static const UChar* const XML_GENERIC_LONG_TABLE;
 
-        //!
-        //! This static method serializes a DVB string with a required fixed size.
-        //! @param [in,out] duck TSDuck execution context.
-        //! @param [in,out] bb A byte-block where @a str will be appended if its size is correct.
-        //! @param [in] str String to serialize.
-        //! @param [in] size Required size in bytes of the serialized string.
-        //! @return True if the size has the required length and has been serialized.
-        //!
-        static bool SerializeFixedLength(DuckContext& duck, ByteBlock& bb, const UString& str, const size_t size);
-
-        //!
-        //! This static method serializes a 3-byte language or country code.
-        //! @param [in,out] bb A byte-block where @a str will be appended if its size is correct.
-        //! @param [in] str String to serialize.
-        //! @param [in] allow_empty If true, an empty string is allowed and serialized as zeroes.
-        //! @return True if the size has the required length and has been serialized.
-        //!
-        static bool SerializeLanguageCode(ByteBlock& bb, const UString& str, bool allow_empty = false);
-
-        //!
-        //! This static method deserializes a 3-byte language or country code.
-        //! @param [in] data Address of a 3-byte memory area.
-        //! @return Deserialized string.
-        //!
-        static UString DeserializeLanguageCode(const uint8_t* data);
-
     protected:
-        // Implementation node: Try to make _is_valid private some day.
-        // It should not be used outside legacy serialize() / deserialize() implementations.
-
-        //!
-        //! It is the responsibility of the subclasses to set the valid flag
-        //!
-        bool _is_valid;
-
         //!
         //! Protected constructor for subclasses.
         //! @param [in] xml_name Table or descriptor name, as used in XML structures.
@@ -219,37 +185,8 @@ namespace ts {
         //!
         virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) = 0;
 
-        //!
-        //! Deserialize a 3-byte language or country code.
-        //! @param [out] lang Deserialized language code.
-        //! @param [in,out] data Address of memory area. Adjusted to point after the deserialized data.
-        //! @param [in,out] size Remaining size in bytes of memory area. Adjusted remove the deserialized data.
-        //! @return True on success, false on error. On error, the object is invalidated.
-        //!
-        bool deserializeLanguageCode(UString& lang, const uint8_t*& data, size_t& size);
-
-        //!
-        //! Deserialize an integer.
-        //! @tparam INT Some integer type.
-        //! @param [out] value Deserialized integer value.
-        //! @param [in,out] data Address of memory area. Adjusted to point after the deserialized data.
-        //! @param [in,out] size Remaining size in bytes of memory area. Adjusted remove the deserialized data.
-        //! @return True on success, false on error. On error, the object is invalidated.
-        //!
-        template<typename INT, typename std::enable_if<std::is_integral<INT>::value>::type* = nullptr>
-        bool deserializeInt(INT& value, const uint8_t*& data, size_t& size);
-
-        //!
-        //! Deserialize a one-bit boolean inside one byte.
-        //! @param [out] value Deserialized bool value.
-        //! @param [in,out] data Address of memory area. Adjusted to point after the deserialized data (one byte).
-        //! @param [in,out] size Remaining size in bytes of memory area. Adjusted remove the deserialized data.
-        //! @param [in] bit Bit number of the boolean in the deserialized byte, from 0 (LSB) to 7 (MSB).
-        //! @return True on success, false on error. On error, the object is invalidated.
-        //!
-        bool deserializeBool(bool& value, const uint8_t*& data, size_t& size, size_t bit = 0);
-
     private:
+        bool               _is_valid;         // This object is valid.
         const UChar* const _xml_name;         // XML table or descriptor name.
         const UChar* const _xml_legacy_name;  // Optional XML table or descriptor legacy name. Ignored if null pointer.
         const Standards    _standards;        // Defining standards (usually only one).
@@ -261,5 +198,3 @@ namespace ts {
         AbstractSignalization() = delete;
     };
 }
-
-#include "tsAbstractSignalizationTemplate.h"

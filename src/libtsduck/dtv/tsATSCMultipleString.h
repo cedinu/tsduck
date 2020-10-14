@@ -219,7 +219,7 @@ namespace ts {
         //!
         //! Serialize a binary multiple_string_structure and append to a byte block.
         //! @param [in,out] duck TSDuck execution context.
-        //! @param [in,out] data Byte bloc where to serialize the structure. The structure is added at the end.
+        //! @param [in,out] data Byte block where to serialize the structure. The structure is added at the end.
         //! @param [in] max_size Max size to serialize.
         //! @param [in] ignore_empty If true and the multiple_string_structure is empty, do nothing.
         //! @return The number of serialized bytes.
@@ -227,21 +227,25 @@ namespace ts {
         size_t serialize(DuckContext& duck, ByteBlock& data, size_t max_size = NPOS, bool ignore_empty = false) const;
 
         //!
-        //! Serialize a binary multiple_string_structure with a leading byte length.
+        //! Serialize a binary multiple_string_structure with a leading length field.
         //! @param [in,out] duck TSDuck execution context.
         //! @param [in,out] data Address of the buffer where to serialize the structure.
         //! On return, it is updated to point after the structure.
         //! @param [in,out] size Size in bytes of the buffer.
         //! On return, it is updated to the remaining size in the buffer.
+        //! @param [in] length_bytes Size in bytes of the leading length field (1 byte by default).
+        //! @return The number of serialized bytes.
         //!
-        void lengthSerialize(DuckContext& duck, uint8_t*& data, size_t& size) const;
+        size_t lengthSerialize(DuckContext& duck, uint8_t*& data, size_t& size, size_t length_bytes = 1) const;
 
         //!
-        //! Serialize a binary multiple_string_structure and append to a byte block with a leading byte length.
+        //! Serialize a binary multiple_string_structure and append to a byte block with a leading length field.
         //! @param [in,out] duck TSDuck execution context.
-        //! @param [in,out] data Byte bloc where to serialize the structure. The structure is added at the end.
+        //! @param [in,out] data Byte block where to serialize the structure. The structure is added at the end.
+        //! @param [in] length_bytes Size in bytes of the leading length field (1 byte by default).
+        //! @return The number of serialized bytes.
         //!
-        void lengthSerialize(DuckContext& duck, ByteBlock& data) const;
+        size_t lengthSerialize(DuckContext& duck, ByteBlock& data, size_t length_bytes = 1) const;
 
         //!
         //! Deserialize a binary multiple_string_structure.
@@ -259,21 +263,22 @@ namespace ts {
         bool deserialize(DuckContext& duck, const uint8_t*& buffer, size_t& buffer_size, size_t mss_size = NPOS, bool ignore_empty = false);
 
         //!
-        //! Deserialize a binary multiple_string_structure with a leading byte length.
+        //! Deserialize a binary multiple_string_structure with a leading length field.
         //! @param [in,out] duck TSDuck execution context.
         //! @param [in,out] buffer Address of the structure to deserialize.
         //! On return, it is updated to point after the structure.
         //! @param [in,out] buffer_size Size in bytes of the data buffer.
         //! On return, it is updated to the remaining size in the buffer.
+        //! @param [in] length_bytes Size in bytes of the leading length field (1 byte by default).
         //! @return True if the structure was successfully deserialized.
         //!
-        bool lengthDeserialize(DuckContext& duck, const uint8_t*& buffer, size_t& buffer_size);
+        bool lengthDeserialize(DuckContext& duck, const uint8_t*& buffer, size_t& buffer_size, size_t length_bytes = 1);
 
         //!
         //! A static method to display a binary multiple_string_structure.
         //! @param [in,out] display Display engine.
         //! @param [in] title Leading title to display. Can be empty.
-        //! @param [in] indent Indentation width.
+        //! @param [in] margin Left margin content.
         //! @param [in,out] buffer Address of the binary structure to display.
         //! On return, it is updated to point after the structure.
         //! @param [in,out] buffer_size Size in bytes of the data buffer.
@@ -282,7 +287,7 @@ namespace ts {
         //! possibly lower than the buffer size. If lower than @a buffer_size, adjust
         //! @a data and @a buffer_size to skip @a mss_size bytes.
         //!
-        static void Display(TablesDisplay& display, const UString& title, int indent, const uint8_t*& buffer, size_t& buffer_size, size_t mss_size = NPOS);
+        static void Display(TablesDisplay& display, const UString& title, const UString& margin, const uint8_t*& buffer, size_t& buffer_size, size_t mss_size = NPOS);
 
     private:
         class StringElement

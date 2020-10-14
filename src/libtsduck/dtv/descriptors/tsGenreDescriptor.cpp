@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
@@ -71,35 +72,18 @@ void ts::GenreDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::GenreDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::GenreDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(0xE0 | (attributes.size() & 0x1F)));
-    bbp->append(attributes);
-    serializeEnd(desc, bbp);
+    buf.putBits(0xFF, 3);
+    buf.putBits(attributes.size(), 5);
+    buf.putBytes(attributes);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::GenreDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::GenreDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    attributes.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size > 0;
-
-    if (_is_valid) {
-        const size_t count = data[0] & 0x1F;
-        _is_valid = 1 + count <= size;
-        if (_is_valid) {
-            attributes.copy(data + 1, count);
-        }
-    }
+    buf.skipBits(3);
+    const size_t count = buf.getBits<size_t>(5);
+    buf.getBytes(attributes, count);
 }
 
 
@@ -107,24 +91,16 @@ void ts::GenreDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::GenreDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::GenreDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    if (size > 0) {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
-        size_t count = data[0] & 0x1F;
-        data++; size--;
-
-        strm << margin << UString::Format(u"Attribute count: %d", {count}) << std::endl;
-        while (count > 0 && size > 0) {
-            strm << margin << " - Attribute: " << NameFromSection(u"ATSCGenreCode", data[0], names::FIRST) << std::endl;
-            data++; size--; count--;
+    if (buf.canReadBytes(1)) {
+        buf.skipBits(3);
+        size_t count = buf.getBits<size_t>(5);
+        disp << margin << UString::Format(u"Attribute count: %d", {count}) << std::endl;
+        while (count-- > 0 && buf.canReadBytes(1)) {
+            disp << margin << " - Attribute: " << NameFromSection(u"ATSCGenreCode", buf.getUInt8(), names::FIRST) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -151,7 +127,7 @@ bool ts::GenreDescriptor::analyzeXML(DuckContext& duck, const xml::Element* elem
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         uint8_t attr = 0;
-        ok = children[i]->getIntAttribute<uint8_t>(attr, u"value", true);
+        ok = children[i]->getIntAttribute(attr, u"value", true);
         attributes.push_back(attr);
     }
     return ok;

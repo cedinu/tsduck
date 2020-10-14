@@ -38,7 +38,7 @@
 namespace ts {
     //!
     //! Representation of a target_region_name_descriptor
-    //! @see ETSI 300 468, 6.4.13.
+    //! @see ETSI EN 300 468, 6.4.13.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL TargetRegionNameDescriptor : public AbstractDescriptor
@@ -80,14 +80,15 @@ namespace ts {
         TargetRegionNameDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual DID extendedTag() const override;
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

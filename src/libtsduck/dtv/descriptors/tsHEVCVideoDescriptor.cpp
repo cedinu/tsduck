@@ -35,6 +35,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -103,32 +104,31 @@ ts::HEVCVideoDescriptor::HEVCVideoDescriptor(DuckContext& duck, const Descriptor
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::HEVCVideoDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::HEVCVideoDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    bbp->appendUInt8(uint8_t((profile_space & 0x03) << 6) | (tier ? 0x20 : 0x00) | (profile_idc & 0x1F));
-    bbp->appendUInt32(profile_compatibility_indication);
-    bbp->appendUInt16((progressive_source    ? 0x8000 : 0x0000) |
-                      (interlaced_source     ? 0x4000 : 0x0000) |
-                      (non_packed_constraint ? 0x2000 : 0x0000) |
-                      (frame_only_constraint ? 0x1000 : 0x0000) |
-                      (uint16_t(copied_44bits >> 32) & 0x0FFF));
-    bbp->appendUInt32(uint32_t(copied_44bits));
-    bbp->appendUInt8(level_idc);
+    buf.putBits(profile_space, 2);
+    buf.putBit(tier);
+    buf.putBits(profile_idc, 5);
+    buf.putUInt32(profile_compatibility_indication);
+    buf.putBit(progressive_source);
+    buf.putBit(interlaced_source);
+    buf.putBit(non_packed_constraint);
+    buf.putBit(frame_only_constraint);
+    buf.putBits(copied_44bits, 44);
+    buf.putUInt8(level_idc);
     const bool temporal = temporal_id_min.set() && temporal_id_max.set();
-    bbp->appendUInt8((temporal ? 0x80 : 0x00) |
-                     (HEVC_still_present ? 0x40 : 0x00) |
-                     (HEVC_24hr_picture_present ? 0x20 : 0x00) |
-                     (sub_pic_hrd_params_not_present ? 0x10 : 0x00) |
-                     0x0C |
-                     (HDR_WCG_idc & 0x03));
+    buf.putBit(temporal);
+    buf.putBit(HEVC_still_present);
+    buf.putBit(HEVC_24hr_picture_present);
+    buf.putBit(sub_pic_hrd_params_not_present);
+    buf.putBits(0xFF, 2);
+    buf.putBits(HDR_WCG_idc, 2);
     if (temporal) {
-        bbp->appendUInt8(uint8_t((temporal_id_min.value() << 5) | 0x1F));
-        bbp->appendUInt8(uint8_t((temporal_id_max.value() << 5) | 0x1F));
+        buf.putBits(temporal_id_min.value(), 3);
+        buf.putBits(0xFF, 5);
+        buf.putBits(temporal_id_max.value(), 3);
+        buf.putBits(0xFF, 5);
     }
-
-    serializeEnd(desc, bbp);
 }
 
 
@@ -136,37 +136,29 @@ void ts::HEVCVideoDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::HEVCVideoDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::HEVCVideoDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && (desc.payloadSize() == 13 || desc.payloadSize() == 15);
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-
-        profile_space = (data[0] >> 6) & 0x03;
-        tier = (data[0] & 0x20) != 0;
-        profile_idc = data[0] & 0x1F;
-        profile_compatibility_indication = GetUInt32(data + 1);
-        progressive_source = (data[5] & 0x80) != 0;
-        interlaced_source = (data[5] & 0x40) != 0;
-        non_packed_constraint = (data[5] & 0x20) != 0;
-        frame_only_constraint = (data[5] & 0x10) != 0;
-        copied_44bits = (uint64_t(GetUInt16(data + 5) & 0x0FFF) << 32) | GetUInt32(data + 7);
-        level_idc = data[11];
-        const bool temporal = (data[12] & 0x80) != 0;
-        HEVC_still_present = (data[12] & 0x40) != 0;
-        HEVC_24hr_picture_present = (data[12] & 0x20) != 0;
-        sub_pic_hrd_params_not_present = (data[12] & 0x10) != 0;
-        HDR_WCG_idc = data[12] & 0x03;
-        temporal_id_min.clear();
-        temporal_id_max.clear();
-        if (temporal) {
-            _is_valid = desc.payloadSize() >= 15;
-            if (_is_valid) {
-                temporal_id_min = (data[13] >> 5) & 0x07;
-                temporal_id_max = (data[14] >> 5) & 0x07;
-            }
-        }
+    buf.getBits(profile_space, 2);
+    tier = buf.getBool();
+    buf.getBits(profile_idc, 5);
+    profile_compatibility_indication = buf.getUInt32();
+    progressive_source = buf.getBool();
+    interlaced_source = buf.getBool();
+    non_packed_constraint = buf.getBool();
+    frame_only_constraint = buf.getBool();
+    buf.getBits(copied_44bits, 44);
+    level_idc = buf.getUInt8();
+    const bool temporal = buf.getBool();
+    HEVC_still_present = buf.getBool();
+    HEVC_24hr_picture_present = buf.getBool();
+    sub_pic_hrd_params_not_present = buf.getBool();
+    buf.skipBits(2);
+    buf.getBits(HDR_WCG_idc, 2);
+    if (temporal) {
+        buf.getBits(temporal_id_min, 3);
+        buf.skipBits(5);
+        buf.getBits(temporal_id_max, 3);
+        buf.skipBits(5);
     }
 }
 
@@ -175,59 +167,33 @@ void ts::HEVCVideoDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::HEVCVideoDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::HEVCVideoDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
+    if (buf.canReadBytes(13)) {
+        disp << margin << "Profile space: " << buf.getBits<uint16_t>(2);
+        disp << ", tier: " << UString::TrueFalse(buf.getBool());
+        disp << ", profile IDC: " << buf.getBits<uint16_t>(5) << std::endl;
+        disp << margin << "Profile compatibility: " << UString::Hexa(buf.getUInt32()) << std::endl;
+        disp << margin << "Progressive source: " << UString::TrueFalse(buf.getBool());
+        disp << ", interlaced source: " << UString::TrueFalse(buf.getBool());
+        disp << ", non packed: " << UString::TrueFalse(buf.getBool());
+        disp << ", frame only: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        disp << margin << "Copied 44 bits: " << UString::Hexa(buf.getBits<uint64_t>(44), 11) << std::endl;
+        disp << margin << "Level IDC: " << int(buf.getUInt8());
+        const bool temporal = buf.getBool();
+        disp << ", still pictures: " << UString::TrueFalse(buf.getBool());
+        disp << ", 24-hour pictures: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        disp << margin << "No sub-pic HRD params: " << UString::TrueFalse(buf.getBool());
+        buf.skipBits(2);
+        disp << ", HDR WCG idc: " << buf.getBits<uint16_t>(2) << std::endl;
 
-    if (size >= 13) {
-
-        const int profile_space = (data[0] >> 6) & 0x03;
-        const bool tier = (data[0] & 0x20) != 0;
-        const int profile_idc = data[0] & 0x1F;
-        const uint32_t profile_compatibility_indication = GetUInt32(data + 1);
-        const bool progressive_source = (data[5] & 0x80) != 0;
-        const bool interlaced_source = (data[5] & 0x40) != 0;
-        const bool non_packed_constraint = (data[5] & 0x20) != 0;
-        const bool frame_only_constraint = (data[5] & 0x10) != 0;
-        const uint64_t copied_44bits = (uint64_t(GetUInt16(data + 5) & 0x0FFF) << 32) | GetUInt32(data + 7);
-        const int level_idc = data[11];
-        const bool temporal = (data[12] & 0x80) != 0;
-        const bool HEVC_still_present = (data[12] & 0x40) != 0;
-        const bool HEVC_24hr_picture_present = (data[12] & 0x20) != 0;
-        const bool sub_pic_hrd_params_not_present = (data[12] & 0x10) != 0;
-        const uint8_t HDR_WCG_idc = data[12] & 0x03;
-        data += 13; size -= 13;
-
-        strm << margin << "Profile space: " << profile_space
-             << ", tier: " << UString::TrueFalse(tier)
-             << ", profile IDC: " << profile_idc
-             << std::endl
-             << margin << "Profile compatibility: " << UString::Hexa(profile_compatibility_indication)
-             << std::endl
-             << margin << "Progressive source: " << UString::TrueFalse(progressive_source)
-             << ", interlaced source: " << UString::TrueFalse(interlaced_source)
-             << ", non packed: " << UString::TrueFalse(non_packed_constraint)
-             << ", frame only: " << UString::TrueFalse(frame_only_constraint)
-             << std::endl
-             << margin << "Copied 44 bits: " << UString::Hexa(copied_44bits, 11)
-             << std::endl
-             << margin << "Level IDC: " << level_idc
-             << ", still pictures: " << UString::TrueFalse(HEVC_still_present)
-             << ", 24-hour pictures: " << UString::TrueFalse(HEVC_24hr_picture_present)
-             << std::endl
-             << margin << "No sub-pic HRD params: " << UString::TrueFalse(sub_pic_hrd_params_not_present)
-             << ", HDR WCG idc: " << UString::Decimal(HDR_WCG_idc)
-             << std::endl;
-
-        if (temporal && size >= 2) {
-            strm << margin << "Temporal id min: " << int(data[0] >> 5) << ", max: " << int(data[1] >> 5) << std::endl;
-            data += 2; size -= 2;
+        if (temporal && buf.canReadBytes(2)) {
+            disp << margin << "Temporal id min: " << buf.getBits<uint16_t>(3);
+            buf.skipBits(5);
+            disp << ", max: " << buf.getBits<uint16_t>(3) << std::endl;
+            buf.skipBits(5);
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -263,24 +229,24 @@ void ts::HEVCVideoDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 bool ts::HEVCVideoDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     bool ok =
-        element->getIntAttribute<uint8_t>(profile_space, u"profile_space", true, 0, 0x00, 0x03) &&
+        element->getIntAttribute(profile_space, u"profile_space", true, 0, 0x00, 0x03) &&
         element->getBoolAttribute(tier, u"tier_flag", true) &&
-        element->getIntAttribute<uint8_t>(profile_idc, u"profile_idc", true, 0, 0x00, 0x1F) &&
-        element->getIntAttribute<uint32_t>(profile_compatibility_indication, u"profile_compatibility_indication", true) &&
+        element->getIntAttribute(profile_idc, u"profile_idc", true, 0, 0x00, 0x1F) &&
+        element->getIntAttribute(profile_compatibility_indication, u"profile_compatibility_indication", true) &&
         element->getBoolAttribute(progressive_source, u"progressive_source_flag", true) &&
         element->getBoolAttribute(interlaced_source, u"interlaced_source_flag", true) &&
         element->getBoolAttribute(non_packed_constraint, u"non_packed_constraint_flag", true) &&
         element->getBoolAttribute(frame_only_constraint, u"frame_only_constraint_flag", true) &&
         // copied_44bits and reserved_zero_44bits are synonyms
-        element->getIntAttribute<uint64_t>(copied_44bits, u"copied_44bits", false, 0, 0, TS_UCONST64(0x00000FFFFFFFFFFF)) &&
-        element->getIntAttribute<uint64_t>(copied_44bits, u"reserved_zero_44bits", false, copied_44bits, 0, TS_UCONST64(0x00000FFFFFFFFFFF)) &&
-        element->getIntAttribute<uint8_t>(level_idc, u"level_idc", true) &&
+        element->getIntAttribute(copied_44bits, u"copied_44bits", false, 0, 0, TS_UCONST64(0x00000FFFFFFFFFFF)) &&
+        element->getIntAttribute(copied_44bits, u"reserved_zero_44bits", false, copied_44bits, 0, TS_UCONST64(0x00000FFFFFFFFFFF)) &&
+        element->getIntAttribute(level_idc, u"level_idc", true) &&
         element->getBoolAttribute(HEVC_still_present, u"HEVC_still_present_flag", true) &&
         element->getBoolAttribute(HEVC_24hr_picture_present, u"HEVC_24hr_picture_present_flag", true) &&
         element->getBoolAttribute(sub_pic_hrd_params_not_present, u"sub_pic_hrd_params_not_present", false, true) &&
-        element->getIntAttribute<uint8_t>(HDR_WCG_idc, u"HDR_WCG_idc", false, 3, 0, 3) &&
-        element->getOptionalIntAttribute<uint8_t>(temporal_id_min, u"temporal_id_min", 0x00, 0x07) &&
-        element->getOptionalIntAttribute<uint8_t>(temporal_id_max, u"temporal_id_max", 0x00, 0x07);
+        element->getIntAttribute(HDR_WCG_idc, u"HDR_WCG_idc", false, 3, 0, 3) &&
+        element->getOptionalIntAttribute(temporal_id_min, u"temporal_id_min", 0x00, 0x07) &&
+        element->getOptionalIntAttribute(temporal_id_max, u"temporal_id_max", 0x00, 0x07);
 
     if (ok && temporal_id_min.set() + temporal_id_max.set() == 1) {
         element->report().error(u"line %d: in <%s>, attributes 'temporal_id_min' and 'temporal_id_max' must be both present or both omitted", {element->lineNumber(), element->name()});

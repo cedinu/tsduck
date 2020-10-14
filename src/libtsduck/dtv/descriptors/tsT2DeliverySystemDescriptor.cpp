@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -98,42 +99,51 @@ ts::T2DeliverySystemDescriptor::Subcell::Subcell() :
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::T2DeliverySystemDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::T2DeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::T2DeliverySystemDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
-    bbp->appendUInt8(plp_id);
-    bbp->appendUInt16(T2_system_id);
+    buf.putUInt8(plp_id);
+    buf.putUInt16(T2_system_id);
     if (has_extension) {
-        bbp->appendUInt8(uint8_t((SISO_MISO & 0x03) << 6) |
-                         uint8_t((bandwidth & 0x0F) << 2) |
-                         0x03);
-        bbp->appendUInt8(uint8_t((guard_interval & 0x07) << 5) |
-                         uint8_t((transmission_mode & 0x07) << 2) |
-                         (other_frequency ? 0x02 : 0x00) |
-                         (tfs ? 0x01 : 0x00));
+        buf.putBits(SISO_MISO, 2);
+        buf.putBits(bandwidth, 4);
+        buf.putBits(0xFF, 2);
+        buf.putBits(guard_interval, 3);
+        buf.putBits(transmission_mode, 3);
+        buf.putBit(other_frequency);
+        buf.putBit(tfs);
         for (auto it1 = cells.begin(); it1 != cells.end(); ++it1) {
-            bbp->appendUInt16(it1->cell_id);
+            buf.putUInt16(it1->cell_id);
             if (tfs) {
-                bbp->appendUInt8(uint8_t(4 * it1->centre_frequency.size()));
+                buf.pushWriteSequenceWithLeadingLength(8); // frequency_loop_length
                 for (auto it2 = it1->centre_frequency.begin(); it2 != it1->centre_frequency.end(); ++it2) {
-                    bbp->appendUInt32(uint32_t(*it2 / 10)); // encoded in units of 10 Hz
+                    buf.putUInt32(uint32_t(*it2 / 10)); // encoded in units of 10 Hz
                 }
+                buf.popState(); // update frequency_loop_length
             }
             else {
-                bbp->appendUInt32(uint32_t((it1->centre_frequency.empty() ? 0 : it1->centre_frequency.front()) / 10)); // encoded in units of 10 Hz
+                buf.putUInt32(uint32_t((it1->centre_frequency.empty() ? 0 : it1->centre_frequency.front()) / 10)); // encoded in units of 10 Hz
             }
-            bbp->appendUInt8(uint8_t(5 * it1->subcells.size()));
+            buf.pushWriteSequenceWithLeadingLength(8); // subcell_info_loop_length
             for (auto it2 = it1->subcells.begin(); it2 != it1->subcells.end(); ++it2) {
-                bbp->appendUInt8(it2->cell_id_extension);
-                bbp->appendUInt32(uint32_t(it2->transposer_frequency / 10)); // encoded in units of 10 Hz
+                buf.putUInt8(it2->cell_id_extension);
+                buf.putUInt32(uint32_t(it2->transposer_frequency / 10)); // encoded in units of 10 Hz
             }
+            buf.popState(); // update subcell_info_loop_length
         }
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -141,84 +151,49 @@ void ts::T2DeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor& de
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::T2DeliverySystemDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::T2DeliverySystemDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    has_extension = false;
-    cells.clear();
+    plp_id = buf.getUInt8();
+    T2_system_id = buf.getUInt16();
+    has_extension = buf.canRead();
 
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4 && data[0] == MY_EDID;
-
-    if (_is_valid) {
-        plp_id = data[1];
-        T2_system_id = GetUInt16(data + 2);
-        data += 4; size -= 4;
-
-        _is_valid = size == 0 || size >= 2;
-        has_extension = size >= 2;
-
-        if (has_extension) {
-            SISO_MISO = (data[0] >> 6) & 0x03;
-            bandwidth = (data[0] >> 2) & 0x0F;
-            guard_interval = (data[1] >> 5) & 0x07;
-            transmission_mode = (data[1] >> 2) & 0x07;
-            other_frequency = (data[1] & 0x02) != 0;
-            tfs = (data[1] & 0x01) != 0;
-            data += 2; size -= 2;
-
-            while (size >= 3) {
-                Cell cell;
-                cell.cell_id = GetUInt16(data);
-                data += 2; size -= 2;
-
-                if (tfs) {
-                    size_t len = data[0];
-                    data++; size--;
-                    while (len >= 4 && size >= 4) {
-                        cell.centre_frequency.push_back(uint64_t(GetUInt32(data)) * 10); // encoded unit is 10 Hz
-                        data += 4; size -= 4; len -= 4;
-                    }
-                    if (len > 0) {
-                        _is_valid = false;
-                        return;
-                    }
+    if (has_extension) {
+        buf.getBits(SISO_MISO, 2);
+        buf.getBits(bandwidth, 4);
+        buf.skipBits(2);
+        buf.getBits(guard_interval, 3);
+        buf.getBits(transmission_mode, 3);
+        other_frequency = buf.getBool();
+        tfs = buf.getBool();
+        while (buf.canRead()) {
+            Cell cell;
+            cell.cell_id = buf.getUInt16();
+            if (tfs) {
+                buf.pushReadSizeFromLength(8); // frequency_loop_length
+                while (buf.canRead()) {
+                    cell.centre_frequency.push_back(uint64_t(buf.getUInt32()) * 10); // encoded unit is 10 Hz
                 }
-                else if (size < 4) {
-                    _is_valid = false;
-                    return;
-                }
-                else {
-                    cell.centre_frequency.push_back(uint64_t(GetUInt32(data)) * 10); // encoded unit is 10 Hz
-                    data += 4; size -= 4;
-                }
-
-                if (size < 1) {
-                    _is_valid = false;
-                    return;
-                }
-
-                size_t len = data[0];
-                data++; size--;
-                while (len >= 5 && size >= 5) {
-                    Subcell subcell;
-                    subcell.cell_id_extension = data[0];
-                    subcell.transposer_frequency = uint64_t(GetUInt32(data + 1)) * 10; // encoded unit is 10 Hz
-                    data += 5; size -= 5; len -= 5;
-                    cell.subcells.push_back(subcell);
-                }
-
-                cells.push_back(cell);
+                buf.popState(); // frequency_loop_length
             }
-
-            _is_valid = size == 0;
+            else {
+                cell.centre_frequency.push_back(uint64_t(buf.getUInt32()) * 10); // encoded unit is 10 Hz
+            }
+            buf.pushReadSizeFromLength(8); // subcell_info_loop_length
+            while (buf.canRead()) {
+                Subcell subcell;
+                subcell.cell_id_extension = buf.getUInt8();
+                subcell.transposer_frequency = uint64_t(buf.getUInt32()) * 10; // encoded unit is 10 Hz
+                cell.subcells.push_back(subcell);
+            }
+            buf.popState(); // subcell_info_loop_length
+            cells.push_back(cell);
         }
     }
 }
 
 
 //----------------------------------------------------------------------------
-// Enumerations for XML and display.
+// Enumerations for XML and disp.
 //----------------------------------------------------------------------------
 
 namespace {
@@ -258,73 +233,43 @@ namespace {
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::T2DeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::T2DeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
+    if (buf.canReadBytes(3)) {
+        disp << margin << UString::Format(u"PLP id: 0x%X (%<d)", {buf.getUInt8()});
+        disp << UString::Format(u", T2 system id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
 
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
+        if (buf.canReadBytes(2)) {
+            disp << margin << "SISO/MISO: " << SisoNames.name(buf.getBits<uint8_t>(2)) << std::endl;
+            disp << margin << "Bandwidth: " << BandwidthNames.name(buf.getBits<uint8_t>(4)) << std::endl;
+            buf.skipBits(2);
+            disp << margin << "Guard interval: " << GuardIntervalNames.name(buf.getBits<uint8_t>(3)) << std::endl;
+            disp << margin << "Transmission mode: " << TransmissionModeNames.name(buf.getBits<uint8_t>(3)) << std::endl;
+            disp << margin << UString::Format(u"Other frequency: %s", {buf.getBool()}) << std::endl;
+            const bool tfs = buf.getBool();
+            disp << margin << UString::Format(u"TFS arrangement: %s", {tfs}) << std::endl;
 
-    if (size >= 3) {
-        const uint8_t plp = data[0];
-        const uint16_t sys = GetUInt16(data + 1);
-        data += 3; size -= 3;
-        strm << margin << UString::Format(u"PLP id: 0x%X (%d), T2 system id: 0x%X (%d)", {plp, plp, sys, sys}) << std::endl;
-
-        if (size >= 2) {
-            const bool tfs = (data[1] & 0x01) != 0;
-            strm << margin << UString::Format(u"SISO/MISO: %s", {SisoNames.name((data[0] >> 6) & 0x03)}) << std::endl
-                 << margin << UString::Format(u"Bandwidth: %s", {BandwidthNames.name((data[0] >> 2) & 0x0F)}) << std::endl
-                 << margin << UString::Format(u"Guard interval: %s", {GuardIntervalNames.name((data[1] >> 5) & 0x07)}) << std::endl
-                 << margin << UString::Format(u"Transmission mode: %s", {TransmissionModeNames.name((data[1] >> 2) & 0x07)}) << std::endl
-                 << margin << UString::Format(u"Other frequency: %s", {(data[1] & 0x02) != 0}) << std::endl
-                 << margin << UString::Format(u"TFS arrangement: %s", {tfs}) << std::endl;
-            data += 2; size -= 2;
-
-            while (size >= 3) {
-                const uint16_t cell = GetUInt16(data);
-                data += 2; size -= 2;
-                strm << margin << UString::Format(u"- Cell id: 0x%X (%d)", {cell, cell}) << std::endl;
-
+            while (buf.canReadBytes(3)) {
+                disp << margin << UString::Format(u"- Cell id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
                 if (tfs) {
-                    size_t len = data[0];
-                    data++; size--;
-                    while (len >= 4 && size >= 4) {
-                        strm << margin << UString::Format(u"  Centre frequency: %'d Hz", {uint64_t(GetUInt32(data)) * 10}) << std::endl;
-                        data += 4; size -= 4; len -= 4;
+                    buf.pushReadSizeFromLength(8); // frequency_loop_length
+                    while (buf.canRead()) {
+                        disp << margin << UString::Format(u"  Centre frequency: %'d Hz", {uint64_t(buf.getUInt32()) * 10}) << std::endl;
                     }
-                    if (len > 0) {
-                        break;
-                    }
+                    buf.popState(); // frequency_loop_length
                 }
-                else if (size < 4) {
-                    break;
+                else if (buf.canReadBytes(4)) {
+                    disp << margin << UString::Format(u"  Centre frequency: %'d Hz", {uint64_t(buf.getUInt32()) * 10}) << std::endl;
                 }
-                else {
-                    strm << margin << UString::Format(u"  Centre frequency: %'d Hz", {uint64_t(GetUInt32(data)) * 10}) << std::endl;
-                    data += 4; size -= 4;
+                buf.pushReadSizeFromLength(8); // subcell_info_loop_length
+                while (buf.canReadBytes(5)) {
+                    disp << margin << UString::Format(u"  Cell id ext: 0x%X (%<d)", {buf.getUInt8()});
+                    disp << UString::Format(u", transp. frequency: %'d Hz", {uint64_t(buf.getUInt32()) * 10}) << std::endl;
                 }
-
-                if (size < 1) {
-                    break;
-                }
-
-                size_t len = data[0];
-                data++; size--;
-                while (len >= 5 && size >= 5) {
-                    strm << margin
-                         << UString::Format(u"  Cell id ext: 0x%X (%d), transp. frequency: %'d Hz", {data[0], data[0], uint64_t(GetUInt32(data + 1)) * 10})
-                         << std::endl;
-                    data += 5; size -= 5; len -= 5;
-                }
+                buf.popState(); // subcell_info_loop_length
             }
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 

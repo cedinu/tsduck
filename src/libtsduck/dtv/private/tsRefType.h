@@ -4,6 +4,7 @@
     REF_TYPE(BIT);
     REF_TYPE(CableEmergencyAlertTable);
     REF_TYPE(CAT);
+    REF_TYPE(CIT);
     REF_TYPE(CVCT);
     REF_TYPE(DCCSCT);
     REF_TYPE(DCCT);
@@ -22,6 +23,7 @@
     REF_TYPE(PAT);
     REF_TYPE(PCAT);
     REF_TYPE(PMT);
+    REF_TYPE(RNT);
     REF_TYPE(RRT);
     REF_TYPE(RST);
     REF_TYPE(SDT);
@@ -57,6 +59,7 @@
     REF_TYPE(AudioStreamDescriptor);
     REF_TYPE(AVCTimingAndHRDDescriptor);
     REF_TYPE(AVCVideoDescriptor);
+    REF_TYPE(BasicLocalEventDescriptor);
     REF_TYPE(BoardInformationDescriptor);
     REF_TYPE(BouquetNameDescriptor);
     REF_TYPE(BroadcasterNameDescriptor);
@@ -79,6 +82,8 @@
     REF_TYPE(ContentAdvisoryDescriptor);
     REF_TYPE(ContentAvailabilityDescriptor);
     REF_TYPE(ContentDescriptor);
+    REF_TYPE(ContentIdentifierDescriptor);
+    REF_TYPE(ContentLabellingDescriptor);
     REF_TYPE(CopyrightDescriptor);
     REF_TYPE(CountryAvailabilityDescriptor);
     REF_TYPE(CPDescriptor);
@@ -139,6 +144,8 @@
     REF_TYPE(FTAContentManagementDescriptor);
     REF_TYPE(GenreDescriptor);
     REF_TYPE(GraphicsConstraintsDescriptor);
+    REF_TYPE(GreenExtensionDescriptor);
+    REF_TYPE(HEVCHierarchyExtensionDescriptor);
     REF_TYPE(HEVCTimingAndHRDDescriptor);
     REF_TYPE(HEVCVideoDescriptor);
     REF_TYPE(HierarchicalTransmissionDescriptor);
@@ -161,12 +168,16 @@
     REF_TYPE(LogoTransmissionDescriptor);
     REF_TYPE(MaximumBitrateDescriptor);
     REF_TYPE(MessageDescriptor);
+    REF_TYPE(MetadataDescriptor);
+    REF_TYPE(MetadataPointerDescriptor);
     REF_TYPE(MetadataSTDDescriptor);
     REF_TYPE(MosaicDescriptor);
     REF_TYPE(MPEG2AACAudioDescriptor);
     REF_TYPE(MPEG2StereoscopicVideoFormatDescriptor);
     REF_TYPE(MPEG4AudioDescriptor);
     REF_TYPE(MPEG4VideoDescriptor);
+    REF_TYPE(MPEGH3DAudioDescriptor);
+    REF_TYPE(MPEGH3DAudioMultiStreamDescriptor);
     REF_TYPE(MultilingualBouquetNameDescriptor);
     REF_TYPE(MultilingualComponentDescriptor);
     REF_TYPE(MultilingualNetworkNameDescriptor);
@@ -174,6 +185,7 @@
     REF_TYPE(MultiplexBufferDescriptor);
     REF_TYPE(MultiplexBufferUtilizationDescriptor);
     REF_TYPE(MVCExtensionDescriptor);
+    REF_TYPE(MVCOperationPointDescriptor);
     REF_TYPE(NetworkChangeNotifyDescriptor);
     REF_TYPE(NetworkNameDescriptor);
     REF_TYPE(NodeRelationDescriptor);
@@ -193,6 +205,7 @@
     REF_TYPE(RedistributionControlDescriptor);
     REF_TYPE(ReferenceDescriptor);
     REF_TYPE(RegistrationDescriptor);
+    REF_TYPE(RelatedContentDescriptor);
     REF_TYPE(S2SatelliteDeliverySystemDescriptor);
     REF_TYPE(S2XSatelliteDeliverySystemDescriptor);
     REF_TYPE(SatelliteDeliverySystemDescriptor);
@@ -230,6 +243,7 @@
     REF_TYPE(SSUMessageDescriptor);
     REF_TYPE(SSUSubgroupAssociationDescriptor);
     REF_TYPE(SSUURIDescriptor);
+    REF_TYPE(STCReferenceDescriptor);
     REF_TYPE(STDDescriptor);
     REF_TYPE(StereoscopicProgramInfoDescriptor);
     REF_TYPE(StereoscopicVideoInfoDescriptor);
@@ -265,6 +279,7 @@
     REF_TYPE(TransportProtocolDescriptor);
     REF_TYPE(TransportStreamDescriptor);
     REF_TYPE(TSInformationDescriptor);
+    REF_TYPE(TVAIdDescriptor);
     REF_TYPE(UpdateDescriptor);
     REF_TYPE(URILinkageDescriptor);
     REF_TYPE(VBIDataDescriptor);
@@ -273,3 +288,4 @@
     REF_TYPE(VideoDepthRangeDescriptor);
     REF_TYPE(VideoStreamDescriptor);
     REF_TYPE(VideoWindowDescriptor);
+    REF_TYPE(VirtualSegmentationDescriptor);

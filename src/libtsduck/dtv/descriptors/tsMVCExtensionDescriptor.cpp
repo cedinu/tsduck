@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -88,20 +89,19 @@ ts::MVCExtensionDescriptor::MVCExtensionDescriptor(DuckContext& duck, const Desc
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::MVCExtensionDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::MVCExtensionDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(average_bitrate);
-    bbp->appendUInt16(maximum_bitrate);
-    bbp->appendUInt24((view_association_not_present ? 0x800000 : 0x000000) |
-                      (base_view_is_left_eyeview ? 0x700000 : 0x300000) |
-                      (uint32_t(view_order_index_min & 0x03FF) << 10) |
-                      (view_order_index_max & 0x03FF));
-    bbp->appendUInt8(uint8_t(temporal_id_start << 5) |
-                     uint8_t((temporal_id_end & 0x07) << 2) |
-                     (no_sei_nal_unit_present ? 0x02 : 0x00) |
-                     (no_prefix_nal_unit_present ? 0x01 : 0x00));
-    serializeEnd(desc, bbp);
+    buf.putUInt16(average_bitrate);
+    buf.putUInt16(maximum_bitrate);
+    buf.putBit(view_association_not_present);
+    buf.putBit(base_view_is_left_eyeview);
+    buf.putBits(0xFF, 2);
+    buf.putBits(view_order_index_min, 10);
+    buf.putBits(view_order_index_max, 10);
+    buf.putBits(temporal_id_start, 3);
+    buf.putBits(temporal_id_end, 3);
+    buf.putBit(no_sei_nal_unit_present);
+    buf.putBit(no_prefix_nal_unit_present);
 }
 
 
@@ -109,26 +109,19 @@ void ts::MVCExtensionDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::MVCExtensionDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::MVCExtensionDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 8;
-
-    if (_is_valid) {
-        average_bitrate = GetUInt16(data);
-        maximum_bitrate = GetUInt16(data + 2);
-        const uint32_t val = GetUInt24(data + 4);
-        view_association_not_present = (val & 0x800000) != 0;
-        base_view_is_left_eyeview = (val & 0x400000) != 0;
-        view_order_index_min = uint16_t((val >> 10) & 0x03FF);
-        view_order_index_max = uint16_t(val & 0x03FF);
-        temporal_id_start = (data[7] >> 5) & 0x07;
-        temporal_id_end = (data[7] >> 2) & 0x07;
-        no_sei_nal_unit_present = (data[7] & 0x02) != 0;
-        no_prefix_nal_unit_present = (data[7] & 0x01) != 0;
-    }
+    average_bitrate = buf.getUInt16();
+    maximum_bitrate = buf.getUInt16();
+    view_association_not_present = buf.getBool();
+    base_view_is_left_eyeview = buf.getBool();
+    buf.skipBits(2);
+    buf.getBits(view_order_index_min, 10);
+    buf.getBits(view_order_index_max, 10);
+    buf.getBits(temporal_id_start, 3);
+    buf.getBits(temporal_id_end, 3);
+    no_sei_nal_unit_present = buf.getBool();
+    no_prefix_nal_unit_present = buf.getBool();
 }
 
 
@@ -136,25 +129,21 @@ void ts::MVCExtensionDescriptor::deserialize(DuckContext& duck, const Descriptor
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::MVCExtensionDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::MVCExtensionDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 8) {
-        const uint32_t val = GetUInt24(data + 4);
-        strm << margin << UString::Format(u"Average bitrate: %d kb/s, maximum: %d kb/s", {GetUInt16(data), GetUInt16(data + 2)}) << std::endl
-             << margin << UString::Format(u"View association not present: %s", {(val & 0x800000) != 0}) << std::endl
-             << margin << UString::Format(u"Base view is left eyeview: %s", {(val & 0x400000) != 0}) << std::endl
-             << margin << UString::Format(u"View order min: %d, max: %d", {(val >> 10) & 0x03FF, val & 0x03FF}) << std::endl
-             << margin << UString::Format(u"Temporal id start: %d, end: %d", {(data[7] >> 5) & 0x07, (data[7] >> 2) & 0x07}) << std::endl
-             << margin << UString::Format(u"No SEI NALunit present: %s", {(data[7] & 0x02) != 0}) << std::endl
-             << margin << UString::Format(u"No prefix NALunit present: %s", {(data[7] & 0x01) != 0}) << std::endl;
-        data += 8; size -= 8;
+    if (buf.canReadBytes(8)) {
+        disp << margin << UString::Format(u"Average bitrate: %d kb/s", {buf.getUInt16()});
+        disp << UString::Format(u", maximum: %d kb/s", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"View association not present: %s", {buf.getBool()}) << std::endl;
+        disp << margin << UString::Format(u"Base view is left eyeview: %s", {buf.getBool()}) << std::endl;
+        buf.skipBits(2);
+        disp << margin << UString::Format(u"View order min: %d", {buf.getBits<uint16_t>(10)});
+        disp << UString::Format(u", max: %d", {buf.getBits<uint16_t>(10)}) << std::endl;
+        disp << margin << UString::Format(u"Temporal id start: %d", {buf.getBits<uint8_t>(3)});
+        disp << UString::Format(u", end: %d", {buf.getBits<uint8_t>(3)}) << std::endl;
+        disp << margin << UString::Format(u"No SEI NALunit present: %s", {buf.getBool()}) << std::endl;
+        disp << margin << UString::Format(u"No prefix NALunit present: %s", {buf.getBool()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -183,14 +172,14 @@ void ts::MVCExtensionDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 
 bool ts::MVCExtensionDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return  element->getIntAttribute<uint16_t>(average_bitrate, u"average_bitrate", true) &&
-            element->getIntAttribute<uint16_t>(maximum_bitrate, u"maximum_bitrate", true) &&
+    return  element->getIntAttribute(average_bitrate, u"average_bitrate", true) &&
+            element->getIntAttribute(maximum_bitrate, u"maximum_bitrate", true) &&
             element->getBoolAttribute(view_association_not_present, u"view_association_not_present", true) &&
             element->getBoolAttribute(base_view_is_left_eyeview, u"base_view_is_left_eyeview", true) &&
-            element->getIntAttribute<uint16_t>(view_order_index_min, u"view_order_index_min", true, 0, 0x0000, 0x03FF) &&
-            element->getIntAttribute<uint16_t>(view_order_index_max, u"view_order_index_max", true, 0, 0x0000, 0x03FF) &&
-            element->getIntAttribute<uint8_t>(temporal_id_start, u"temporal_id_start", true, 0, 0x00, 0x07) &&
-            element->getIntAttribute<uint8_t>(temporal_id_end, u"temporal_id_end", true, 0, 0x00, 0x07) &&
+            element->getIntAttribute(view_order_index_min, u"view_order_index_min", true, 0, 0x0000, 0x03FF) &&
+            element->getIntAttribute(view_order_index_max, u"view_order_index_max", true, 0, 0x0000, 0x03FF) &&
+            element->getIntAttribute(temporal_id_start, u"temporal_id_start", true, 0, 0x00, 0x07) &&
+            element->getIntAttribute(temporal_id_end, u"temporal_id_end", true, 0, 0x00, 0x07) &&
             element->getBoolAttribute(no_sei_nal_unit_present, u"no_sei_nal_unit_present", true) &&
             element->getBoolAttribute(no_prefix_nal_unit_present, u"no_prefix_nal_unit_present", true);
 }

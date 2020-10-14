@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsMJD.h"
@@ -84,20 +85,21 @@ void ts::SeriesDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SeriesDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SeriesDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(series_id);
-    bbp->appendUInt8(uint8_t(repeat_label << 4) | uint8_t((program_pattern & 0x07) << 1) | (expire_date.set() ? 0x01 : 0x00));
+    buf.putUInt16(series_id);
+    buf.putBits(repeat_label, 4);
+    buf.putBits(program_pattern, 3);
+    buf.putBit(expire_date.set());
     if (expire_date.set()) {
-        EncodeMJD(expire_date.value(), bbp->enlarge(2), 2);  // date only
+        buf.putMJD(expire_date.value(), 2);  // 2 bytes, date only
     }
     else {
-        bbp->appendUInt16(0xFFFF);
+        buf.putUInt16(0xFFFF);
     }
-    bbp->appendUInt24(uint32_t(uint32_t(episode_number & 0x0FFF) << 12) | (last_episode_number & 0x0FFF));
-    bbp->append(duck.encoded(series_name));
-    serializeEnd(desc, bbp);
+    buf.putBits(episode_number, 12);
+    buf.putBits(last_episode_number, 12);
+    buf.putString(series_name);
 }
 
 
@@ -105,27 +107,20 @@ void ts::SeriesDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::SeriesDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SeriesDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 8;
-    expire_date.clear();
-    series_name.clear();
-
-    if (_is_valid) {
-        series_id = GetUInt16(data);
-        repeat_label = (data[2] >> 4) & 0x0F;
-        program_pattern = (data[2] >> 1) & 0x07;
-        if ((data[2] & 0x01) != 0) {
-            Time date;
-            DecodeMJD(data + 3, 2, date);
-            expire_date = date;
-        }
-        episode_number = (GetUInt16(data + 5) >> 4) & 0x0FFF;
-        last_episode_number = GetUInt16(data + 6) & 0x0FFF;
-        duck.decode(series_name, data + 8, size - 8);
+    series_id = buf.getUInt16();
+    buf.getBits(repeat_label, 4);
+    buf.getBits(program_pattern, 3);
+    if (buf.getBool()) {
+        expire_date = buf.getMJD(2);  // 2 bytes, date only
     }
+    else {
+        buf.skipBits(16);
+    }
+    buf.getBits(episode_number, 12);
+    buf.getBits(last_episode_number, 12);
+    buf.getString(series_name);
 }
 
 
@@ -133,33 +128,18 @@ void ts::SeriesDescriptor::deserialize(DuckContext& duck, const Descriptor& desc
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SeriesDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SeriesDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size < 8) {
-        display.displayExtraData(data, size, indent);
-    }
-    else {
-        const uint16_t id = GetUInt16(data);
-        const uint8_t repeat = (data[2] >> 4) & 0x0F;
-        const uint8_t pattern = (data[2] >> 1) & 0x07;
-        const bool date_valid = (data[2] & 0x01) != 0;
-        Time date;
-        if (date_valid) {
-            DecodeMJD(data + 3, 2, date);
-        }
-        const uint16_t episode = (GetUInt16(data + 5) >> 4) & 0x0FFF;
-        const uint16_t last = GetUInt16(data + 6) & 0x0FFF;
-
-        strm << margin << UString::Format(u"Series id: 0x%X (%d)", {id, id}) << std::endl
-             << margin << UString::Format(u"Repeat label: %d", {repeat, repeat}) << std::endl
-             << margin << "Program pattern: " << NameFromSection(u"ISDBProgramPattern", pattern, names::DECIMAL_FIRST) << std::endl
-             << margin << "Expire date: " << (date_valid ? date.format(Time::DATE) : u"unspecified") << std::endl
-             << margin << UString::Format(u"Episode: %d/%d", {episode, last}) << std::endl
-             << margin << "Series name: \"" << duck.decoded(data + 8, size - 8) << u"\"" << std::endl;
+    if (buf.canReadBytes(8)) {
+        disp << margin << UString::Format(u"Series id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Repeat label: %d", {buf.getBits<uint8_t>(4)}) << std::endl;
+        disp << margin << "Program pattern: " << NameFromSection(u"ISDBProgramPattern", buf.getBits<uint8_t>(3), names::DECIMAL_FIRST) << std::endl;
+        const bool date_valid = buf.getBool();
+        const Time exp(buf.getMJD(2));
+        disp << margin << "Expire date: " << (date_valid ? exp.format(Time::DATE) : u"unspecified") << std::endl;
+        disp << margin << UString::Format(u"Episode: %d", {buf.getBits<uint16_t>(12)});
+        disp << UString::Format(u"/%d", {buf.getBits<uint16_t>(12)}) << std::endl;
+        disp << margin << "Series name: \"" << buf.getString() << u"\"" << std::endl;
     }
 }
 
@@ -189,11 +169,11 @@ void ts::SeriesDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 bool ts::SeriesDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     bool ok =
-        element->getIntAttribute<uint16_t>(series_id, u"series_id", true) &&
-        element->getIntAttribute<uint8_t>(repeat_label, u"repeat_label", true, 0, 0, 15) &&
-        element->getIntAttribute<uint8_t>(program_pattern, u"program_pattern", true, 0, 0, 7) &&
-        element->getIntAttribute<uint16_t>(episode_number, u"episode_number", true, 0, 0, 0x0FFF) &&
-        element->getIntAttribute<uint16_t>(last_episode_number, u"last_episode_number", true, 0, 0, 0x0FFF) &&
+        element->getIntAttribute(series_id, u"series_id", true) &&
+        element->getIntAttribute(repeat_label, u"repeat_label", true, 0, 0, 15) &&
+        element->getIntAttribute(program_pattern, u"program_pattern", true, 0, 0, 7) &&
+        element->getIntAttribute(episode_number, u"episode_number", true, 0, 0, 0x0FFF) &&
+        element->getIntAttribute(last_episode_number, u"last_episode_number", true, 0, 0, 0x0FFF) &&
         element->getAttribute(series_name, u"series_name");
 
     if (ok && element->hasAttribute(u"expire_date")) {

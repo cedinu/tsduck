@@ -33,6 +33,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -79,25 +80,32 @@ ts::C2BundleDeliverySystemDescriptor::Entry::Entry() :
 }
 
 
+//----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::C2BundleDeliverySystemDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
 
 //----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::C2BundleDeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::C2BundleDeliverySystemDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
     for (auto it = entries.begin(); it != entries.end(); ++it) {
-        bbp->appendUInt8(it->plp_id);
-        bbp->appendUInt8(it->data_slice_id);
-        bbp->appendUInt32(it->C2_system_tuning_frequency);
-        bbp->appendUInt8(uint8_t((it->C2_system_tuning_frequency_type & 0x03) << 6) |
-                         uint8_t((it->active_OFDM_symbol_duration & 0x07) << 3) |
-                         (it->guard_interval & 0x07));
-        bbp->appendUInt8(it->master_channel ? 0xFF : 0x7F);
+        buf.putUInt8(it->plp_id);
+        buf.putUInt8(it->data_slice_id);
+        buf.putUInt32(it->C2_system_tuning_frequency);
+        buf.putBits(it->C2_system_tuning_frequency_type, 2);
+        buf.putBits(it->active_OFDM_symbol_duration, 3);
+        buf.putBits(it->guard_interval, 3);
+        buf.putBit(it->master_channel);
+        buf.putBits(0x00, 7); // reserved_zero_future_use
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -105,27 +113,19 @@ void ts::C2BundleDeliverySystemDescriptor::serialize(DuckContext& duck, Descript
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::C2BundleDeliverySystemDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::C2BundleDeliverySystemDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    entries.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size % 8 == 1 && data[0] == MY_EDID;
-    data++; size--;
-
-    while (_is_valid && size >= 8) {
+    while (buf.canRead()) {
         Entry e;
-        e.plp_id = data[0];
-        e.data_slice_id = data[1];
-        e.C2_system_tuning_frequency = GetUInt32(data + 2);
-        e.C2_system_tuning_frequency_type = (data[6] >> 6) & 0x03;
-        e.active_OFDM_symbol_duration = (data[6] >> 3) & 0x07;
-        e.guard_interval = data[6] & 0x07;
-        e.master_channel = (data[7] & 0x80) != 0;
+        e.plp_id = buf.getUInt8();
+        e.data_slice_id = buf.getUInt8();
+        e.C2_system_tuning_frequency = buf.getUInt32();
+        buf.getBits(e.C2_system_tuning_frequency_type, 2);
+        buf.getBits(e.active_OFDM_symbol_duration, 3);
+        buf.getBits(e.guard_interval, 3);
+        e.master_channel = buf.getBool();
+        buf.skipBits(7);
         entries.push_back(e);
-        data += 8; size -= 8;
     }
 }
 
@@ -134,36 +134,19 @@ void ts::C2BundleDeliverySystemDescriptor::deserialize(DuckContext& duck, const 
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::C2BundleDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::C2BundleDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 8) {
-
-        const uint8_t plp = data[0];
-        const uint8_t slice = data[1];
-        const uint32_t freq = GetUInt32(data + 2);
-        const uint8_t type = (data[6] >> 6) & 0x03;
-        const uint8_t duration = (data[6] >> 3) & 0x07;
-        const uint8_t guard = data[6] & 0x07;
-        const bool master = (data[7] & 0x80) != 0;
-        data += 8; size -= 8;
-
-        strm << margin << UString::Format(u"- PLP id: 0x%X (%d), data slice id: 0x%X (%d)", {plp, plp, slice, slice}) << std::endl
-             << margin << UString::Format(u"  Frequency: %'d Hz (0x%X)", {freq, freq}) << std::endl
-             << margin << UString::Format(u"  Tuning frequency type: %s", {NameFromSection(u"C2TuningType", type, names::FIRST)}) << std::endl
-             << margin << UString::Format(u"  Symbol duration: %s", {NameFromSection(u"C2SymbolDuration", duration, names::FIRST)}) << std::endl
-             << margin << UString::Format(u"  Guard interval: %d (%s)", {guard, C2DeliverySystemDescriptor::C2GuardIntervalNames.name(guard)}) << std::endl
-             << margin << UString::Format(u"  Master channel: %s", {master}) << std::endl;
+    while (buf.canReadBytes(8)) {
+        disp << margin << UString::Format(u"- PLP id: 0x%X (%<d)", {buf.getUInt8()});
+        disp << UString::Format(u", data slice id: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        disp << margin << UString::Format(u"  Frequency: %'d Hz (0x%<X)", {buf.getUInt32()}) << std::endl;
+        disp << margin << UString::Format(u"  Tuning frequency type: %s", {NameFromSection(u"C2TuningType", buf.getBits<uint8_t>(2), names::FIRST)}) << std::endl;
+        disp << margin << UString::Format(u"  Symbol duration: %s", {NameFromSection(u"C2SymbolDuration", buf.getBits<uint8_t>(3), names::FIRST)}) << std::endl;
+        const uint8_t guard = buf.getBits<uint8_t>(3);
+        disp << margin << UString::Format(u"  Guard interval: %d (%s)", {guard, C2DeliverySystemDescriptor::C2GuardIntervalNames.name(guard)}) << std::endl;
+        disp << margin << UString::Format(u"  Master channel: %s", {buf.getBool()}) << std::endl;
+        buf.skipBits(7);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -197,11 +180,11 @@ bool ts::C2BundleDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const x
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry e;
-        ok = children[i]->getIntAttribute<uint8_t>(e.plp_id, u"plp_id", true) &&
-             children[i]->getIntAttribute<uint8_t>(e.data_slice_id, u"data_slice_id", true) &&
-             children[i]->getIntAttribute<uint32_t>(e.C2_system_tuning_frequency, u"C2_system_tuning_frequency", true) &&
-             children[i]->getIntAttribute<uint8_t>(e.C2_system_tuning_frequency_type, u"C2_system_tuning_frequency_type", true, 0, 0, 3) &&
-             children[i]->getIntAttribute<uint8_t>(e.active_OFDM_symbol_duration, u"active_OFDM_symbol_duration", true, 0, 0, 7) &&
+        ok = children[i]->getIntAttribute(e.plp_id, u"plp_id", true) &&
+             children[i]->getIntAttribute(e.data_slice_id, u"data_slice_id", true) &&
+             children[i]->getIntAttribute(e.C2_system_tuning_frequency, u"C2_system_tuning_frequency", true) &&
+             children[i]->getIntAttribute(e.C2_system_tuning_frequency_type, u"C2_system_tuning_frequency_type", true, 0, 0, 3) &&
+             children[i]->getIntAttribute(e.active_OFDM_symbol_duration, u"active_OFDM_symbol_duration", true, 0, 0, 7) &&
              children[i]->getIntEnumAttribute(e.guard_interval, C2DeliverySystemDescriptor::C2GuardIntervalNames, u"guard_interval", true) &&
              children[i]->getBoolAttribute(e.master_channel, u"master_channel", true);
         entries.push_back(e);

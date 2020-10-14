@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -74,30 +75,19 @@ void ts::ServiceMoveDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceMoveDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ServiceMoveDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(new_original_network_id);
-    bbp->appendUInt16(new_transport_stream_id);
-    bbp->appendUInt16(new_service_id);
-    serializeEnd(desc, bbp);
+    buf.putUInt16(new_original_network_id);
+    buf.putUInt16(new_transport_stream_id);
+    buf.putUInt16(new_service_id);
 }
 
 
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::ServiceMoveDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ServiceMoveDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 6;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        new_original_network_id = GetUInt16(data);
-        new_transport_stream_id = GetUInt16(data + 2);
-        new_service_id = GetUInt16(data + 4);
-    }
+    new_original_network_id = buf.getUInt16();
+    new_transport_stream_id = buf.getUInt16();
+    new_service_id = buf.getUInt16();
 }
 
 
@@ -105,20 +95,13 @@ void ts::ServiceMoveDescriptor::deserialize(DuckContext& duck, const Descriptor&
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ServiceMoveDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ServiceMoveDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 6) {
-        strm << margin << UString::Format(u"New original network id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-             << margin << UString::Format(u"New transport stream id: 0x%X (%d)", {GetUInt16(data + 2), GetUInt16(data + 2)}) << std::endl
-             << margin << UString::Format(u"New service id: 0x%X (%d)", {GetUInt16(data + 4), GetUInt16(data + 4)}) << std::endl;
-        data += 6; size -= 6;
+    if (buf.canReadBytes(6)) {
+        disp << margin << UString::Format(u"New original network id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"New transport stream id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"New service id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -133,14 +116,9 @@ void ts::ServiceMoveDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
     root->setIntAttribute(u"new_service_id", new_service_id, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::ServiceMoveDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint16_t>(new_original_network_id, u"new_original_network_id", true) &&
-           element->getIntAttribute<uint16_t>(new_transport_stream_id, u"new_transport_stream_id", true) &&
-           element->getIntAttribute<uint16_t>(new_service_id, u"new_service_id", true);
+    return element->getIntAttribute(new_original_network_id, u"new_original_network_id", true) &&
+           element->getIntAttribute(new_transport_stream_id, u"new_transport_stream_id", true) &&
+           element->getIntAttribute(new_service_id, u"new_service_id", true);
 }

@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -86,20 +87,21 @@ ts::ApplicationDescriptor::Profile::Profile() :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ApplicationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(5 * profiles.size()));
+    buf.pushWriteSequenceWithLeadingLength(8); // application_profiles_length
     for (auto it = profiles.begin(); it != profiles.end(); ++it) {
-        bbp->appendUInt16(it->application_profile);
-        bbp->appendUInt8(it->version_major);
-        bbp->appendUInt8(it->version_minor);
-        bbp->appendUInt8(it->version_micro);
+        buf.putUInt16(it->application_profile);
+        buf.putUInt8(it->version_major);
+        buf.putUInt8(it->version_minor);
+        buf.putUInt8(it->version_micro);
     }
-    bbp->appendUInt8((service_bound ? 0x80 : 0x00) | uint8_t((visibility & 0x03) << 5) | 0x1F);
-    bbp->appendUInt8(application_priority);
-    bbp->append(transport_protocol_labels);
-    serializeEnd(desc, bbp);
+    buf.popState(); // update application_profiles_length
+    buf.putBit(service_bound);
+    buf.putBits(visibility, 2);
+    buf.putBits(0xFF, 5);
+    buf.putUInt8(application_priority);
+    buf.putBytes(transport_protocol_labels);
 }
 
 
@@ -107,38 +109,23 @@ void ts::ApplicationDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ApplicationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    profiles.clear();
-    transport_protocol_labels.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-    size_t profiles_count = 0;
-
-    if (_is_valid) {
-        _is_valid = data[0] % 5 == 0 && size >= size_t(1 + data[0]);
-        profiles_count = data[0] / 5;
-        data++; size--;
-    }
-    while (_is_valid && profiles_count-- > 0) {
+    buf.pushReadSizeFromLength(8); // application_profiles_length
+    while (buf.canRead()) {
         Profile p;
-        p.application_profile = GetUInt16(data);
-        p.version_major = data[2];
-        p.version_minor = data[3];
-        p.version_micro = data[4];
-        data += 5; size -= 5;
+        p.application_profile = buf.getUInt16();
+        p.version_major = buf.getUInt8();
+        p.version_minor = buf.getUInt8();
+        p.version_micro = buf.getUInt8();
         profiles.push_back(p);
     }
-    _is_valid = _is_valid && size >= 2;
-    if (_is_valid) {
-        service_bound = (data[0] & 0x80) != 0;
-        visibility = (data[0] >> 5) & 0x03;
-        application_priority = data[1];
-        transport_protocol_labels.copy(data + 2, size - 2);
-    }
+    buf.popState(); // end of application_profiles_length
+    service_bound = buf.getBool();
+    buf.getBits(visibility, 2);
+    buf.skipBits(5);
+    application_priority = buf.getUInt8();
+    buf.getBytes(transport_protocol_labels);
 }
 
 
@@ -146,33 +133,25 @@ void ts::ApplicationDescriptor::deserialize(DuckContext& duck, const Descriptor&
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ApplicationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ApplicationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        size_t len = std::min<size_t>(data[0], size - 1);
-        data++; size--;
-        while (size >= 5 && len >= 5) {
-            const uint16_t pr = GetUInt16(data);
-            strm << margin << UString::Format(u"Profile: 0x%X (%d), version: %d.%d.%d", {pr, pr, data[2], data[3], data[4]}) << std::endl;
-            data += 5; size -= 5; len -= 5;
-        }
-        if (size >= 1) {
-            strm << margin
-                 << UString::Format(u"Service bound: %d, visibility: %d, priority: %d", {data[0] >> 7, (data[0] >> 5) & 0x03, data[1]})
-                 << std::endl;
-            data += 2; size -= 2;
-        }
-        while (size > 0) {
-            strm << margin << UString::Format(u"Transport protocol label: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-            data++; size--;
-        }
+    buf.pushReadSizeFromLength(8); // application_profiles_length
+    while (buf.canReadBytes(5)) {
+        disp << margin << UString::Format(u"Profile: 0x%X (%<d)", {buf.getUInt16()});
+        disp << UString::Format(u", version: %d", {buf.getUInt8()});
+        disp << UString::Format(u".%d", {buf.getUInt8()});
+        disp << UString::Format(u".%d", {buf.getUInt8()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
+    buf.popState(); // end of application_profiles_length
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Service bound: %d", {buf.getBool()});
+        disp << UString::Format(u", visibility: %d", {buf.getBits<uint8_t>(2)});
+        buf.skipBits(5);
+        disp << UString::Format(u", priority: %d", {buf.getUInt8()}) << std::endl;
+    }
+    while (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Transport protocol label: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+    }
 }
 
 
@@ -206,15 +185,15 @@ bool ts::ApplicationDescriptor::analyzeXML(DuckContext& duck, const xml::Element
     xml::ElementVector label;
     bool ok =
         element->getBoolAttribute(service_bound, u"service_bound", true) &&
-        element->getIntAttribute<uint8_t>(visibility, u"visibility", true, 0, 0, 3) &&
-        element->getIntAttribute<uint8_t>(application_priority, u"application_priority", true) &&
+        element->getIntAttribute(visibility, u"visibility", true, 0, 0, 3) &&
+        element->getIntAttribute(application_priority, u"application_priority", true) &&
         element->getChildren(prof, u"profile") &&
         element->getChildren(label, u"transport_protocol");
 
     for (size_t i = 0; ok && i < prof.size(); ++i) {
         Profile p;
         UString version;
-        ok = prof[i]->getIntAttribute<uint16_t>(p.application_profile, u"application_profile", true) &&
+        ok = prof[i]->getIntAttribute(p.application_profile, u"application_profile", true) &&
              prof[i]->getAttribute(version, u"version", true);
         if (ok && !version.scan(u"%d.%d.%d", {&p.version_major, &p.version_minor, &p.version_micro})) {
             ok = false;
@@ -226,7 +205,7 @@ bool ts::ApplicationDescriptor::analyzeXML(DuckContext& duck, const xml::Element
     }
     for (size_t i = 0; ok && i < label.size(); ++i) {
         uint8_t l;
-        ok = label[i]->getIntAttribute<uint8_t>(l, u"label", true);
+        ok = label[i]->getIntAttribute(l, u"label", true);
         if (ok) {
             transport_protocol_labels.push_back(l);
         }

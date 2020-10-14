@@ -33,6 +33,7 @@
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -91,19 +92,12 @@ ts::ParentalRatingDescriptor::ParentalRatingDescriptor(const UString& code, uint
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ParentalRatingDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ParentalRatingDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    for (EntryList::const_iterator it = entries.begin(); it != entries.end(); ++it) {
-        if (!SerializeLanguageCode(*bbp, it->country_code)) {
-            desc.invalidate();
-            return;
-        }
-        bbp->appendUInt8(it->rating);
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        buf.putLanguageCode(it->country_code);
+        buf.putUInt8(it->rating);
     }
-
-    serializeEnd(desc, bbp);
 }
 
 
@@ -111,19 +105,13 @@ void ts::ParentalRatingDescriptor::serialize(DuckContext& duck, Descriptor& desc
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ParentalRatingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ParentalRatingDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 4 == 0;
-    entries.clear();
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        while (size >= 4) {
-            entries.push_back(Entry(DeserializeLanguageCode(data), data[3]));
-            data += 4;
-            size -= 4;
-        }
+    while (buf.canRead()) {
+        Entry e;
+        buf.getLanguageCode(e.country_code);
+        e.rating = buf.getUInt8();
+        entries.push_back(e);
     }
 }
 
@@ -132,30 +120,23 @@ void ts::ParentalRatingDescriptor::deserialize(DuckContext& duck, const Descript
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ParentalRatingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ParentalRatingDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 4) {
-        const uint8_t rating = data[3];
-        strm << margin << "Country code: " << DeserializeLanguageCode(data)
-             << UString::Format(u", rating: 0x%X ", {rating});
+    while (buf.canReadBytes(4)) {
+        disp << margin << "Country code: " << buf.getLanguageCode();
+        const uint8_t rating = buf.getUInt8();
+        disp << UString::Format(u", rating: 0x%X ", {rating});
         if (rating == 0) {
-            strm << "(undefined)";
+            disp << "(undefined)";
         }
         else if (rating <= 0x0F) {
-            strm << "(min. " << int(rating + 3) << " years)";
+            disp << "(min. " << int(rating + 3) << " years)";
         }
         else {
-            strm << "(broadcaster-defined)";
+            disp << "(broadcaster-defined)";
         }
-        strm << std::endl;
-        data += 4; size -= 4;
+        disp << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -185,7 +166,7 @@ bool ts::ParentalRatingDescriptor::analyzeXML(DuckContext& duck, const xml::Elem
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
         ok = children[i]->getAttribute(entry.country_code, u"country_code", true, u"", 3, 3) &&
-             children[i]->getIntAttribute<uint8_t>(entry.rating, u"rating", true, 0, 0x00, 0xFF);
+             children[i]->getIntAttribute(entry.rating, u"rating", true, 0, 0x00, 0xFF);
         entries.push_back(entry);
     }
     return ok;

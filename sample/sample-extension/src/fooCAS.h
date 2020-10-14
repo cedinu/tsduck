@@ -19,11 +19,11 @@ namespace foo {
 
     // Display a FooCAS ECM on the output stream.
     // Compatible with ts::DisplaySectionFunction profile.
-    FOODLL void DisplayFooCASECM(ts::TablesDisplay& display, const ts::Section& section, int indent);
+    FOODLL void DisplayFooCASECM(ts::TablesDisplay& disp, const ts::Section& section, ts::PSIBuffer& buf, const ts::UString& margin);
 
     // Display a FooCAS EMM on the output stream.
     // Compatible with ts::DisplaySectionFunction profile.
-    FOODLL void DisplayFooCASEMM(ts::TablesDisplay& display, const ts::Section& section, int indent);
+    FOODLL void DisplayFooCASEMM(ts::TablesDisplay& disp, const ts::Section& section, ts::PSIBuffer& buf, const ts::UString& margin);
 
     // Display the payload of a FooCAS ECM on the output stream as a one-line "log" message.
     // Compatible with ts::LogSectionFunction profile.
@@ -35,6 +35,6 @@ namespace foo {
 
     // Display the private part of a FooCAS CA_descriptor on the output stream.
     // Compatible with ts::DisplayCADescriptorFunction profile.
-    FOODLL void DisplayFooCASCADescriptor(ts::TablesDisplay& display, const uint8_t* data, size_t size, int indent, ts::TID tid);
+    FOODLL void DisplayFooCASCADescriptor(ts::TablesDisplay& display, ts::PSIBuffer& buf, const ts::UString& margin, ts::TID tid);
 
 }

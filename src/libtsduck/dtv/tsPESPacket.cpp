@@ -40,6 +40,7 @@ ts::PESPacket::PESPacket(PID source_pid) :
     _header_size(0),
     _source_pid(source_pid),
     _stream_type(ST_NULL),
+    _pcr(INVALID_PCR),
     _first_pkt(0),
     _last_pkt(0),
     _data()
@@ -51,6 +52,7 @@ ts::PESPacket::PESPacket(const PESPacket& pp, ShareMode mode) :
     _header_size(pp._header_size),
     _source_pid(pp._source_pid),
     _stream_type(pp._stream_type),
+    _pcr(pp._pcr),
     _first_pkt(pp._first_pkt),
     _last_pkt(pp._last_pkt),
     _data()
@@ -73,6 +75,7 @@ ts::PESPacket::PESPacket(PESPacket&& pp) noexcept :
     _header_size(pp._header_size),
     _source_pid(pp._source_pid),
     _stream_type(pp._stream_type),
+    _pcr(pp._pcr),
     _first_pkt(pp._first_pkt),
     _last_pkt(pp._last_pkt),
     _data(std::move(pp._data))
@@ -106,6 +109,7 @@ void ts::PESPacket::initialize(const ByteBlockPtr& bbp)
 {
     _is_valid = false;
     _header_size = 0;
+    _pcr = INVALID_PCR;
     _first_pkt = 0;
     _last_pkt = 0;
     _data.clear();
@@ -115,8 +119,8 @@ void ts::PESPacket::initialize(const ByteBlockPtr& bbp)
     }
 
     // Fixed common header size
-    const uint8_t* data = bbp->data();
-    size_t size = bbp->size();
+    const uint8_t* const data = bbp->data();
+    const size_t size = bbp->size();
     if (size < 6) {
         return;
     }
@@ -132,7 +136,7 @@ void ts::PESPacket::initialize(const ByteBlockPtr& bbp)
         if (size < 9) {
             return;
         }
-        _header_size = 9 + size_t (data[8]);
+        _header_size = 9 + size_t(data[8]);
         if (size < _header_size) {
             return;
         }
@@ -140,6 +144,13 @@ void ts::PESPacket::initialize(const ByteBlockPtr& bbp)
     else {
         // No additional header fields
         _header_size = 6;
+    }
+
+    // Check that the embedded size is either zero (unbounded) or within actual data size.
+    // This field indicates the packet length _after_ that field (ie. after offset 6).
+    const size_t psize = 6 + size_t(GetUInt16(data + 4));
+    if (psize != 6 && (psize < _header_size || psize > size)) {
+        return;
     }
 
     // Passed all checks
@@ -158,7 +169,21 @@ void ts::PESPacket::clear()
     _header_size = 0;
     _source_pid = PID_NULL;
     _stream_type = ST_NULL;
+    _pcr = INVALID_PCR;
+    _first_pkt = 0;
+    _last_pkt = 0;
     _data.clear();
+}
+
+
+//----------------------------------------------------------------------------
+// Set the PCR value for this PES packet.
+//----------------------------------------------------------------------------
+
+void ts::PESPacket::setPCR(uint64_t pcr)
+{
+    // Make sure that all invalid PCR values are represented by the same value.
+    _pcr = pcr <= MAX_PCR ? pcr : INVALID_PCR;
 }
 
 
@@ -226,6 +251,7 @@ ts::PESPacket& ts::PESPacket::operator=(const PESPacket& pp)
     _header_size = pp._header_size;
     _source_pid = pp._source_pid;
     _stream_type = pp._stream_type;
+    _pcr = pp._pcr;
     _first_pkt = pp._first_pkt;
     _last_pkt = pp._last_pkt;
     _data = pp._data;
@@ -238,6 +264,7 @@ ts::PESPacket& ts::PESPacket::operator=(PESPacket&& pp) noexcept
     _header_size = pp._header_size;
     _source_pid = pp._source_pid;
     _stream_type = pp._stream_type;
+    _pcr = pp._pcr;
     _first_pkt = pp._first_pkt;
     _last_pkt = pp._last_pkt;
     _data = std::move(pp._data);
@@ -256,6 +283,7 @@ ts::PESPacket& ts::PESPacket::copy(const PESPacket& pp)
     _header_size = pp._header_size;
     _source_pid = pp._source_pid;
     _stream_type = pp._stream_type;
+    _pcr = pp._pcr;
     _first_pkt = pp._first_pkt;
     _last_pkt = pp._last_pkt;
     _data = pp._is_valid ? new ByteBlock(*pp._data) : nullptr;

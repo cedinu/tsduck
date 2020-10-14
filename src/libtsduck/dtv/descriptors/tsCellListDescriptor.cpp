@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -89,23 +90,24 @@ ts::CellListDescriptor::Subcell::Subcell() :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::CellListDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::CellListDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
     for (auto it1 = cells.begin(); it1 != cells.end(); ++it1) {
-        bbp->appendUInt16(it1->cell_id);
-        bbp->appendInt16(it1->cell_latitude);
-        bbp->appendInt16(it1->cell_longitude);
-        bbp->appendUInt24((uint32_t(it1->cell_extent_of_latitude & 0x0FFF) << 12) | (it1->cell_extent_of_longitude & 0x0FFF));
-        bbp->appendUInt8(uint8_t(it1->subcells.size() * 8));
+        buf.putUInt16(it1->cell_id);
+        buf.putInt16(it1->cell_latitude);
+        buf.putInt16(it1->cell_longitude);
+        buf.putBits(it1->cell_extent_of_latitude, 12);
+        buf.putBits(it1->cell_extent_of_longitude, 12);
+        buf.pushWriteSequenceWithLeadingLength(8); // start write sequence
         for (auto it2 = it1->subcells.begin(); it2 != it1->subcells.end(); ++it2) {
-            bbp->appendUInt8(it2->cell_id_extension);
-            bbp->appendInt16(it2->subcell_latitude);
-            bbp->appendInt16(it2->subcell_longitude);
-            bbp->appendUInt24((uint32_t(it2->subcell_extent_of_latitude & 0x0FFF) << 12) | (it2->subcell_extent_of_longitude & 0x0FFF));
+            buf.putUInt8(it2->cell_id_extension);
+            buf.putInt16(it2->subcell_latitude);
+            buf.putInt16(it2->subcell_longitude);
+            buf.putBits(it2->subcell_extent_of_latitude, 12);
+            buf.putBits(it2->subcell_extent_of_longitude, 12);
         }
+        buf.popState(); // end write sequence
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -113,42 +115,28 @@ void ts::CellListDescriptor::serialize(DuckContext& duck, Descriptor& desc) cons
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::CellListDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::CellListDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag();
-    cells.clear();
-
-    while (_is_valid && size >= 10) {
+    while (buf.canRead()) {
         Cell cell;
-        cell.cell_id = GetUInt16(data);
-        cell.cell_latitude = GetInt16(data + 2);
-        cell.cell_longitude = GetInt16(data + 4);
-        uint32_t ext = GetUInt24(data + 6);
-        cell.cell_extent_of_latitude = uint16_t(ext >> 12) & 0x0FFF;
-        cell.cell_extent_of_longitude = uint16_t(ext) & 0x0FFF;
-        size_t len = data[9];
-        data += 10; size -= 10;
-
-        while (size >= len && len >= 8) {
+        cell.cell_id = buf.getUInt16();
+        cell.cell_latitude = buf.getInt16();
+        cell.cell_longitude = buf.getInt16();
+        buf.getBits(cell.cell_extent_of_latitude, 12);
+        buf.getBits(cell.cell_extent_of_longitude, 12);
+        buf.pushReadSizeFromLength(8); // start read sequence
+        while (buf.canRead()) {
             Subcell sub;
-            sub.cell_id_extension = data[0];
-            sub.subcell_latitude = GetInt16(data + 1);
-            sub.subcell_longitude = GetInt16(data + 3);
-            ext = GetUInt24(data + 5);
-            sub.subcell_extent_of_latitude = uint16_t(ext >> 12) & 0x0FFF;
-            sub.subcell_extent_of_longitude = uint16_t(ext) & 0x0FFF;
+            sub.cell_id_extension = buf.getUInt8();
+            sub.subcell_latitude = buf.getInt16();
+            sub.subcell_longitude = buf.getInt16();
+            buf.getBits(sub.subcell_extent_of_latitude, 12);
+            buf.getBits(sub.subcell_extent_of_longitude, 12);
             cell.subcells.push_back(sub);
-            data += 8; size -= 8; len -= 8;
         }
-
-        _is_valid = len == 0;
+        buf.popState(); // end read sequence
         cells.push_back(cell);
     }
-
-    // Make sure there is no truncated trailing data.
-    _is_valid = _is_valid && size == 0;
 }
 
 
@@ -156,29 +144,19 @@ void ts::CellListDescriptor::deserialize(DuckContext& duck, const Descriptor& de
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::CellListDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::CellListDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 10) {
-        strm << margin << UString::Format(u"- Cell id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl;
-        DisplayCoordinates(display, data + 2, size - 2, indent + 2);
-        size_t len = data[9];
-        data += 10; size -= 10;
-
-        while (size >= len && len >= 8) {
-            strm << margin << UString::Format(u"  - Subcell id ext: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-            DisplayCoordinates(display, data + 1, size - 1, indent + 4);
-            data += 8; size -= 8; len -= 8;
+    while (buf.canReadBytes(10)) {
+        disp << margin << UString::Format(u"- Cell id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        DisplayCoordinates(disp, buf, margin + u"  ");
+        buf.pushReadSizeFromLength(8); // start read sequence
+        while (buf.canReadBytes(8)) {
+            disp << margin << UString::Format(u"  - Subcell id ext: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+            DisplayCoordinates(disp, buf, margin + u"    ");
         }
-        if (len > 0) {
-            break;
-        }
+        disp.displayPrivateData(u"Extraneous subcell data", buf, NPOS, margin + u"  ");
+        buf.popState(); // end read sequence
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -186,21 +164,16 @@ void ts::CellListDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, 
 // Static method to display coordinates of a cell or subcell.
 //----------------------------------------------------------------------------
 
-void ts::CellListDescriptor::DisplayCoordinates(TablesDisplay& display, const uint8_t* data, size_t size, int indent)
+void ts::CellListDescriptor::DisplayCoordinates(TablesDisplay& disp, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
+    const int32_t latitude = buf.getInt16();
+    const int32_t longitude = buf.getInt16();
+    const uint16_t lat_ext = buf.getBits<uint16_t>(12);
+    const uint16_t long_ext = buf.getBits<uint16_t>(12);
 
-    int32_t latitude = GetInt16(data);
-    int32_t longitude = GetInt16(data + 2);
-    uint32_t ext = GetUInt24(data + 4);
-    uint16_t lat_ext = uint16_t(ext >> 12) & 0x0FFF;
-    uint16_t long_ext = uint16_t(ext) & 0x0FFF;
-
-    strm << margin << UString::Format(u"Raw latitude/longitude: %d/%d, extent: %d/%d", {latitude, longitude, lat_ext, long_ext}) << std::endl
-         << margin << "Actual latitude range: " << ToDegrees(latitude, true) << " to " << ToDegrees(latitude + lat_ext, true) << std::endl
-         << margin << "Actual longitude range: " << ToDegrees(longitude, false) << " to " << ToDegrees(longitude + long_ext, false) << std::endl;
+    disp << margin << UString::Format(u"Raw latitude/longitude: %d/%d, extent: %d/%d", {latitude, longitude, lat_ext, long_ext}) << std::endl;
+    disp << margin << "Actual latitude range: " << ToDegrees(latitude, true) << " to " << ToDegrees(latitude + lat_ext, true) << std::endl;
+    disp << margin << "Actual longitude range: " << ToDegrees(longitude, false) << " to " << ToDegrees(longitude + long_ext, false) << std::endl;
 }
 
 
@@ -277,19 +250,19 @@ bool ts::CellListDescriptor::analyzeXML(DuckContext& duck, const xml::Element* e
     for (size_t i1 = 0; ok && i1 < xcells.size(); ++i1) {
         Cell cell;
         xml::ElementVector xsubcells;
-        ok = xcells[i1]->getIntAttribute<uint16_t>(cell.cell_id, u"cell_id", true) &&
-             xcells[i1]->getIntAttribute<int16_t>(cell.cell_latitude, u"cell_latitude", true) &&
-             xcells[i1]->getIntAttribute<int16_t>(cell.cell_longitude, u"cell_longitude", true) &&
-             xcells[i1]->getIntAttribute<uint16_t>(cell.cell_extent_of_latitude, u"cell_extent_of_latitude", true, 0, 0, 0x0FFF) &&
-             xcells[i1]->getIntAttribute<uint16_t>(cell.cell_extent_of_longitude, u"cell_extent_of_longitude", true, 0, 0, 0x0FFF) &&
+        ok = xcells[i1]->getIntAttribute(cell.cell_id, u"cell_id", true) &&
+             xcells[i1]->getIntAttribute(cell.cell_latitude, u"cell_latitude", true) &&
+             xcells[i1]->getIntAttribute(cell.cell_longitude, u"cell_longitude", true) &&
+             xcells[i1]->getIntAttribute(cell.cell_extent_of_latitude, u"cell_extent_of_latitude", true, 0, 0, 0x0FFF) &&
+             xcells[i1]->getIntAttribute(cell.cell_extent_of_longitude, u"cell_extent_of_longitude", true, 0, 0, 0x0FFF) &&
              xcells[i1]->getChildren(xsubcells, u"subcell");
         for (size_t i2 = 0; ok && i2 < xsubcells.size(); ++i2) {
             Subcell sub;
-            ok = xsubcells[i2]->getIntAttribute<uint8_t>(sub.cell_id_extension, u"cell_id_extension", true) &&
-                 xsubcells[i2]->getIntAttribute<int16_t>(sub.subcell_latitude, u"subcell_latitude", true) &&
-                 xsubcells[i2]->getIntAttribute<int16_t>(sub.subcell_longitude, u"subcell_longitude", true) &&
-                 xsubcells[i2]->getIntAttribute<uint16_t>(sub.subcell_extent_of_latitude, u"subcell_extent_of_latitude", true, 0, 0, 0x0FFF) &&
-                 xsubcells[i2]->getIntAttribute<uint16_t>(sub.subcell_extent_of_longitude, u"subcell_extent_of_longitude", true, 0, 0, 0x0FFF);
+            ok = xsubcells[i2]->getIntAttribute(sub.cell_id_extension, u"cell_id_extension", true) &&
+                 xsubcells[i2]->getIntAttribute(sub.subcell_latitude, u"subcell_latitude", true) &&
+                 xsubcells[i2]->getIntAttribute(sub.subcell_longitude, u"subcell_longitude", true) &&
+                 xsubcells[i2]->getIntAttribute(sub.subcell_extent_of_latitude, u"subcell_extent_of_latitude", true, 0, 0, 0x0FFF) &&
+                 xsubcells[i2]->getIntAttribute(sub.subcell_extent_of_longitude, u"subcell_extent_of_longitude", true, 0, 0, 0x0FFF);
             cell.subcells.push_back(sub);
         }
         cells.push_back(cell);

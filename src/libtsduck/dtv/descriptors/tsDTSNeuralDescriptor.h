@@ -38,7 +38,7 @@
 namespace ts {
     //!
     //! Representation of a DTS_neural_descriptor.
-    //! @see ETSI 300 468, L.1.
+    //! @see ETSI EN 300 468, L.1.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL DTSNeuralDescriptor : public AbstractDescriptor
@@ -61,14 +61,15 @@ namespace ts {
         DTSNeuralDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual DID extendedTag() const override;
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

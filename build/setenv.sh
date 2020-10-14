@@ -39,7 +39,7 @@
 
 # Default options.
 TARGET=release
-DISPLAY=false
+SHOW_PATH=false
 
 # Decode command line options.
 while [[ $# -gt 0 ]]; do
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
             TARGET=debug
             ;;
         --display)
-            DISPLAY=true
+            SHOW_PATH=true
             ;;
     esac
     shift
@@ -59,13 +59,20 @@ ROOTDIR=$(cd $(dirname "${BASH_SOURCE[0]}")/..; pwd)
 ARCH=$(uname -m | sed -e 's/i.86/i386/' -e 's/^arm.*$/arm/')
 HOST=$(hostname | sed -e 's/\..*//')
 BINDIR="$ROOTDIR/bin/$TARGET-$ARCH-$HOST"
+TSPYDIR="$ROOTDIR/src/libtsduck/python"
 
 # Display or set path.
-if $DISPLAY; then
+if $SHOW_PATH; then
     echo "$BINDIR"
-elif [[ ":$PATH:" != *:$BINDIR:* ]]; then
-    export PATH="$BINDIR:$PATH"
 else
-    # Make sure to exit with success status
-    true
+    [[ ":$PATH:" != *:$BINDIR:* ]] && export PATH="$BINDIR:$PATH"
+    [[ ":$TSPLUGINS_PATH:" != *:$BINDIR:* ]] && export TSPLUGINS_PATH="$BINDIR:$TSPLUGINS_PATH"
+    [[ ":$LD_LIBRARY_PATH:" != *:$BINDIR:* ]] && export LD_LIBRARY_PATH="$BINDIR:$LD_LIBRARY_PATH"
+    [[ ":$PYTHONPATH:" != *:$TSPYDIR:* ]] && export PYTHONPATH="$TSPYDIR:$PYTHONPATH"
+    # For macOS only: LD_LIBRARY_PATH is not passed to shell-scripts for security reasons.
+    # Define a backup version which can be explicitly checked in scripts (typically Python bindings).
+    export LD_LIBRARY_PATH2="$LD_LIBRARY_PATH"
 fi
+
+# Make sure to exit with success status
+true

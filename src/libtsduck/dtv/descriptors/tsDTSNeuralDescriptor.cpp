@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -70,32 +71,41 @@ void ts::DTSNeuralDescriptor::clearContent()
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// This is an extension descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DTSNeuralDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+ts::DID ts::DTSNeuralDescriptor::extendedTag() const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
-    bbp->appendUInt8(config_id);
-    bbp->append (additional_info);
-    serializeEnd(desc, bbp);
+    return MY_EDID;
 }
 
 
 //----------------------------------------------------------------------------
-// Deserialization
+// Serialization
 //----------------------------------------------------------------------------
 
-void ts::DTSNeuralDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DTSNeuralDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID;
+    buf.putUInt8(config_id);
+    buf.putBytes(additional_info);
+}
 
-    if (_is_valid) {
-        config_id = data[1];
-        additional_info.copy(data + 2, size - 2);
+void ts::DTSNeuralDescriptor::deserializePayload(PSIBuffer& buf)
+{
+    config_id = buf.getUInt8();
+    buf.getBytes(additional_info);
+}
+
+
+//----------------------------------------------------------------------------
+// Static method to display a descriptor.
+//----------------------------------------------------------------------------
+
+void ts::DTSNeuralDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
+{
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Config Id: 0x%X (%<d))", {buf.getUInt8()}) << std::endl;
+        disp.displayPrivateData(u"Additional info", buf, NPOS, margin);
     }
 }
 
@@ -110,34 +120,8 @@ void ts::DTSNeuralDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
     root->addHexaTextChild(u"additional_info", additional_info, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::DTSNeuralDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(config_id, u"config_id", true) &&
+    return element->getIntAttribute(config_id, u"config_id", true) &&
            element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 4);
-}
-
-
-//----------------------------------------------------------------------------
-// Static method to display a descriptor.
-//----------------------------------------------------------------------------
-
-void ts::DTSNeuralDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
-{
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    if (size > 0) {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
-        strm << margin << UString::Format(u"Config Id: 0x%X (%d))", {data[0], data[0]}) << std::endl;
-        display.displayPrivateData(u"Additional info", data + 1, size - 1, indent);
-    }
 }

@@ -39,7 +39,7 @@
 namespace ts {
     //!
     //! Representation of a frequency_list_descriptor
-    //! @see ETSI 300 468, 6.2.17.
+    //! @see ETSI EN 300 468, 6.2.17.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL FrequencyListDescriptor : public AbstractDescriptor
@@ -82,18 +82,18 @@ namespace ts {
         FrequencyListDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
 
     private:
         // Decode a frequency at a 4-byte data area.
-        static uint64_t DecodeFrequency(uint8_t coding_type, const uint8_t* data);
+        static uint64_t DecodeFrequency(uint8_t coding_type, PSIBuffer&);
     };
 }

@@ -26,10 +26,6 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
-//
-//  Report options for the class TSAnalyzer.
-//
-//----------------------------------------------------------------------------
 
 #include "tsTSAnalyzerOptions.h"
 #include "tsException.h"
@@ -49,6 +45,8 @@ ts::TSAnalyzerOptions::TSAnalyzerOptions() :
     table_analysis(false),
     error_analysis(false),
     normalized(false),
+    json(false),
+    deterministic(false),
     service_list(false),
     pid_list(false),
     global_pid_list(false),
@@ -78,7 +76,7 @@ void ts::TSAnalyzerOptions::defineArgs(Args &args) const
     args.help(u"ts-analysis",
               u"Report global transport stream analysis.\n\n"
               u"The output can include full synthetic analysis (options *-analysis), "
-              u"fully normalized output (option --normalized) or a simple list of "
+              u"fully normalized output (options --normalized and --json) or a simple list of "
               u"values on one line (options --*-list). The second and third type of "
               u"options are useful to write automated scripts.\n\n"
               u"If output-control options are specified, only the selected outputs "
@@ -100,10 +98,21 @@ void ts::TSAnalyzerOptions::defineArgs(Args &args) const
     args.option(u"error-analysis");
     args.help(u"error-analysis", u"Report analysis about detected errors.");
 
+    args.option(u"json");
+    args.help(u"json",
+              u"Complete report about the transport stream, the services and the "
+              u"PID's in JSON format (useful for automatic analysis).");
+
     args.option(u"normalized");
     args.help(u"normalized",
               u"Complete report about the transport stream, the services and the "
               u"PID's in a normalized output format (useful for automatic analysis).");
+
+    args.option(u"deterministic");
+    args.help(u"deterministic",
+              u"Enforce a deterministic and reproduceable output. "
+              u"Do not output non-reproduceable information such as system time "
+              u"(useful for automated tests).");
 
     args.option(u"service-list");
     args.help(u"service-list", u"Report the list of all service ids.");
@@ -184,6 +193,8 @@ bool ts::TSAnalyzerOptions::loadArgs(DuckContext &duck, Args &args)
     table_analysis = args.present(u"table-analysis");
     error_analysis = args.present(u"error-analysis");
     normalized = args.present(u"normalized");
+    json = args.present(u"json");
+    deterministic = args.present(u"deterministic");
     service_list = args.present(u"service-list");
     pid_list = args.present(u"pid-list");
     global_pid_list = args.present(u"global-pid-list");
@@ -203,6 +214,7 @@ bool ts::TSAnalyzerOptions::loadArgs(DuckContext &duck, Args &args)
         !table_analysis &&
         !error_analysis &&
         !normalized &&
+        !json &&
         !service_list &&
         !pid_list &&
         !global_pid_list &&

@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -72,30 +73,20 @@ ts::SmoothingBufferDescriptor::SmoothingBufferDescriptor(DuckContext& duck, cons
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SmoothingBufferDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SmoothingBufferDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt24(0x00C00000 | sb_leak_rate);
-    bbp->appendUInt24(0x00C00000 | sb_size);
-    serializeEnd(desc, bbp);
+    buf.putBits(0xFF, 2);
+    buf.putBits(sb_leak_rate, 22);
+    buf.putBits(0xFF, 2);
+    buf.putBits(sb_size, 22);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::SmoothingBufferDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SmoothingBufferDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 6;
-
-    if (_is_valid) {
-        sb_leak_rate = GetUInt24(data) & 0x003FFFFF;
-        sb_size = GetUInt24(data + 3) & 0x003FFFFF;
-    }
+    buf.skipBits(2);
+    buf.getBits(sb_leak_rate, 22);
+    buf.skipBits(2);
+    buf.getBits(sb_size, 22);
 }
 
 
@@ -103,26 +94,19 @@ void ts::SmoothingBufferDescriptor::deserialize(DuckContext& duck, const Descrip
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SmoothingBufferDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SmoothingBufferDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 6) {
-        const uint32_t rate = GetUInt24(data) & 0x003FFFFF;
-        const uint32_t sbsize = GetUInt24(data + 3) & 0x003FFFFF;
-        strm << margin << UString::Format(u"Smoothing buffer leak rate: 0x%X (%d) x 400 b/s", {rate, rate}) << std::endl
-             << margin << UString::Format(u"Smoothing buffer size: 0x%X (%d) bytes", {sbsize, sbsize}) << std::endl;
-        data += 6; size -= 6;
+    if (buf.canReadBytes(6)) {
+        buf.skipBits(2);
+        disp << margin << UString::Format(u"Smoothing buffer leak rate: 0x%X (%<d) x 400 b/s", {buf.getBits<uint32_t>(22)}) << std::endl;
+        buf.skipBits(2);
+        disp << margin << UString::Format(u"Smoothing buffer size: 0x%X (%<d) bytes", {buf.getBits<uint32_t>(22)}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML
+// XML serialization
 //----------------------------------------------------------------------------
 
 void ts::SmoothingBufferDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -133,6 +117,6 @@ void ts::SmoothingBufferDescriptor::buildXML(DuckContext& duck, xml::Element* ro
 
 bool ts::SmoothingBufferDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint32_t>(sb_leak_rate, u"sb_leak_rate", true, 0, 0, 0x003FFFFF) &&
-           element->getIntAttribute<uint32_t>(sb_size, u"sb_size", true, 0, 0, 0x003FFFFF);
+    return element->getIntAttribute(sb_leak_rate, u"sb_leak_rate", true, 0, 0, 0x003FFFFF) &&
+           element->getIntAttribute(sb_size, u"sb_size", true, 0, 0, 0x003FFFFF);
 }

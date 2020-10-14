@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -85,23 +86,21 @@ void ts::NorDigLogicalChannelDescriptorV2::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::NorDigLogicalChannelDescriptorV2::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::NorDigLogicalChannelDescriptorV2::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
     for (auto it1 = entries.begin(); it1 != entries.end(); ++it1) {
-        bbp->appendUInt8(it1->channel_list_id);
-        bbp->append(duck.encodedWithByteLength(it1->channel_list_name));
-        if (!SerializeLanguageCode(*bbp, it1->country_code)) {
-            desc.invalidate();
-            return;
-        }
-        bbp->appendUInt8(uint8_t(it1->services.size() * 4));
+        buf.putUInt8(it1->channel_list_id);
+        buf.putStringWithByteLength(it1->channel_list_name);
+        buf.putLanguageCode(it1->country_code);
+        buf.pushWriteSequenceWithLeadingLength(8); // descriptor_length
         for (auto it2 = it1->services.begin(); it2 != it1->services.end(); ++it2) {
-            bbp->appendUInt16(it2->service_id);
-            bbp->appendUInt16((it2->visible ? 0xFC00 : 0x7C00) | (it2->lcn & 0x03FF));
+            buf.putUInt16(it2->service_id);
+            buf.putBit(it2->visible);
+            buf.putBits(0xFF, 5);
+            buf.putBits(it2->lcn, 10);
         }
+        buf.popState(); // update descriptor_length
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -109,29 +108,23 @@ void ts::NorDigLogicalChannelDescriptorV2::serialize(DuckContext& duck, Descript
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::NorDigLogicalChannelDescriptorV2::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::NorDigLogicalChannelDescriptorV2::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag();
-    entries.clear();
-
-    while (_is_valid && size >= 2) {
-        ChannelList clist(data[0]);
-        data++; size--;
-        duck.decodeWithByteLength(clist.channel_list_name, data, size);
-        _is_valid = size >= 4;
-        if (_is_valid) {
-            clist.country_code = DeserializeLanguageCode(data);
-            size_t len = data[3];
-            data += 4; size -= 4;
-            while (len >= 4 && size >= 4) {
-                clist.services.push_back(Service(GetUInt16(data), (data[2] & 0x80) != 0, GetUInt16(data + 2) & 0x03FF));
-                data += 4; size -= 4; len -= 4;
-            }
-            _is_valid = len == 0;
-            entries.push_back(clist);
+    while (buf.canRead()) {
+        ChannelList clist(buf.getUInt8());
+        buf.getStringWithByteLength(clist.channel_list_name);
+        buf.getLanguageCode(clist.country_code);
+        buf.pushReadSizeFromLength(8); // descriptor_length
+        while (buf.canRead()) {
+            Service srv;
+            srv.service_id = buf.getUInt16();
+            srv.visible = buf.getBool();
+            buf.skipBits(5);
+            buf.getBits(srv.lcn, 10);
+            clist.services.push_back(srv);
         }
+        buf.popState(); // descriptor_length
+        entries.push_back(clist);
     }
 }
 
@@ -140,43 +133,25 @@ void ts::NorDigLogicalChannelDescriptorV2::deserialize(DuckContext& duck, const 
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::NorDigLogicalChannelDescriptorV2::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::NorDigLogicalChannelDescriptorV2::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 2) {
-        const uint8_t id = data[0];
-        data++; size--;
-        const UString name(duck.decodedWithByteLength(data, size));
-        strm << margin << UString::Format(u"- Channel list id: 0x%X (%d), name: \"%s\"", {id, id, name});
-        if (size < 3) {
-            strm << std::endl;
+    while (buf.canReadBytes(2)) {
+        disp << margin << UString::Format(u"- Channel list id: 0x%X (%<d)", {buf.getUInt8()});
+        disp << ", name: \"" << buf.getStringWithByteLength() << "\"";
+        if (!buf.canReadBytes(3)) {
+            disp << std::endl;
             break;
         }
-        strm << ", country code: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-        data += 3; size -= 3;
-        if (size < 1) {
-            break;
+        disp << ", country code: \"" << buf.getLanguageCode() << "\"" << std::endl;
+        buf.pushReadSizeFromLength(8); // descriptor_length
+        while (buf.canReadBytes(4)) {
+            disp << margin << UString::Format(u"  Service Id: %5d (0x%<04X)", {buf.getUInt16()});
+            disp << UString::Format(u", Visible: %1d", {buf.getBit()});
+            buf.skipBits(5);
+            disp << UString::Format(u", Channel number: %3d", {buf.getBits<uint16_t>(10)}) << std::endl;
         }
-        size_t len = data[0];
-        data++; size--;
-        while (len >= 4 && size >= 4) {
-            const uint16_t service = GetUInt16(data);
-            const uint8_t visible = (data[2] >> 7) & 0x01;
-            const uint16_t channel = GetUInt16(data + 2) & 0x03FF;
-            strm << margin
-                 << UString::Format(u"  Service Id: %5d (0x%04X), Visible: %1d, Channel number: %3d", {service, service, visible, channel})
-                 << std::endl;
-            data += 4; size -= 4; len -= 4;
-        }
-        if (len != 0) {
-            break;
-        }
+        buf.popState(); // descriptor_length
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -213,14 +188,14 @@ bool ts::NorDigLogicalChannelDescriptorV2::analyzeXML(DuckContext& duck, const x
     for (size_t i1 = 0; ok && i1 < xclists.size(); ++i1) {
         ChannelList clist;
         xml::ElementVector xsrv;
-        ok = xclists[i1]->getIntAttribute<uint8_t>(clist.channel_list_id, u"id", true) &&
+        ok = xclists[i1]->getIntAttribute(clist.channel_list_id, u"id", true) &&
              xclists[i1]->getAttribute(clist.channel_list_name, u"name", true) &&
              xclists[i1]->getAttribute(clist.country_code, u"country_code", true, UString(), 3, 3) &&
              xclists[i1]->getChildren(xsrv, u"service");
         for (size_t i2 = 0; ok && i2 < xsrv.size(); ++i2) {
             Service srv;
-            ok = xsrv[i2]->getIntAttribute<uint16_t>(srv.service_id, u"service_id", true) &&
-                 xsrv[i2]->getIntAttribute<uint16_t>(srv.lcn, u"logical_channel_number", true, 0, 0x0000, 0x03FF) &&
+            ok = xsrv[i2]->getIntAttribute(srv.service_id, u"service_id", true) &&
+                 xsrv[i2]->getIntAttribute(srv.lcn, u"logical_channel_number", true, 0, 0x0000, 0x03FF) &&
                  xsrv[i2]->getBoolAttribute(srv.visible, u"visible_service", false, true);
             clist.services.push_back(srv);
         }

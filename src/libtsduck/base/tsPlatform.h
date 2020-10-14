@@ -279,6 +279,14 @@
     //!
     #define TS_BIG_ENDIAN
     //!
+    //! Defined to @c true when compiled for a little-endian or LSB-first target platform, @a false otherwise.
+    //!
+    #define TS_LITTLE_ENDIAN_BOOL true/false
+    //!
+    //! Defined to @c true when compiled for a big-endian or MSB-first target platform, @a false otherwise.
+    //!
+    #define TS_BIG_ENDIAN_BOOL true/false
+    //!
     //! Number of bits in an address (or a pointer or a size_t).
     //!
     #define TS_ADDRESS_BITS 16, 32, 64, etc.
@@ -440,7 +448,13 @@
     #endif
 #endif
 
-#if !defined(TS_LITTLE_ENDIAN) && !defined(TS_BIG_ENDIAN)
+#if defined(TS_LITTLE_ENDIAN)
+    #define TS_LITTLE_ENDIAN_BOOL true
+    #define TS_BIG_ENDIAN_BOOL false
+#elif defined(TS_BIG_ENDIAN)
+    #define TS_LITTLE_ENDIAN_BOOL false
+    #define TS_BIG_ENDIAN_BOOL true
+#else
     #error "unknow endian, please update this header file"
 #endif
 
@@ -760,7 +774,8 @@ TS_MSC_NOWARNING(4627)  // 'header_file': skipped when looking for precompiled h
 TS_MSC_NOWARNING(4628)  // digraphs not supported with -Ze. Character sequence '<:' not interpreted as alternate token for '['
 TS_MSC_NOWARNING(4820)  // 'n' bytes padding added after data member 'nnnnn'
 TS_MSC_NOWARNING(5026)  // move constructor was implicitly defined as deleted
-TS_MSC_NOWARNING(5039)  // pointer or reference to potentially throwing function passed to extern C function under -EHc. Undefined behavior may occur if this function throws an exception.
+TS_MSC_NOWARNING(5039)  // pointer or reference to potentially throwing function passed to extern C function under -EHc. Undefined behavior may occur if this function throws an exception
+TS_MSC_NOWARNING(5220)  // a non-static data member with a volatile qualified type no longer implies that compiler generated copy/move constructors and copy/move assignment operators are not trivial
 
 // The following ones should really be informational instead of warning:
 TS_MSC_NOWARNING(4371)  // layout of class may have changed from a previous version of the compiler due to better packing of member 'xxxx'
@@ -969,6 +984,18 @@ TS_POP_WARNING()
 
 #if defined(ERROR)
     #undef ERROR
+#endif
+
+#if defined(SHORT)
+    #undef SHORT
+#endif
+
+#if defined(LONG)
+    #undef LONG
+#endif
+
+#if defined(INTEGER)
+    #undef INTEGER
 #endif
 
 #if defined(Yield)
@@ -1183,6 +1210,31 @@ TS_POP_WARNING()
     #define TS_SIZE_T_IS_STDINT
 #elif (defined(TS_GCC_ONLY) || defined(TS_MSC)) && !defined(TS_SIZE_T_IS_STDINT)
     #define TS_SIZE_T_IS_STDINT 1
+#endif
+
+//!
+//! Size of @c wchar_t in bytes.
+//!
+#if defined(DOXYGEN)
+    #define TS_WCHAR_SIZE
+#elif defined(__SIZEOF_WCHAR_T__) && !defined(TS_WCHAR_SIZE)
+    // Typically gcc and clang.
+    #define TS_WCHAR_SIZE __SIZEOF_WCHAR_T__
+#elif (defined(__WCHAR_MAX__) && __WCHAR_MAX__ < 0x10000) && !defined(TS_WCHAR_SIZE)
+    #define TS_WCHAR_SIZE 2
+#elif (defined(__WCHAR_MAX__) && __WCHAR_MAX__ >= 0x10000) && !defined(TS_WCHAR_SIZE)
+    // Assume that wchar_t is 32-bit if larger than 16-bit
+    #define TS_WCHAR_SIZE 4
+#elif (defined(WCHAR_MAX) && WCHAR_MAX < 0x10000) && !defined(TS_WCHAR_SIZE)
+    #define TS_WCHAR_SIZE 2
+#elif (defined(WCHAR_MAX) && WCHAR_MAX >= 0x10000) && !defined(TS_WCHAR_SIZE)
+    // Assume that wchar_t is 32-bit if larger than 16-bit
+    #define TS_WCHAR_SIZE 4
+#elif defined(TS_MSC)
+    // Microsoft compiler used to use 16-bit "wide characters".
+    #define TS_WCHAR_SIZE 2
+#else
+    #error "size of wchar_t is unknown on this platform"
 #endif
 
 

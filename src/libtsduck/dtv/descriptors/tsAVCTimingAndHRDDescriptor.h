@@ -39,11 +39,7 @@
 namespace ts {
     //!
     //! Representation of an AVC_timing_and_HRD_descriptor.
-    //!
-    //! This MPG-defined descriptor is not defined in ISO/IEC 13818-1,
-    //! ITU-T Rec. H.222.0. See its "Amendment 3: Transport of AVC video
-    //! over ITU-T Rec. H.222.0 | ISO/IEC 13818-1 streams" (document W5771),
-    //! section 2.6.56.
+    //! @see ISO/IEC 13818-1, ITU-T Rec. H.222.0, 2.6.66.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL AVCTimingAndHRDDescriptor : public AbstractDescriptor
@@ -71,14 +67,14 @@ namespace ts {
         AVCTimingAndHRDDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

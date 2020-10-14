@@ -102,7 +102,7 @@ namespace ts {
     //! @return A signed integer containing the same signed value with proper sign extension on the full size of INT.
     //!
     template <typename INT, typename std::enable_if<std::is_integral<INT>::value && std::is_signed<INT>::value>::type* = nullptr>
-    INT SignExtend(INT x, int bits);
+    INT SignExtend(INT x, size_t bits);
 
     //!
     //! Compute the maximum width of the decimal representation of an integer type.
@@ -119,6 +119,39 @@ namespace ts {
     //! @return The maximum width in characters.
     //!
     size_t MaxHexaWidth(size_t typeSize, size_t digitSeparatorSize = 0);
+
+    //!
+    //! Get the size in bits of an integer value.
+    //! This is the minimum number of bits to represent the value up to its most-significant '1' bit.
+    //!
+    //! @tparam INT An integer type.
+    //! @param [in] x An integer containing a signed value in some number of LSB.
+    //! @return The minimum number of bits to represent the value up to its most-significant '1' bit.
+    //! This is never zero, at least one bit is needed to represent the value zero.
+    //!
+    template<typename INT, typename std::enable_if<std::is_integral<INT>::value && std::is_unsigned<INT>::value>::type* = nullptr>
+    size_t BitSize(INT x); // unsigned version
+
+    //! @cond nodoxygen
+    template<typename INT, typename std::enable_if<std::is_integral<INT>::value && std::is_signed<INT>::value>::type* = nullptr>
+    size_t BitSize(INT x); // signed version
+    //! @endcond
+
+    //!
+    //! Get a power of 10 using a fast lookup table.
+    //!
+    //! @tparam INT An integer type.
+    //! @param [in] pow The requested power of 10.
+    //! @return The requested power of 10. If the value is larger than the largest integer on
+    //! this platform, the result is undefined.
+    //!
+    template<typename INT, typename std::enable_if<std::is_integral<INT>::value>::type* = nullptr>
+    inline INT Power10(size_t pow) { return static_cast<INT>(Power10<uint64_t>(pow)); }
+
+    //! @cond nodoxygen
+    // Template specialization.
+    template<> TSDUCKDLL uint64_t Power10<uint64_t>(size_t pow);
+    //! @endcond
 }
 
 #include "tsIntegerUtilsTemplate.h"

@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -63,6 +64,12 @@ ts::ServiceListDescriptor::ServiceListDescriptor(DuckContext& duck, const Descri
 void ts::ServiceListDescriptor::clearContent()
 {
     entries.clear();
+}
+
+ts::ServiceListDescriptor::Entry::Entry(uint16_t id, uint8_t type) :
+    service_id(id),
+    service_type(type)
+{
 }
 
 
@@ -110,14 +117,12 @@ bool ts::ServiceListDescriptor::addService(uint16_t id, uint8_t type)
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceListDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ServiceListDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
     for (auto it = entries.begin(); it != entries.end(); ++it) {
-        bbp->appendUInt16(it->service_id);
-        bbp->appendUInt8(it->service_type);
+        buf.putUInt16(it->service_id);
+        buf.putUInt8(it->service_type);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -125,19 +130,12 @@ void ts::ServiceListDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceListDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ServiceListDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 3 == 0;
-    entries.clear();
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        while (size >= 3) {
-            entries.push_back(Entry(GetUInt16(data), data[2]));
-            data += 3;
-            size -= 3;
-        }
+    while (buf.canRead()) {
+        const uint16_t id = buf.getUInt16();
+        const uint8_t type = buf.getUInt8();
+        entries.push_back(Entry(id, type));
     }
 }
 
@@ -146,20 +144,12 @@ void ts::ServiceListDescriptor::deserialize(DuckContext& duck, const Descriptor&
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ServiceListDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ServiceListDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 3) {
-        uint16_t sid = GetUInt16(data);
-        uint8_t stype = data[2];
-        data += 3; size -= 3;
-        strm << margin << UString::Format(u"Service id: %d (0x%X), Type: %s", {sid, sid, names::ServiceType(stype, names::FIRST)}) << std::endl;
+    while (buf.canReadBytes(3)) {
+        disp << margin << UString::Format(u"Service id: %d (0x%<X)", {buf.getUInt16()});
+        disp << ", Type: " << names::ServiceType(buf.getUInt8(), names::FIRST) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -169,7 +159,7 @@ void ts::ServiceListDescriptor::DisplayDescriptor(TablesDisplay& display, DID di
 
 void ts::ServiceListDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    for (EntryList::const_iterator it = entries.begin(); it != entries.end(); ++it) {
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
         xml::Element* e = root->addElement(u"service");
         e->setIntAttribute(u"service_id", it->service_id, true);
         e->setIntAttribute(u"service_type", it->service_type, true);
@@ -188,8 +178,8 @@ bool ts::ServiceListDescriptor::analyzeXML(DuckContext& duck, const xml::Element
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        ok = children[i]->getIntAttribute<uint16_t>(entry.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
-             children[i]->getIntAttribute<uint8_t>(entry.service_type, u"service_type", true, 0, 0x00, 0xFF);
+        ok = children[i]->getIntAttribute(entry.service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
+             children[i]->getIntAttribute(entry.service_type, u"service_type", true, 0, 0x00, 0xFF);
         entries.push_back(entry);
     }
     return ok;

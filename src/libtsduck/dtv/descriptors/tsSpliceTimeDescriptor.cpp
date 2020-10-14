@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -76,14 +77,12 @@ ts::SpliceTimeDescriptor::SpliceTimeDescriptor(DuckContext& duck, const Descript
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SpliceTimeDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SpliceTimeDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt32(identifier);
-    bbp->appendUInt48(TAI_seconds);
-    bbp->appendUInt32(TAI_ns);
-    bbp->appendUInt16(UTC_offset);
-    serializeEnd(desc, bbp);
+    buf.putUInt32(identifier);
+    buf.putUInt48(TAI_seconds);
+    buf.putUInt32(TAI_ns);
+    buf.putUInt16(UTC_offset);
 }
 
 
@@ -91,19 +90,12 @@ void ts::SpliceTimeDescriptor::serialize(DuckContext& duck, Descriptor& desc) co
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::SpliceTimeDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SpliceTimeDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 16;
-
-    if (_is_valid) {
-        identifier = GetUInt32(data);
-        TAI_seconds = GetUInt48(data + 4);
-        TAI_ns = GetUInt32(data + 10);
-        UTC_offset = GetUInt16(data + 14);
-    }
+    identifier = buf.getUInt32();
+    TAI_seconds = buf.getUInt48();
+    TAI_ns = buf.getUInt32();
+    UTC_offset = buf.getUInt16();
 }
 
 
@@ -111,26 +103,16 @@ void ts::SpliceTimeDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SpliceTimeDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SpliceTimeDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 16) {
-        const uint64_t tai = GetUInt48(data + 4);
-        const uint32_t ns = GetUInt32(data + 10);
-        const uint16_t off = GetUInt16(data + 14);
-        strm << margin << UString::Format(u"Identifier: 0x%X", {GetUInt32(data)});
-        duck.displayIfASCII(data, 4, u" (\"", u"\")");
-        strm << std::endl
-             << margin
-             << UString::Format(u"TAI: %'d seconds (%s) + %'d ns, UTC offset: %'d", {tai, Time::UnixTimeToUTC(uint32_t(tai)).format(Time::DATE | Time::TIME), ns, off})
-             << std::endl;
-        data += 16; size -= 16;
+    if (buf.canReadBytes(16)) {
+        // Sometimes, the identifiers are made of ASCII characters. Try to display them.
+        disp.displayIntAndASCII(u"Identifier: 0x%08X", buf, 4, margin);
+        const uint64_t tai = buf.getUInt48();
+        disp << margin << UString::Format(u"TAI: %'d seconds (%s)", {tai, Time::UnixTimeToUTC(uint32_t(tai)).format(Time::DATE | Time::TIME)});
+        disp << UString::Format(u" + %'d ns", {buf.getUInt32()});
+        disp << UString::Format(u", UTC offset: %'d", {buf.getUInt16()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -153,8 +135,8 @@ void ts::SpliceTimeDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 
 bool ts::SpliceTimeDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint32_t>(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
-           element->getIntAttribute<uint64_t>(TAI_seconds, u"TAI_seconds", true, 0, 0, TS_UCONST64(0x0000FFFFFFFFFFFF)) &&
-           element->getIntAttribute<uint32_t>(TAI_ns, u"TAI_ns", true) &&
-           element->getIntAttribute<uint16_t>(UTC_offset, u"UTC_offset", true);
+    return element->getIntAttribute(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
+           element->getIntAttribute(TAI_seconds, u"TAI_seconds", true, 0, 0, TS_UCONST64(0x0000FFFFFFFFFFFF)) &&
+           element->getIntAttribute(TAI_ns, u"TAI_ns", true) &&
+           element->getIntAttribute(UTC_offset, u"UTC_offset", true);
 }

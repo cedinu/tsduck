@@ -158,31 +158,31 @@ void ts::SDT::deserializePayload(PSIBuffer& buf, const Section& section)
     buf.skipBits(8);
 
     // Get services description
-    while (!buf.error() && !buf.endOfRead()) {
+    while (buf.canRead()) {
         Service& serv(services[buf.getUInt16()]);
         buf.skipBits(6);
-        serv.EITs_present = buf.getBit() != 0;
-        serv.EITpf_present = buf.getBit() != 0;
-        serv.running_status = buf.getBits<uint8_t>(3);
-        serv.CA_controlled = buf.getBit() != 0;
+        serv.EITs_present = buf.getBool();
+        serv.EITpf_present = buf.getBool();
+        buf.getBits(serv.running_status, 3);
+        serv.CA_controlled = buf.getBool();
         buf.getDescriptorListWithLength(serv.descs);
     }
 }
 
 
-//----------------------------------------------------------------------------
+//---------------------------------------------------------------s-------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SDT::serializePayload(BinaryTable& table, PSIBuffer& payload) const
+void ts::SDT::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
     // Fixed part, to be repeated on all sections.
-    payload.putUInt16(onetw_id);
-    payload.putUInt8(0xFF);
-    payload.pushReadWriteState();
+    buf.putUInt16(onetw_id);
+    buf.putUInt8(0xFF);
+    buf.pushState();
 
-    // Minimum size of a section: fixed part .
-    constexpr size_t payload_min_size = 3;
+    // Minimum size of a section: fixed part.
+    const size_t payload_min_size = buf.currentWriteByteOffset();
 
     // Add all services
     for (auto it = services.begin(); it != services.end(); ++it) {
@@ -191,18 +191,18 @@ void ts::SDT::serializePayload(BinaryTable& table, PSIBuffer& payload) const
         const size_t entry_size = 5 + it->second.descs.binarySize();
 
         // If the current entry does not fit into the section, create a new section, unless we are at the beginning of the section.
-        if (entry_size > payload.remainingWriteBytes() && payload.currentWriteByteOffset() > payload_min_size) {
-            addOneSection(table, payload);
+        if (entry_size > buf.remainingWriteBytes() && buf.currentWriteByteOffset() > payload_min_size) {
+            addOneSection(table, buf);
         }
 
         // Insert service entry
-        payload.putUInt16(it->first); // service_id
-        payload.putBits(0xFF, 6);
-        payload.putBit(it->second.EITs_present);
-        payload.putBit(it->second.EITpf_present);
-        payload.putBits(it->second.running_status, 3);
-        payload.putBit(it->second.CA_controlled);
-        payload.putPartialDescriptorListWithLength(it->second.descs);
+        buf.putUInt16(it->first); // service_id
+        buf.putBits(0xFF, 6);
+        buf.putBit(it->second.EITs_present);
+        buf.putBit(it->second.EITpf_present);
+        buf.putBits(it->second.running_status, 3);
+        buf.putBit(it->second.CA_controlled);
+        buf.putPartialDescriptorListWithLength(it->second.descs);
     }
 }
 
@@ -315,31 +315,23 @@ void ts::SDT::Service::setType(uint8_t service_type)
 // A static method to display a SDT section.
 //----------------------------------------------------------------------------
 
-void ts::SDT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::SDT::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    PSIBuffer buf(duck, section.payload(), section.payloadSize());
-
-    // Fixed part.
-    strm << margin << UString::Format(u"Transport Stream Id: %d (0x%<X)", {section.tableIdExtension()}) << std::endl;
-    strm << margin << UString::Format(u"Original Network Id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
+    disp << margin << UString::Format(u"Transport Stream Id: %d (0x%<X)", {section.tableIdExtension()}) << std::endl;
+    disp << margin << UString::Format(u"Original Network Id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
     buf.skipBits(8);
 
     // Services description
-    while (!buf.error() && !buf.endOfRead()) {
-        strm << margin << UString::Format(u"Service Id: %d (0x%<X)", {buf.getUInt16()});
+    while (buf.canRead()) {
+        disp << margin << UString::Format(u"Service Id: %d (0x%<X)", {buf.getUInt16()});
         buf.skipBits(6);
-        strm << ", EITs: " << UString::YesNo(buf.getBit() != 0);
-        strm << ", EITp/f: " << UString::YesNo(buf.getBit() != 0);
+        disp << ", EITs: " << UString::YesNo(buf.getBool());
+        disp << ", EITp/f: " << UString::YesNo(buf.getBool());
         const uint8_t running_status = buf.getBits<uint8_t>(3);
-        strm << ", CA mode: " << (buf.getBit() != 0 ? "controlled" : "free") << std::endl;
-        strm << margin << "Running status: " << names::RunningStatus(running_status) << std::endl;
-        display.displayDescriptorListWithLength(section, buf, indent);
+        disp << ", CA mode: " << (buf.getBool() ? "controlled" : "free") << std::endl;
+        disp << margin << "Running status: " << names::RunningStatus(running_status) << std::endl;
+        disp.displayDescriptorListWithLength(section, buf, margin);
     }
-
-    display.displayExtraData(buf, indent);
 }
 
 
@@ -376,10 +368,10 @@ bool ts::SDT::analyzeXML(DuckContext& duck, const xml::Element* element)
     xml::ElementVector children;
     bool actual = true;
     bool ok =
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+        element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
-        element->getIntAttribute<uint16_t>(ts_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
-        element->getIntAttribute<uint16_t>(onetw_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
+        element->getIntAttribute(ts_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
+        element->getIntAttribute(onetw_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
         element->getBoolAttribute(actual, u"actual", false, true) &&
         element->getChildren(children, u"service");
 
@@ -388,7 +380,7 @@ bool ts::SDT::analyzeXML(DuckContext& duck, const xml::Element* element)
     for (size_t index = 0; ok && index < children.size(); ++index) {
         uint16_t id = 0;
         int rs = 0;
-        ok = children[index]->getIntAttribute<uint16_t>(id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
+        ok = children[index]->getIntAttribute(id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
              children[index]->getBoolAttribute(services[id].EITs_present, u"EIT_schedule", false, false) &&
              children[index]->getBoolAttribute(services[id].EITpf_present, u"EIT_present_following", false, false) &&
              children[index]->getBoolAttribute(services[id].CA_controlled, u"CA_mode", false, false) &&

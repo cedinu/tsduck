@@ -35,6 +35,8 @@
 #pragma once
 #include "tsMemory.h"
 #include "tsByteBlock.h"
+#include "tsUString.h"
+#include "tsVariable.h"
 
 namespace ts {
     //!
@@ -173,7 +175,7 @@ namespace ts {
         //! Check if the buffer is read-only.
         //! @return True if the buffer is read-only.
         //!
-        bool readOnly() const { return _read_only; }
+        bool readOnly() const { return _state.read_only; }
 
         //!
         //! Check if the buffer uses some internal private memory buffer.
@@ -197,7 +199,7 @@ namespace ts {
         //! Get the current buffer size in bytes.
         //! @return The current buffer size in bytes.
         //!
-        size_t size() const { return _buffer_max; }
+        size_t size() const { return _state.end; }
 
         //!
         //! Get the current base address of the buffer.
@@ -218,6 +220,18 @@ namespace ts {
         void setLittleEndian() { _big_endian = false; }
 
         //!
+        //! Specify that read/write operations of integers should use the native endian representation.
+        //! The endianness of the buffer is not changed by the various reset() operations.
+        //!
+        void setNativeEndian() { _big_endian = TS_BIG_ENDIAN_BOOL; }
+
+        //!
+        //! Switch the endianness of read/write operations of integers.
+        //! The endianness of the buffer is not changed by the various reset() operations.
+        //!
+        void switchEndian() { _big_endian = !_big_endian; }
+
+        //!
         //! Check if read/write operations of integers use big endian representation.
         //! @return True if big endian is used, false if little endian.
         //!
@@ -228,6 +242,12 @@ namespace ts {
         //! @return True if little endian is used, false if big endian.
         //!
         bool isLittleEndian() const { return !_big_endian; }
+
+        //!
+        //! Check if read/write operations of integers use the native endian representation.
+        //! @return True if the native endian is used, false otherwise.
+        //!
+        bool isNativeEndian() const { return _big_endian == TS_BIG_ENDIAN_BOOL; }
 
         //!
         //! Reset the buffer, remove link to any external memory, reallocate an internal buffer if necessary.
@@ -466,7 +486,47 @@ namespace ts {
         //! Check end of write stream.
         //! @return True if the end of write stream is reached.
         //!
-        bool endOfWrite() const { return _state.wbyte >= _buffer_max; }
+        bool endOfWrite() const { return _state.wbyte >= _state.end; }
+
+        //!
+        //! Check if we can still read from the buffer.
+        //! @return True if we can still read from the buffer.
+        //!
+        bool canRead() const { return !error() && !endOfRead(); }
+
+        //!
+        //! Check if we can read at least the specified number of bytes from the buffer.
+        //! @param [in] bytes Number of bytes.
+        //! @return True if we can read at least @a bytes.
+        //!
+        bool canReadBytes(size_t bytes) const { return !error() && remainingReadBytes() >= bytes; }
+
+        //!
+        //! Check if we can read at least the specified number of bits from the buffer.
+        //! @param [in] bits Number of bits.
+        //! @return True if we can read at least @a bits.
+        //!
+        bool canReadBits(size_t bits) const { return !error() && remainingReadBits() >= bits; }
+
+        //!
+        //! Check if we can still write in the buffer.
+        //! @return True if we can still write in the buffer.
+        //!
+        bool canWrite() const { return !error() && !endOfWrite(); }
+
+        //!
+        //! Check if we can write at least the specified number of bytes in the buffer.
+        //! @param [in] bytes Number of bytes.
+        //! @return True if we can write at least @a bytes.
+        //!
+        bool canWriteBytes(size_t bytes) const { return !error() && remainingWriteBytes() >= bytes; }
+
+        //!
+        //! Check if we can write at least the specified number of bits in the buffer.
+        //! @param [in] bits Number of bits.
+        //! @return True if we can write at least @a bits.
+        //!
+        bool canWriteBits(size_t bits) const { return !error() && remainingWriteBits() >= bits; }
 
         //!
         //! Push the current state of the read/write streams on a stack of saved states.
@@ -477,35 +537,98 @@ namespace ts {
         //! continue with the new state.
         //!
         //! @return The level of pushed state (0 for the first push, then 1, etc.)
-        //! The returned level can be used by popReadWriteState() and dropReadWriteState().
-        //! @see popReadWriteState()
-        //! @see dropReadWriteState()
+        //! The returned level can be used by popState() and dropState().
+        //! @see popState()
         //!
-        size_t pushReadWriteState();
+        size_t pushState();
+
+        //!
+        //! Temporary reduce the readable size of the buffer.
+        //!
+        //! The previous state is pushed to the internal stack of state and can be restored later.
+        //! Saving the readable size temporarily changes the write pointer and sets the buffer as read only.
+        //! When the state is restored using popState(), the previous readable size (write pointer)
+        //! and read-only indicator are restored. The read pointer is set to the end of previous
+        //! readable size.
+        //!
+        //! @param [in] size New readable size in bytes of the buffer. In some cases, the final granted
+        //! size can be different. The final value is bounded by the current read and write pointers.
+        //! @return The level of pushed state (0 for the first push, then 1, etc.) Return NPOS on error.
+        //! @see popState()
+        //!
+        size_t pushReadSize(size_t size);
+
+        //!
+        //! Temporary reduce the readable size of the buffer using a length field from the stream.
+        //!
+        //! An integer value is read from the stream (given the value size in bits). The read pointer
+        //! must then be byte-aligned. Finally, pushReadSize() is called so that the remaining number
+        //! of bytes to read is the length value that was just read.
+        //!
+        //! @param [in] length_bits Size in bits of the length field to read.
+        //! @return The level of pushed state (0 for the first push, then 1, etc.) Return NPOS on error.
+        //! @see pushReadSize()
+        //!
+        size_t pushReadSizeFromLength(size_t length_bits);
+
+        //!
+        //! Temporary reduce the writable size of the buffer.
+        //!
+        //! The previous state is pushed to the internal stack of state and can be restored later.
+        //! Saving the writable size temporarily changes the end of buffer.
+        //! When the state is restored using popState(), the previous end of buffer is restored.
+        //! The read and write pointers are not restored (everything that was read or written in
+        //! the meantime remain valid).
+        //!
+        //! @param [in] size New writable size in bytes of the buffer. In some cases, the final granted
+        //! size can be different. The final value is bounded by the current write pointer and end of buffer.
+        //! @return The level of pushed state (0 for the first push, then 1, etc.) Return NPOS on error.
+        //! @see popState()
+        //!
+        size_t pushWriteSize(size_t size);
+
+        //!
+        //! Start a write sequence with a leading length field.
+        //!
+        //! The current state is pushed and the specified number of bits are skipped in the write field.
+        //! The write stream must then be byte-aligned or an error is generated.
+        //! Writing data can be continued by the application. When popState() is called, the size in
+        //! bytes starting after the length field is then written in the length field.
+        //!
+        //! @param [in] length_bits Size in bits of the length field to write. Must be in the range 1 to 64.
+        //! @return The level of pushed state (0 for the first push, then 1, etc.) Return NPOS on error.
+        //! @see popState()
+        //!
+        size_t pushWriteSequenceWithLeadingLength(size_t length_bits);
 
         //!
         //! Swap the current state of the read/write streams with the one on top of the stack of saved states.
         //!
-        //! As a result, the previously saved state is restore and the current state (just before
+        //! The previous state must have been fully saved using pushState() only, not any other
+        //! push method such as pushReadSize() or pushWriteSize(). Otherwise, the buffer is set
+        //! in read and write error state.
+        //!
+        //! As a result, the previously saved state is restored and the current state (just before
         //! restoring the saved state) is pushed. If there was no saved state, the current state
         //! is unchanged but still saved. So it is always safe to assume that the current state
-        //! was savded.
+        //! was saved.
         //!
-        //! @return The level of pushed state (0 for the first push, then 1, etc.)
-        //! The returned level can be used by popReadWriteState() and dropReadWriteState().
-        //! @see pushReadWriteState()
+        //! @return The level of pushed state (0 for the first push, then 1, etc.) Return NPOS on error.
         //!
-        size_t swapReadWriteState();
+        size_t swapState();
 
         //!
-        //! Restore the current state of the read/write streams from the stack of saved states.
+        //! Pop the current state of the read/write streams from the stack of saved states and perform appropriate actions.
+        //! The new state depends on which method was used to push the previous state.
         //! @param [in] level Saved level to restore. The default is NPOS, meaning the last
         //! saved state. Another inner level can be specified, in which case all outer levels
-        //! are dropped.
+        //! are also popped.
         //! @return True on success. False if there is no saved state or @a level does not exist.
-        //! @see pushReadWriteState()
+        //! @see pushState()
+        //! @see pushReadSize()
+        //! @see pushWriteSize()
         //!
-        bool popReadWriteState(size_t level = NPOS);
+        bool popState(size_t level = NPOS);
 
         //!
         //! Drop the last saved state of the read/write streams from the stack of saved states.
@@ -515,13 +638,13 @@ namespace ts {
         //! @return True on success. False if there is no saved state or @a level does not exist.
         //! @see pushReadWriteState()
         //!
-        bool dropReadWriteState(size_t level = NPOS);
+        bool dropState(size_t level = NPOS);
 
         //!
         //! Get the current number of pushed states of the read/write streams.
         //! @return The current number of pushed states of the read/write streams.
         //!
-        size_t pushedReadWriteStateLevels() const { return _saved_states.size(); }
+        size_t pushedLevels() const { return _saved_states.size(); }
 
         //!
         //! Change the usable size of the buffer.
@@ -541,44 +664,16 @@ namespace ts {
         bool resize(size_t size, bool reallocate);
 
         //!
-        //! Temporary change the new usable size of the buffer.
-        //! The current value is pushed to an internal stack and can be restored later.
-        //! @param [in] size New usable size in bytes of the buffer. In some cases, the final granted
-        //! size can be different. The final value is bounded by the current write pointer (lower bound)
-        //! and the current capacity() (upper bound).
-        //! @return The level of pushed state (0 for the first push, then 1, etc.)
-        //! The returned level can be used by popSize() and dropSize().
-        //! @see popSize()
-        //! @see dropSize()
-        //!
-        size_t pushSize(size_t size);
-
-        //!
-        //! Restore the current buffer size from the stack of saved size.
-        //! @param [in] level Saved level to restore. The default is NPOS, meaning the last
-        //! saved size. Another inner level can be specified, in which case all outer levels
-        //! are dropped.
-        //! @return True on success. False if there is no saved size or @a level does not exist.
-        //! @see pushSize()
-        //!
-        bool popSize(size_t level = NPOS);
-
-        //!
-        //! Drop the last saved buffer size from the stack of saved sizes.
-        //! @param [in] level Saved level to drop. The default is NPOS, meaning the last
-        //! saved size. Another inner level can be specified, in which case the specified level
-        //! and all outer levels are dropped.
-        //! @return True on success. False if there is no saved size or @a level does not exist.
-        //! @see pushSize()
-        //!
-        bool dropSize(size_t level = NPOS);
-
-        //!
         //! Read the next bit and advance the read pointer.
-        //! @param [in] def Default value to return if already at end of stream.
         //! @return The value of the next bit.
         //!
-        uint8_t getBit(uint8_t def = 0);
+        uint8_t getBit();
+
+        //!
+        //! Read the next bit as a boolean and advance the read pointer.
+        //! @return The value of the next bit.
+        //!
+        bool getBool() { return getBit() != 0; }
 
         //!
         //! Write the next bit and advance the write pointer.
@@ -591,11 +686,33 @@ namespace ts {
         //! Read the next n bits as an integer value and advance the read pointer.
         //! @tparam INT An integer type for the result.
         //! @param [in] bits Number of bits to read.
-        //! @param [in] def Default value to return if less than @a n bits before end of stream.
         //! @return The value of the next @a bits.
         //!
+        template <typename INT, typename std::enable_if<std::is_integral<INT>::value && std::is_unsigned<INT>::value>::type* = nullptr>
+        INT getBits(size_t bits); // unsigned version
+
+        //! @cond nodoxygen
+        template <typename INT, typename std::enable_if<std::is_integral<INT>::value && std::is_signed<INT>::value>::type* = nullptr>
+        INT getBits(size_t bits); // signed version
+        //! @endcond
+
+        //!
+        //! Read the next n bits as an integer value and advance the read pointer.
+        //! @tparam INT An integer type for the result.
+        //! @param [out] value The value of the next @a bits.
+        //! @param [in] bits Number of bits to read.
+        //!
         template <typename INT, typename std::enable_if<std::is_integral<INT>::value>::type* = nullptr>
-        INT getBits(size_t bits, INT def = 0);
+        void getBits(INT& value, size_t bits) { value = getBits<INT>(bits); }
+
+        //!
+        //! Read the next n bits as an integer value and advance the read pointer.
+        //! @tparam INT An integer type for the result.
+        //! @param [out] value The value of the next @a bits as a Variable instance. If no integer can be read, the Variable is unset.
+        //! @param [in] bits Number of bits to read.
+        //!
+        template <typename INT, typename std::enable_if<std::is_integral<INT>::value>::type* = nullptr>
+        void getBits(Variable<INT>& value, size_t bits);
 
         //!
         //! Put the next n bits from an integer value and advance the write pointer.
@@ -622,22 +739,31 @@ namespace ts {
         //! Get bulk bytes from the buffer.
         //! The bit aligment is ignored, reading starts at the current read byte pointer,
         //! even if a few bits were already read from that byte.
-        //! @param [in] bytes Number of bytes to read.
+        //! @param [in] bytes Number of bytes to read. If specified as NPOS, return all remaining bytes.
         //! @return Read data as a byte block. If the requested number of bytes is not
         //! available, return as much as possible and set the read error.
         //!
-        ByteBlock getByteBlock(size_t bytes);
+        ByteBlock getBytes(size_t bytes = NPOS);
+
+        //!
+        //! Get bulk bytes from the buffer.
+        //! The bit aligment is ignored, reading starts at the current read byte pointer,
+        //! even if a few bits were already read from that byte.
+        //! @param [out] bb Byte block receiving the read bytes.
+        //! @param [in] bytes Number of bytes to read. If specified as NPOS, return all remaining bytes.
+        //!
+        void getBytes(ByteBlock& bb, size_t bytes = NPOS);
 
         //!
         //! Get bulk bytes from the buffer.
         //! The bit aligment is ignored, reading starts at the current read byte pointer,
         //! even if a few bits were already read from that byte.
         //! @param [in,out] bb Byte block receiving the read bytes. The read data are appended to @a bb.
-        //! @param [in] bytes Number of bytes to read.
+        //! @param [in] bytes Number of bytes to read. If specified as NPOS, return all remaining bytes.
         //! @return Actual number of appended bytes. If the requested number of bytes is not
         //! available, return as much as possible and set the read error.
         //!
-        size_t getByteBlockAppend(ByteBlock& bb, size_t bytes);
+        size_t getBytesAppend(ByteBlock& bb, size_t bytes = NPOS);
 
         //!
         //! Put bytes in the buffer.
@@ -856,6 +982,294 @@ namespace ts {
         //!
         bool putInt64(int64_t i) { return putint(i, 8, PutInt64BE, PutInt64LE); }
 
+        //!
+        //! Read the next 4*n bits as a Binary Coded Decimal (BCD) value and advance the read pointer.
+        //! If an invalid BCD digit is found, the read error state of the buffer is set after reading all BCD digits.
+        //! @tparam INT An integer type.
+        //! @param [in] bcd_count Number of BCD digits (@a bcd_count * 4 bits).
+        //! @return The decoded BCD value or zero in case of error.
+        //!
+        template <typename INT, typename std::enable_if<std::is_integral<INT>::value>::type* = nullptr>
+        INT getBCD(size_t bcd_count);
+
+        //!
+        //! Read the next 4*n bits as a Binary Coded Decimal (BCD) value and advance the read pointer.
+        //! If an invalid BCD digit is found, the read error state of the buffer is set after reading all BCD digits.
+        //! @tparam INT An integer type.
+        //! @param [out] value The decoded BCD value or zero in case of error.
+        //! @param [in] bcd_count Number of BCD digits (@a bcd_count * 4 bits).
+        //! @return True on success, false on error.
+        //!
+        template <typename INT, typename std::enable_if<std::is_integral<INT>::value>::type* = nullptr>
+        bool getBCD(INT& value, size_t bcd_count);
+
+        //!
+        //! Put the next 4*n bits as a Binary Coded Decimal (BCD) value and advance the write pointer.
+        //! @tparam INT An integer type.
+        //! @param [in] value Integer value to write.
+        //! @param [in] bcd_count Number of BCD digits (@a bcd_count * 4 bits).
+        //! @return True on success, false on error (read only or no more space to write).
+        //!
+        template <typename INT, typename std::enable_if<std::is_integral<INT>::value>::type* = nullptr>
+        bool putBCD(INT value, size_t bcd_count);
+
+        //!
+        //! Get a UTF-8 string.
+        //! The read-pointer must be byte-aligned.
+        //! @param [out] result Returned decoded string.
+        //! @param [in] bytes Size in bytes of the encoded UTF-8 string. If specified as @a NPOS (the default), read up to
+        //! the end of the buffer. If different from @a NPOS, the exact number of bytes must be available or a read
+        //! error is generated.
+        //! @return True on success, false on error.
+        //!
+        bool getUTF8(UString& result, size_t bytes = NPOS)
+        {
+            return getUTFInternal(result, bytes, true); // true = UTF-8
+        }
+
+        //!
+        //! Get a UTF-8 string.
+        //! The read-pointer must be byte-aligned.
+        //! @param [in] bytes Size in bytes of the encoded UTF-8 string. If specified as @a NPOS (the default), read up to
+        //! the end of the buffer. If different from @a NPOS, the exact number of bytes must be available or a read
+        //! error is generated.
+        //! @return The decoded string.
+        //!
+        UString getUTF8(size_t bytes = NPOS)
+        {
+            return outStringToResult(bytes, &Buffer::getUTF8);
+        }
+
+        //!
+        //! Get a UTF-8 string (preceded by its length).
+        //! The read-pointer must be byte-aligned after reading the length-field.
+        //! The specified number of bytes must be available or a read error is generated.
+        //! @param [out] result Returned decoded string.
+        //! @param [in] length_bits Size in bits in the length field.
+        //! @return True on success, false on error (truncated, unsupported format, etc.)
+        //!
+        bool getUTF8WithLength(UString& result, size_t length_bits = 8)
+        {
+            return getUTFWithLengthInternal(result, length_bits, true); // true = UTF-8
+        }
+
+        //!
+        //! Get a UTF-8 string (preceded by its length).
+        //! The read-pointer must be byte-aligned after reading the length-field.
+        //! The specified number of bytes must be available or a read error is generated.
+        //! @param [in] length_bits Size in bits in the length field.
+        //! @return The decoded string.
+        //!
+        UString getUTF8WithLength(size_t length_bits = 8)
+        {
+            return outStringToResult(length_bits, &Buffer::getUTF8WithLength);
+        }
+
+        //!
+        //! Get a UTF-16 string.
+        //! The read-pointer must be byte-aligned.
+        //! @param [out] result Returned decoded string.
+        //! @param [in] bytes Size in bytes of the encoded UTF-16 string. If specified as @a NPOS (the default), read up to
+        //! the end of the buffer. If different from @a NPOS, the exact number of bytes must be available or a read
+        //! error is generated. If @a bytes is an odd value, the last byte is skipped and ignored.
+        //! @return True on success, false on error.
+        //!
+        bool getUTF16(UString& result, size_t bytes = NPOS)
+        {
+            return getUTFInternal(result, bytes, false); // false = UTF-16
+        }
+
+        //!
+        //! Get a UTF-16 string.
+        //! The read-pointer must be byte-aligned.
+        //! @param [in] bytes Size in bytes of the encoded UTF-16 string. If specified as @a NPOS (the default), read up to
+        //! the end of the buffer. If different from @a NPOS, the exact number of bytes must be available or a read
+        //! error is generated. If @a bytes is an odd value, the last byte is skipped and ignored.
+        //! @return The decoded string.
+        //!
+        UString getUTF16(size_t bytes = NPOS)
+        {
+            return outStringToResult(bytes, &Buffer::getUTF16);
+        }
+
+        //!
+        //! Get a UTF-16 string (preceded by its length).
+        //! The read-pointer must be byte-aligned after reading the length-field.
+        //! The specified number of bytes must be available or a read error is generated.
+        //! If the extracted length is an odd value, the last byte is skipped and ignored.
+        //! @param [out] result Returned decoded string.
+        //! @param [in] length_bits Size in bits in the length field.
+        //! @return True on success, false on error (truncated, unsupported format, etc.)
+        //!
+        bool getUTF16WithLength(UString& result, size_t length_bits = 8)
+        {
+            return getUTFWithLengthInternal(result, length_bits, false); // false = UTF-16
+        }
+
+        //!
+        //! Get a UTF-16 string (preceded by its length).
+        //! The read-pointer must be byte-aligned after reading the length-field.
+        //! The specified number of bytes must be available or a read error is generated.
+        //! If the extracted length is an odd value, the last byte is skipped and ignored.
+        //! @param [in] length_bits Size in bits in the length field.
+        //! @return The decoded string.
+        //!
+        UString getUTF16WithLength(size_t length_bits = 8)
+        {
+            return outStringToResult(length_bits, &Buffer::getUTF16WithLength);
+        }
+
+        //!
+        //! Put a string using UTF-8 format.
+        //! The write-pointer must be byte-aligned.
+        //! Generate a write error when the buffer is full before writing the complete string.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putUTF8(const UString& str, size_t start = 0, size_t count = NPOS)
+        {
+            return putUTFInternal(str, start, count, false, NPOS, 0, true) != 0; // true = UTF-8
+        }
+
+        //!
+        //! Put a string using UTF-8 format with a fixed binary size (truncate or pad).
+        //! The write-pointer must be byte-aligned.
+        //! Generate a write error when the buffer is full before writing the complete string.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] size Fixed size in bytes to fill. If @a str cannot be fully serialized, it is truncated.
+        //! @param [in] pad It @a str does not fill @a size bytes, pad the remaining bytes with this value.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putFixedUTF8(const UString& str, size_t size, uint8_t pad = 0, size_t start = 0, size_t count = NPOS)
+        {
+            return putUTFInternal(str, start, count, false, size, pad, true) != 0; // true = UTF-8
+        }
+
+        //!
+        //! Put a partial string using UTF-8 format.
+        //! The write-pointer must be byte-aligned.
+        //! Stop either when this string is serialized or when the buffer is full, whichever comes first.
+        //! Do not generate a write error when the buffer is full.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @return The number of serialized characters (which is usually not the same as the number of written bytes).
+        //!
+        size_t putPartialUTF8(const UString& str, size_t start = 0, size_t count = NPOS)
+        {
+            return putUTFInternal(str, start, count, true, NPOS, 0, true); // true = UTF-8
+        }
+
+        //!
+        //! Put a string (preceded by its length) using UTF-8 format.
+        //! The write-pointer must be byte-aligned after writing the length-field.
+        //! Generate a write error when the buffer is full before writing the complete string.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @param [in] length_bits Size in bits in the length field.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putUTF8WithLength(const UString& str, size_t start = 0, size_t count = NPOS, size_t length_bits = 8)
+        {
+            return putUTFWithLengthInternal(str, start, count, length_bits, false, true) != 0;
+        }
+
+        //!
+        //! Put a partial string (preceded by its length) using UTF-8 format.
+        //! The write-pointer must be byte-aligned after writing the length-field.
+        //! Do not generate a write error when the buffer is full.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @param [in] length_bits Size in bits in the length field.
+        //! @return The number of serialized characters (which is usually not the same as the number of written bytes).
+        //!
+        size_t putPartialUTF8WithLength(const UString& str, size_t start = 0, size_t count = NPOS, size_t length_bits = 8)
+        {
+            return putUTFWithLengthInternal(str, start, count, length_bits, true, true);
+        }
+
+        //!
+        //! Put a string using UTF-16 format.
+        //! The write-pointer must be byte-aligned.
+        //! Generate a write error when the buffer is full before writing the complete string.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putUTF16(const UString& str, size_t start = 0, size_t count = NPOS)
+        {
+            return putUTFInternal(str, start, count, false, NPOS, 0, false) != 0; // false = UTF-16
+        }
+
+        //!
+        //! Put a string using UTF-16 format with a fixed binary size (truncate or pad).
+        //! The write-pointer must be byte-aligned.
+        //! Generate a write error when the buffer is full before writing the complete string.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] size Fixed size in bytes to fill. If @a str cannot be fully serialized, it is truncated.
+        //! @param [in] pad It @a str does not fill @a size bytes, serialize the remaining UTF-16 characters with this value.
+        //! If @a size has an odd value, the last byte is padded with the least significant byte of @a pad.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putFixedUTF16(const UString& str, size_t size, uint16_t pad = 0, size_t start = 0, size_t count = NPOS)
+        {
+            return putUTFInternal(str, start, count, false, size, pad, false) != 0; // false = UTF-16
+        }
+
+        //!
+        //! Put a partial string using UTF-8 format.
+        //! The write-pointer must be byte-aligned.
+        //! Stop either when this string is serialized or when the buffer is full, whichever comes first.
+        //! Do not generate a write error when the buffer is full.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @return The number of serialized characters (which is usually not the same as the number of written bytes).
+        //!
+        size_t putPartialUTF16(const UString& str, size_t start = 0, size_t count = NPOS)
+        {
+            return putUTFInternal(str, start, count, true, NPOS, 0, false); // false = UTF-16
+        }
+
+        //!
+        //! Put a string (preceded by its length) using UTF-16 format.
+        //! The write-pointer must be byte-aligned after writing the length-field.
+        //! Generate a write error when the buffer is full before writing the complete string.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @param [in] length_bits Size in bits in the length field.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putUTF16WithLength(const UString& str, size_t start = 0, size_t count = NPOS, size_t length_bits = 8)
+        {
+            return putUTFWithLengthInternal(str, start, count, length_bits, false, false) != 0;
+        }
+
+        //!
+        //! Put a partial string (preceded by its length) using UTF-16 format.
+        //! The write-pointer must be byte-aligned after writing the length-field.
+        //! Do not generate a write error when the buffer is full.
+        //! @param [in] str The UTF-16 string to encode.
+        //! @param [in] start Starting offset to convert in this UTF-16 string.
+        //! @param [in] count Maximum number of characters to convert.
+        //! @param [in] length_bits Size in bits in the length field.
+        //! @return The number of serialized characters (which is usually not the same as the number of written bytes).
+        //!
+        size_t putPartialUTF16WithLength(const UString& str, size_t start = 0, size_t count = NPOS, size_t length_bits = 8)
+        {
+            return putUTFWithLengthInternal(str, start, count, length_bits, true, false);
+        }
+
     protected:
         //!
         //! Set the read error state (reserved to subclasses).
@@ -889,6 +1303,7 @@ namespace ts {
         bool putint(INT value, size_t bytes, void (*putBE)(void*,INT), void (*putLE)(void*,INT));
 
         // Request some read size. Return actually possible read size. Set read error if lower than requested.
+        // If equal to NPOS, return maximum size.
         size_t requestReadBytes(size_t bytes);
 
         // Get bulk bytes, either aligned or not. Update read pointer.
@@ -897,29 +1312,55 @@ namespace ts {
         // Set range of bits [start_bit..end_bit[ in a byte.
         void setBits(size_t byte, size_t start_bit, size_t end_bit, uint8_t value);
 
-        // Read/write state in the buffer.
-        struct RWState {
-            RWState();     // Constructor.
-            size_t rbyte;  // Next byte to read, offset from beginning of buffer.
-            size_t wbyte;  // Next byte to write, offset from beginning of buffer.
-            size_t rbit;   // Next bit to read at offset rbyte (0 = MSB in big endian, LSB in little endian).
-            size_t wbit;   // Next bit to write at offset wbyte (0 = MSB in big endian, LSB in little endian).
+        // Common code for UTF strings.
+        UString outStringToResult(size_t param, bool (Buffer::*method)(UString&, size_t));
+        bool getUTFInternal(UString& result, size_t bytes, bool utf8);
+        bool getUTFWithLengthInternal(UString& result, size_t length_bits, bool utf8);
+        size_t putUTFInternal(const UString& str, size_t start, size_t count, bool partial, size_t fixed_size, int pad, bool utf8);
+        size_t putUTFWithLengthInternal(const UString& str, size_t start, size_t count, size_t length_bits, bool partial, bool utf8);
+
+        // Reason for the creation of a buffer state.
+        enum class Reason {
+            FULL,           // Full state was saved.
+            READ_SIZE,      // A new read size (write pointer) was specified.
+            WRITE_SIZE,     // A new write size (end of buffer) was specified.
+            WRITE_LEN_SEQ,  // A write sequence with a leading length field was started.
         };
 
-        uint8_t*             _buffer;        // Base address of memory buffer.
-        size_t               _buffer_size;   // Size of addressable area in _buffer.
-        size_t               _buffer_max;    // Size of usable area in _buffer.
-        bool                 _read_only;     // The buffer is in read-only mode.
-        bool                 _allocated;     // If true, _buffer was internally allocated and must be freed later.
-        bool                 _big_endian;    // Read/write integers in big endian mode (false means little endian).
-        bool                 _read_error;    // Read error encountered (passed end of stream for instance).
-        bool                 _write_error;   // Write error encountered (passed end of stream for instance).
-        bool                 _user_error;    // User-generated error.
-        RWState              _state;         // Read/write indexes.
-        std::vector<size_t>  _saved_max;     // Stack of saved _buffer_max.
-        std::vector<RWState> _saved_states;  // Stack of saved states.
-        uint8_t              _realigned[8];  // 64-bit intermediate buffer to read realigned integer.
+        // Read/write state in the buffer.
+        struct State {
+            Reason reason;     // Reason for the creation of this state.
+            bool   read_only;  // The buffer is in read-only mode.
+            size_t end;        // Size of usable area in buffer.
+            size_t rbyte;      // Next byte to read, offset from beginning of buffer.
+            size_t wbyte;      // Next byte to write, offset from beginning of buffer.
+            size_t rbit;       // Next bit to read at offset rbyte (0 = MSB in big endian, LSB in little endian).
+            size_t wbit;       // Next bit to write at offset wbyte (0 = MSB in big endian, LSB in little endian).
+            size_t len_bits;   // Size in bits of the length field (when reason is WRITE_LEN_SEQ).
+
+            // Constructor.
+            State(bool rdonly = true, size_t size = 0);
+
+            // Reset all values to zero.
+            void clear();
+        };
+
+        uint8_t*           _buffer;        // Base address of memory buffer.
+        size_t             _buffer_size;   // Size of addressable area in _buffer.
+        bool               _allocated;     // If true, _buffer was internally allocated and must be freed later.
+        bool               _big_endian;    // Read/write integers in big endian mode (false means little endian).
+        bool               _read_error;    // Read error encountered (passed end of stream for instance).
+        bool               _write_error;   // Write error encountered (passed end of stream for instance).
+        bool               _user_error;    // User-generated error.
+        State              _state;         // Read/write indexes.
+        std::vector<State> _saved_states;  // Stack of saved states.
+        uint8_t            _realigned[8];  // 64-bit intermediate buffer to read realigned integer.
     };
+
+    //! @cond nodoxygen
+    // Template specialization for boolean.
+    template<> TSDUCKDLL inline bool Buffer::putBits(bool value, size_t bits) { return putBits<int>(value ? 1 : 0, bits); }
+    //! @endcond
 }
 
 #include "tsBufferTemplate.h"

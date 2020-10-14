@@ -38,7 +38,7 @@
 namespace ts {
     //!
     //! Representation of an parental_rating_descriptor
-    //! @see ETSI 300 468, 6.2.28.
+    //! @see ETSI EN 300 468, 6.2.28.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL ParentalRatingDescriptor : public AbstractDescriptor
@@ -101,14 +101,14 @@ namespace ts {
         ParentalRatingDescriptor(const UString& code, uint8_t rate);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

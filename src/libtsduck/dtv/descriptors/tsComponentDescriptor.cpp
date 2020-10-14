@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -80,20 +81,14 @@ void ts::ComponentDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ComponentDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ComponentDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    bbp->appendUInt8(uint8_t(stream_content_ext << 4) | (stream_content & 0x0F));
-    bbp->appendUInt8(component_type);
-    bbp->appendUInt8(component_tag);
-    if (!SerializeLanguageCode(*bbp, language_code)) {
-        desc.invalidate();
-        return;
-    }
-    bbp->append(duck.encoded(text));
-
-    serializeEnd(desc, bbp);
+    buf.putBits(stream_content_ext, 4);
+    buf.putBits(stream_content, 4);
+    buf.putUInt8(component_type);
+    buf.putUInt8(component_tag);
+    buf.putLanguageCode(language_code);
+    buf.putString(text);
 }
 
 
@@ -101,21 +96,14 @@ void ts::ComponentDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ComponentDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ComponentDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 6;
-
-    if (_is_valid) {
-        stream_content_ext = (data[0] >> 4) & 0x0F;
-        stream_content = data[0] & 0x0F;
-        component_type = data[1];
-        component_tag = data[2];
-        language_code = DeserializeLanguageCode(data + 3);
-        duck.decode(text, data + 6, size - 6);
-    }
+    buf.getBits(stream_content_ext, 4);
+    buf.getBits(stream_content, 4);
+    component_type = buf.getUInt8();
+    component_tag = buf.getUInt8();
+    buf.getLanguageCode(language_code);
+    buf.getString(text);
 }
 
 
@@ -123,26 +111,16 @@ void ts::ComponentDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ComponentDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ComponentDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 6) {
-        const uint16_t type = GetUInt16(data);
-        const uint8_t tag = data[2];
-        strm << margin << "Content/type: " << names::ComponentType(duck, type, names::FIRST) << std::endl
-             << margin << UString::Format(u"Component tag: %d (0x%X)", {tag, tag}) << std::endl
-             << margin << "Language: " << DeserializeLanguageCode(data + 3) << std::endl;
-        data += 6; size -= 6;
-        if (size > 0) {
-            strm << margin << "Description: \"" << duck.decoded(data, size) << "\"" << std::endl;
+    if (buf.canReadBytes(6)) {
+        disp << margin << "Content/type: " << names::ComponentType(disp.duck(), buf.getUInt16(), names::FIRST) << std::endl;
+        disp << margin << UString::Format(u"Component tag: %d (0x%<X)", {buf.getUInt8()}) << std::endl;
+        disp << margin << "Language: " << buf.getLanguageCode() << std::endl;
+        if (buf.canRead()) {
+            disp << margin << "Description: \"" << buf.getString() << "\"" << std::endl;
         }
-        data += size; size = 0;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -167,10 +145,10 @@ void ts::ComponentDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 
 bool ts::ComponentDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(stream_content, u"stream_content", true, 0x00, 0x00, 0x0F) &&
-           element->getIntAttribute<uint8_t>(stream_content_ext, u"stream_content_ext", false, 0x0F, 0x00, 0x0F) &&
-           element->getIntAttribute<uint8_t>(component_type, u"component_type", true, 0x00, 0x00, 0xFF) &&
-           element->getIntAttribute<uint8_t>(component_tag, u"component_tag", false, 0x00, 0x00, 0xFF) &&
+    return element->getIntAttribute(stream_content, u"stream_content", true, 0x00, 0x00, 0x0F) &&
+           element->getIntAttribute(stream_content_ext, u"stream_content_ext", false, 0x0F, 0x00, 0x0F) &&
+           element->getIntAttribute(component_type, u"component_type", true, 0x00, 0x00, 0xFF) &&
+           element->getIntAttribute(component_tag, u"component_tag", false, 0x00, 0x00, 0xFF) &&
            element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
            element->getAttribute(text, u"text", false, u"", 0, MAX_DESCRIPTOR_SIZE - 8);
 }

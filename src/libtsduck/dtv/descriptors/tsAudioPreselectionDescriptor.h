@@ -39,7 +39,7 @@
 namespace ts {
     //!
     //! Representation of an audio_preselection_descriptor.
-    //! @see A038 DVB Blue Book, 6.4.1
+    //! @see ETSI EN 300 468, 6.4.1
     //! @ingroup descriptor
     //!
     class TSDUCKDLL AudioPreselectionDescriptor : public AbstractDescriptor
@@ -89,15 +89,16 @@ namespace ts {
         AudioPreselectionDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual DID extendedTag() const override;
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
 
     private:
         // Check if internal data sizes are valid.

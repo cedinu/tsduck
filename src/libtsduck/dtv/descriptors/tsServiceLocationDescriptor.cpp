@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -80,20 +81,15 @@ ts::ServiceLocationDescriptor::Entry::Entry(uint8_t type, ts::PID pid, const ts:
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceLocationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ServiceLocationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(0xE000 | PCR_PID);
-    bbp->appendUInt8(uint8_t(entries.size()));
+    buf.putPID(PCR_PID);
+    buf.putUInt8(uint8_t(entries.size()));
     for (auto it = entries.begin(); it != entries.end(); ++it) {
-        bbp->appendUInt8(it->stream_type);
-        bbp->appendUInt16(0xE000 | it->elementary_PID);
-        if (!SerializeLanguageCode(*bbp, it->ISO_639_language_code, true)) {
-            desc.invalidate();
-            return;
-        }
+        buf.putUInt8(it->stream_type);
+        buf.putPID(it->elementary_PID);
+        buf.putLanguageCode(it->ISO_639_language_code, true);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -101,25 +97,16 @@ void ts::ServiceLocationDescriptor::serialize(DuckContext& duck, Descriptor& des
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceLocationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ServiceLocationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    entries.clear();
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 3 && (size - 3) % 6 == 0;
-
-    if (_is_valid) {
-        // Fixed part.
-        PCR_PID = GetUInt16(data) & 0x1FFF;
-        size_t count = data[2];
-        data += 3; size -= 3;
-
-        // Loop on all component entries.
-        while (count-- > 0 && size >= 6) {
-            entries.push_back(Entry(data[0], GetUInt16(data + 1) & 0x1FFF, DeserializeLanguageCode(data + 3)));
-            data += 6; size -= 6;
-        }
+    PCR_PID = buf.getPID();
+    const size_t count = buf.getUInt8();
+    for (size_t i = 0; i < count && buf.canRead(); ++i) {
+        Entry e;
+        e.stream_type = buf.getUInt8();
+        e.elementary_PID = buf.getPID();
+        buf.getLanguageCode(e.ISO_639_language_code);
+        entries.push_back(e);
     }
 }
 
@@ -128,38 +115,27 @@ void ts::ServiceLocationDescriptor::deserialize(DuckContext& duck, const Descrip
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ServiceLocationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ServiceLocationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    if (size >= 3) {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
-        PID pid = GetUInt16(data) & 0x1FFF;
-        size_t count = data[2];
-        data += 3; size -= 3;
-
-        strm << margin << "PCR PID: ";
+    if (buf.canReadBytes(3)) {
+        const PID pid = buf.getPID();
+        const size_t count = buf.getUInt8();
+        disp << margin << "PCR PID: ";
         if (pid == PID_NULL) {
-            strm << "none";
+            disp << "none";
         }
         else {
-            strm << UString::Format(u"0x%X (%d)", {pid, pid});
+            disp << UString::Format(u"0x%X (%<d)", {pid});
         }
-        strm << ", number of elements: " << count << std::endl;
+        disp << ", number of elements: " << count << std::endl;
 
         // Loop on all component entries.
-        while (count-- > 0 && size >= 6) {
-            const uint8_t stype = data[0];
-            pid = GetUInt16(data + 1) & 0x1FFF;
-            const UString lang(DeserializeLanguageCode(data + 3));
-            data += 6; size -= 6;
-
-            strm << margin << UString::Format(u"- PID: 0x%X (%d), language: \"%s\", type: %s", {pid, pid, lang, names::ServiceType(stype, names::FIRST)}) << std::endl;
+        for (size_t i = 0; i < count && buf.canReadBytes(6); ++i) {
+            const uint8_t stype = buf.getUInt8();
+            disp << margin << UString::Format(u"- PID: 0x%X (%<d)", {buf.getPID()});
+            disp << ", language: \"" << buf.getLanguageCode() << "\", type: " << names::ServiceType(stype, names::FIRST) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -191,13 +167,13 @@ bool ts::ServiceLocationDescriptor::analyzeXML(DuckContext& duck, const xml::Ele
 {
     xml::ElementVector children;
     bool ok =
-        element->getIntAttribute<uint16_t>(PCR_PID, u"PCR_PID", false, PID_NULL, 0, 0x1FFF) &&
+        element->getIntAttribute(PCR_PID, u"PCR_PID", false, PID_NULL, 0, 0x1FFF) &&
         element->getChildren(children, u"component", 0, MAX_ENTRIES);
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        ok = children[i]->getIntAttribute<uint8_t>(entry.stream_type, u"stream_type", true) &&
-             children[i]->getIntAttribute<uint16_t>(entry.elementary_PID, u"elementary_PID", true, 0, 0, 0x1FFF) &&
+        ok = children[i]->getIntAttribute(entry.stream_type, u"stream_type", true) &&
+             children[i]->getIntAttribute(entry.elementary_PID, u"elementary_PID", true, 0, 0, 0x1FFF) &&
              children[i]->getAttribute(entry.ISO_639_language_code, u"ISO_639_language_code", false, UString(), 0, 3);
         entries.push_back(entry);
     }

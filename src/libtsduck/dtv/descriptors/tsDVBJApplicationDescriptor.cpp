@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -70,39 +71,18 @@ void ts::DVBJApplicationDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DVBJApplicationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DVBJApplicationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
     for (auto it = parameters.begin(); it != parameters.end(); ++it) {
-        bbp->append(duck.encodedWithByteLength(*it));
+        buf.putStringWithByteLength(*it);
     }
-    serializeEnd(desc, bbp);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::DVBJApplicationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DVBJApplicationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    parameters.clear();
-    _is_valid = desc.isValid() && desc.tag() == tag();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    while (_is_valid && size >= 1) {
-        const size_t len = data[0];
-        data += 1; size -= 1;
-        _is_valid = len <= size;
-        if (_is_valid) {
-            parameters.push_back(duck.decoded(data, len));
-            data += len; size -= len;
-        }
+    while (buf.canRead()) {
+        parameters.push_back(buf.getStringWithByteLength());
     }
-
-    _is_valid = _is_valid && size == 0;
 }
 
 
@@ -110,19 +90,11 @@ void ts::DVBJApplicationDescriptor::deserialize(DuckContext& duck, const Descrip
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DVBJApplicationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DVBJApplicationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 1) {
-        const size_t len = std::min<size_t>(data[0], size - 1);
-        strm << margin << "Parameter: \"" << duck.decoded(data + 1, len) << "\"" << std::endl;
-        data += 1 + len; size -= 1 + len;
+    while (buf.canReadBytes(1)) {
+        disp << margin << "Parameter: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 

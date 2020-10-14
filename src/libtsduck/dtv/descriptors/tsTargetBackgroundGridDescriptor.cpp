@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -74,33 +75,18 @@ ts::TargetBackgroundGridDescriptor::TargetBackgroundGridDescriptor(DuckContext& 
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::TargetBackgroundGridDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::TargetBackgroundGridDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt32((uint32_t(horizontal_size & 0x3FFF) << 18) |
-                      (uint32_t(vertical_size & 0x3FFF) << 4) |
-                      (aspect_ratio_information & 0x0F));
-    serializeEnd(desc, bbp);
+    buf.putBits(horizontal_size, 14);
+    buf.putBits(vertical_size, 14);
+    buf.putBits(aspect_ratio_information, 4);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::TargetBackgroundGridDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::TargetBackgroundGridDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 4;
-
-    if (_is_valid) {
-        const uint32_t x = GetUInt32(data);
-        horizontal_size = uint16_t(x >> 18) & 0x3FFF;
-        vertical_size = uint16_t(x >> 4) & 0x3FFF;
-        aspect_ratio_information = uint8_t(x) & 0x0F;
-    }
+    buf.getBits(horizontal_size, 14);
+    buf.getBits(vertical_size, 14);
+    buf.getBits(aspect_ratio_information, 4);
 }
 
 
@@ -108,24 +94,13 @@ void ts::TargetBackgroundGridDescriptor::deserialize(DuckContext& duck, const De
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::TargetBackgroundGridDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::TargetBackgroundGridDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 4) {
-        const uint32_t x = GetUInt32(data);
-        strm << margin
-             << UString::Format(u"Size: %dx%d, aspect ratio: %s",
-                                {(x >> 18) & 0x3FFF,
-                                 (x >> 4) & 0x3FFF,
-                                 NameFromSection(u"AspectRatio", x & 0x0F, names::DECIMAL_FIRST)})
-             << std::endl;
-        data += 4; size -= 4;
+    if (buf.canReadBytes(4)) {
+        disp << margin << UString::Format(u"Size: %d", {buf.getBits<uint16_t>(14)});
+        disp << UString::Format(u"x%d", {buf.getBits<uint16_t>(14)});
+        disp << ", aspect ratio: " << NameFromSection(u"AspectRatio", buf.getBits<uint8_t>(4), names::DECIMAL_FIRST) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -140,14 +115,9 @@ void ts::TargetBackgroundGridDescriptor::buildXML(DuckContext& duck, xml::Elemen
     root->setIntAttribute(u"aspect_ratio_information", aspect_ratio_information);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::TargetBackgroundGridDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint16_t>(horizontal_size, u"horizontal_size", true, 0, 0, 0x3FFF) &&
-           element->getIntAttribute<uint16_t>(vertical_size, u"vertical_size", true, 0, 0, 0x3FFF) &&
-           element->getIntAttribute<uint8_t>(aspect_ratio_information, u"aspect_ratio_information", true, 0, 0, 0x0F);
+    return element->getIntAttribute(horizontal_size, u"horizontal_size", true, 0, 0, 0x3FFF) &&
+           element->getIntAttribute(vertical_size, u"vertical_size", true, 0, 0, 0x3FFF) &&
+           element->getIntAttribute(aspect_ratio_information, u"aspect_ratio_information", true, 0, 0, 0x0F);
 }

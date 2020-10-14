@@ -26,26 +26,46 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //
 //----------------------------------------------------------------------------
+//!
+//!  @file
+//!  Packetization of PES data into Transport Stream packets in one shot.
+//!
+//----------------------------------------------------------------------------
 
 #pragma once
-#include "tsMemory.h"
+#include "tsPESStreamPacketizer.h"
+#include "tsTSPacket.h"
 
+namespace ts {
+    //!
+    //! Packetization of PES data into Transport Stream packets in one shot.
+    //! @ingroup mpeg
+    //!
+    class TSDUCKDLL PESOneShotPacketizer: public PESStreamPacketizer
+    {
+        TS_NOBUILD_NOCOPY(PESOneShotPacketizer);
+    public:
+        //!
+        //! Constructor.
+        //! @param [in] duck TSDuck execution context. The reference is kept inside the packetizer.
+        //! @param [in] pid PID for generated TS packets.
+        //! @param [in] report Optional address of a Report object for debug and trace messages.
+        //!
+        PESOneShotPacketizer(const DuckContext& duck, PID pid = PID_NULL, Report* report = nullptr);
 
-//----------------------------------------------------------------------------
-// Deserialize an integer.
-//----------------------------------------------------------------------------
+        //!
+        //! Destructor
+        //!
+        virtual ~PESOneShotPacketizer();
 
-template<typename INT, typename std::enable_if<std::is_integral<INT>::value>::type*>
-bool ts::AbstractSignalization::deserializeInt(INT& value, const uint8_t*& data, size_t& size)
-{
-    if (size < sizeof(INT) || data == nullptr) {
-        _is_valid = false;
-        return false;
-    }
-    else {
-        GetInt(data, value);
-        data += sizeof(INT);
-        size -= sizeof(INT);
-        return true;
-    }
+        //!
+        //! Get all enqueued PES packets as one list of TS packets.
+        //! @param [out] packets Returned list of TS packets containing all TS packets.
+        //!
+        void getPackets(TSPacketVector& packets);
+
+    private:
+        // Hide these methods
+        virtual bool getNextPacket(TSPacket&) override;
+    };
 }

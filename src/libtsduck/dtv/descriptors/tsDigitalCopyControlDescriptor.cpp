@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -85,34 +86,29 @@ ts::DigitalCopyControlDescriptor::Component::Component() :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DigitalCopyControlDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DigitalCopyControlDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(digital_recording_control_data << 6) |
-                     (maximum_bitrate.set() ? 0x20 : 0x00) |
-                     (components.empty() ? 0x00 : 0x10) |
-                     (user_defined & 0x0F));
+    buf.putBits(digital_recording_control_data, 2);
+    buf.putBit(maximum_bitrate.set());
+    buf.putBit(!components.empty());
+    buf.putBits(user_defined, 4);
     if (maximum_bitrate.set()) {
-        bbp->appendUInt8(maximum_bitrate.value());
+        buf.putUInt8(maximum_bitrate.value());
     }
     if (!components.empty()) {
-        // Placeholder for component_control_length.
-        const size_t len = bbp->size();
-        bbp->appendUInt8(0);
-        // Serialize components.
+        buf.pushWriteSequenceWithLeadingLength(8); // component_control_length
         for (auto it = components.begin(); it != components.end(); ++it) {
-            bbp->appendUInt8(it->component_tag);
-            bbp->appendUInt8(uint8_t(it->digital_recording_control_data << 6) |
-                             (it->maximum_bitrate.set() ? 0x30 : 0x10) |
-                             (it->user_defined & 0x0F));
+            buf.putUInt8(it->component_tag);
+            buf.putBits(it->digital_recording_control_data, 2);
+            buf.putBit(it->maximum_bitrate.set());
+            buf.putBit(1);
+            buf.putBits(it->user_defined, 4);
             if (it->maximum_bitrate.set()) {
-                bbp->appendUInt8(it->maximum_bitrate.value());
+                buf.putUInt8(it->maximum_bitrate.value());
             }
         }
-        // Update component_control_length.
-        (*bbp)[len] = uint8_t(bbp->size() - len - 1);
+        buf.popState(); // update component_control_length
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -120,64 +116,30 @@ void ts::DigitalCopyControlDescriptor::serialize(DuckContext& duck, Descriptor& 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DigitalCopyControlDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DigitalCopyControlDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 1;
-
-    maximum_bitrate.clear();
-    components.clear();
-
-    if (_is_valid) {
-        // Fixed part.
-        digital_recording_control_data = (data[0] >> 6) & 0x03;
-        bool bitrate_flag = (data[0] & 0x20) != 0;
-        bool comp_flag = (data[0] & 0x10) != 0;
-        user_defined = data[0] & 0x0F;
-        data++; size--;
-
-        if (bitrate_flag) {
-            _is_valid = size > 0;
-            if (_is_valid) {
-                maximum_bitrate = data[0];
-                data++; size--;
-            }
-        }
-
-        // Component loop.
-        if (_is_valid) {
-            if (comp_flag) {
-                _is_valid = size > 0;
-                if (_is_valid) {
-                    const size_t len = data[0];
-                    data++; size--;
-                    _is_valid = len == size;
-                }
-            }
-            else {
-                _is_valid = size == 0;
-            }
-        }
-        while (_is_valid && size >= 2) {
+    buf.getBits(digital_recording_control_data, 2);
+    bool bitrate_flag = buf.getBool();
+    bool comp_flag = buf.getBool();
+    buf.getBits(user_defined, 4);
+    if (bitrate_flag) {
+        maximum_bitrate = buf.getUInt8();
+    }
+    if (comp_flag) {
+        buf.pushReadSizeFromLength(8); // component_control_length
+        while (buf.canRead()) {
             Component comp;
-            comp.component_tag = data[0];
-            comp.digital_recording_control_data = (data[1] >> 6) & 0x03;
-            bitrate_flag = (data[1] & 0x20) != 0;
-            comp.user_defined = data[1] & 0x0F;
-            data += 2; size -= 2;
+            comp.component_tag = buf.getUInt8();
+            buf.getBits(comp.digital_recording_control_data, 2);
+            bitrate_flag = buf.getBool();
+            buf.skipBits(1);
+            buf.getBits(comp.user_defined, 4);
             if (bitrate_flag) {
-                _is_valid = size > 0;
-                if (_is_valid) {
-                    comp.maximum_bitrate = data[0];
-                    data++; size--;
-                }
+                comp.maximum_bitrate = buf.getUInt8();
             }
-            if (_is_valid) {
-                components.push_back(comp);
-            }
+            components.push_back(comp);
         }
-        _is_valid = _is_valid && size == 0;
+        buf.popState(); // component_control_length
     }
 }
 
@@ -186,50 +148,35 @@ void ts::DigitalCopyControlDescriptor::deserialize(DuckContext& duck, const Desc
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DigitalCopyControlDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DigitalCopyControlDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Recording control: " << NameFromSection(u"ISDBCopyControl", buf.getBits<uint8_t>(2), names::DECIMAL_FIRST) << std::endl;
+        const bool bitrate_flag = buf.getBool();
+        const bool comp_flag = buf.getBool();
+        disp << margin << UString::Format(u"User-defined: 0x%1X (%<d)", {buf.getBits<uint8_t>(4)}) << std::endl;
 
-    if (size > 0) {
-        uint8_t rec_control = (data[0] >> 6) & 0x03;
-        bool bitrate_flag = (data[0] & 0x20) != 0;
-        bool comp_flag = (data[0] & 0x10) != 0;
-        uint8_t user = data[0] & 0x0F;
-        data++; size--;
-
-        strm << margin << "Recording control: " << NameFromSection(u"ISDBCopyControl", rec_control, names::DECIMAL_FIRST) << std::endl
-             << margin << UString::Format(u"User-defined: 0x%1X (%d)", {user, user}) << std::endl;
-
-        if (bitrate_flag && size > 0) {
+        if (bitrate_flag && buf.canReadBytes(1)) {
             // Bitrate unit is 1/4 Mb/s.
-            strm << margin << UString::Format(u"Maximum bitrate: %d (%'d b/s)", {data[0], BitRate(data[0]) * 250000}) << std::endl;
-            data++; size--;
+            const BitRate mbr = buf.getUInt8();
+            disp << margin << UString::Format(u"Maximum bitrate: %d (%'d b/s)", {mbr, mbr * 250000}) << std::endl;
         }
-        if (comp_flag && size > 0) {
-            size_t len = std::min<size_t>(data[0], size - 1);
-            data++; size--;
-            while (len >= 2) {
-                const uint8_t tag = data[0];
-                rec_control = (data[1] >> 6) & 0x03;
-                bitrate_flag = (data[1] & 0x20) != 0;
-                user = data[1] & 0x0F;
-                data += 2; size -= 2; len -= 2;
-
-                strm << margin << UString::Format(u"- Component tag: 0x%X (%d)", {tag, tag}) << std::endl
-                     << margin << "  Recording control: " << NameFromSection(u"ISDBCopyControl", rec_control, names::DECIMAL_FIRST) << std::endl
-                     << margin << UString::Format(u"  User-defined: 0x%1X (%d)", {user, user}) << std::endl;
-
-                if (bitrate_flag && size > 0) {
-                    strm << margin << UString::Format(u"  Maximum bitrate: %d (%'d b/s)", {data[0], BitRate(data[0]) * 250000}) << std::endl;
-                    data++; size--; len--;
+        if (comp_flag) {
+            buf.pushReadSizeFromLength(8); // component_control_length
+            while (buf.canReadBytes(2)) {
+                disp << margin << UString::Format(u"- Component tag: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+                disp << margin << "  Recording control: " << NameFromSection(u"ISDBCopyControl", buf.getBits<uint8_t>(2), names::DECIMAL_FIRST) << std::endl;
+                const bool bflag = buf.getBool();
+                buf.skipBits(1);
+                disp << margin << UString::Format(u"  User-defined: 0x%1X (%<d)", {buf.getBits<uint8_t>(4)}) << std::endl;
+                if (bflag && buf.canReadBytes(1)) {
+                    const BitRate mbr = buf.getUInt8();
+                    disp << margin << UString::Format(u"  Maximum bitrate: %d (%'d b/s)", {mbr, mbr * 250000}) << std::endl;
                 }
             }
+            buf.popState(); // component_control_length
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -260,17 +207,17 @@ bool ts::DigitalCopyControlDescriptor::analyzeXML(DuckContext& duck, const xml::
 {
     xml::ElementVector xcomp;
     bool ok =
-        element->getIntAttribute<uint8_t>(digital_recording_control_data, u"digital_recording_control_data", true, 0, 0x00, 0x03) &&
-        element->getIntAttribute<uint8_t>(user_defined, u"user_defined", false, 0, 0x00, 0x0F) &&
-        element->getOptionalIntAttribute<uint8_t>(maximum_bitrate, u"maximum_bitrate") &&
+        element->getIntAttribute(digital_recording_control_data, u"digital_recording_control_data", true, 0, 0x00, 0x03) &&
+        element->getIntAttribute(user_defined, u"user_defined", false, 0, 0x00, 0x0F) &&
+        element->getOptionalIntAttribute(maximum_bitrate, u"maximum_bitrate") &&
         element->getChildren(xcomp, u"component_control");
 
     for (size_t i = 0; ok && i < xcomp.size(); ++i) {
         Component comp;
-        ok = xcomp[i]->getIntAttribute<uint8_t>(comp.component_tag, u"component_tag", true) &&
-             xcomp[i]->getIntAttribute<uint8_t>(comp.digital_recording_control_data, u"digital_recording_control_data", true, 0, 0x00, 0x03) &&
-             xcomp[i]->getIntAttribute<uint8_t>(comp.user_defined, u"user_defined", false, 0, 0x00, 0x0F) &&
-             xcomp[i]->getOptionalIntAttribute<uint8_t>(comp.maximum_bitrate, u"maximum_bitrate");
+        ok = xcomp[i]->getIntAttribute(comp.component_tag, u"component_tag", true) &&
+             xcomp[i]->getIntAttribute(comp.digital_recording_control_data, u"digital_recording_control_data", true, 0, 0x00, 0x03) &&
+             xcomp[i]->getIntAttribute(comp.user_defined, u"user_defined", false, 0, 0x00, 0x0F) &&
+             xcomp[i]->getOptionalIntAttribute(comp.maximum_bitrate, u"maximum_bitrate");
         components.push_back(comp);
     }
     return ok;

@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -72,14 +73,13 @@ ts::ServiceAvailabilityDescriptor::ServiceAvailabilityDescriptor(DuckContext& du
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceAvailabilityDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ServiceAvailabilityDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(availability ? 0xFF : 0x7F);
+    buf.putBit(availability);
+    buf.putBits(0xFF, 7);
     for (auto it = cell_ids.begin(); it != cell_ids.end(); ++it) {
-        bbp->appendUInt16(*it);
+        buf.putUInt16(*it);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -87,20 +87,12 @@ void ts::ServiceAvailabilityDescriptor::serialize(DuckContext& duck, Descriptor&
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ServiceAvailabilityDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ServiceAvailabilityDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 2 == 1;
-    cell_ids.clear();
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        availability = (data[0] & 0x80) != 0;
-        data++; size--;
-        while (size >= 2) {
-            cell_ids.push_back(GetUInt16(data));
-            data += 2; size -= 2;
-        }
+    availability = buf.getBool();
+    buf.skipBits(7);
+    while (buf.canRead()) {
+        cell_ids.push_back(buf.getUInt16());
     }
 }
 
@@ -109,23 +101,15 @@ void ts::ServiceAvailabilityDescriptor::deserialize(DuckContext& duck, const Des
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ServiceAvailabilityDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ServiceAvailabilityDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        strm << margin << "Availability: " << UString::TrueFalse((data[0] & 0x80) != 0) << std::endl;
-        data++; size--;
-        while (size >= 2) {
-            const uint16_t id = GetUInt16(data);
-            data += 2; size -= 2;
-            strm << margin << UString::Format(u"Cell id: 0x%X (%d)", {id, id}) << std::endl;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Availability: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        buf.skipBits(7);
+        while (buf.canReadBytes(2)) {
+            disp << margin << UString::Format(u"Cell id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -155,7 +139,7 @@ bool ts::ServiceAvailabilityDescriptor::analyzeXML(DuckContext& duck, const xml:
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         uint16_t id = 0;
-        ok = children[i]->getIntAttribute<uint16_t>(id, u"id", true);
+        ok = children[i]->getIntAttribute(id, u"id", true);
         cell_ids.push_back(id);
     }
     return ok;

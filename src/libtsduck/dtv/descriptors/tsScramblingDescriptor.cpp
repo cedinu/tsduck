@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -67,28 +68,17 @@ ts::ScramblingDescriptor::ScramblingDescriptor(DuckContext& duck, const Descript
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// Binary serialization / deserialization.
 //----------------------------------------------------------------------------
 
-void ts::ScramblingDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ScramblingDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(scrambling_mode);
-    serializeEnd(desc, bbp);
+    buf.putUInt8(scrambling_mode);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::ScramblingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ScramblingDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 1;
-
-    if (_is_valid) {
-        scrambling_mode = GetUInt8(desc.payload());
-    }
+    scrambling_mode = buf.getUInt8();
 }
 
 
@@ -96,24 +86,16 @@ void ts::ScramblingDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ScramblingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ScramblingDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        const uint8_t mode = data[0];
-        data += 1; size -= 1;
-        strm << margin << UString::Format(u"Scrambling mode: %s", {NameFromSection(u"ScramblingMode", mode, names::HEXA_FIRST)}) << std::endl;
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Scrambling mode: %s", {NameFromSection(u"ScramblingMode", buf.getUInt8(), names::HEXA_FIRST)}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML
+// XML serialization / deserialization.
 //----------------------------------------------------------------------------
 
 void ts::ScramblingDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -123,5 +105,5 @@ void ts::ScramblingDescriptor::buildXML(DuckContext& duck, xml::Element* root) c
 
 bool ts::ScramblingDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(scrambling_mode, u"scrambling_mode", true);
+    return element->getIntAttribute(scrambling_mode, u"scrambling_mode", true);
 }

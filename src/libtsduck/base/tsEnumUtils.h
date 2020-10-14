@@ -38,6 +38,31 @@
 
 namespace ts
 {
+    //! @cond nodoxygen
+    // The meta-type "underlying_type_impl" is the basis for underlying_type.
+    // The default definition, when ISENUM is false is T and applies to integer types.
+    template<bool ISENUM, typename T>
+    struct underlying_type_impl {
+        typedef T type;
+    };
+
+    // The following specialized definition applies to enum types.
+    template<typename T>
+    struct underlying_type_impl<true,T> {
+        typedef typename std::underlying_type<T>::type type;
+    };
+    //! @endcond
+
+    //!
+    //! The meta-type ts::underlying_type is a generalization of std::underlying_type which works on integer types as well.
+    //! The underlying type of an integer type is the type itself.
+    //!
+    template<typename T>
+    struct underlying_type {
+        //! The underlying integer type.
+        typedef typename underlying_type_impl<std::is_enum<T>::value, T>::type type;
+    };
+
     //!
     //! This traits is used to enable bitmask operators on an enumeration type.
     //! The default value disables these operators. Define a template specialization
@@ -61,20 +86,23 @@ namespace ts
 //! Example:
 //! @code
 //! enum E {A = 0x01, B = 0x02, C = 0x04};
-//! TS_ENABLE_BITMASK_OPERATORS(E)
+//! TS_ENABLE_BITMASK_OPERATORS(E);
 //!
 //! E e = A | B | C;
 //! e ^= B | C;
 //! @endcode
 //!
-#define TS_ENABLE_BITMASK_OPERATORS(T)       \
-    /** Template specialization on type T */ \
-    template<>                               \
-    struct ts::EnableBitMaskOperators<T>     \
-    {                                        \
-        /** Enable bitmask operators on T */ \
-        static constexpr bool value = true;  \
-    }
+#define TS_ENABLE_BITMASK_OPERATORS(T)           \
+    namespace ts {                               \
+        /** Template specialization on type T */ \
+        template<>                               \
+        struct EnableBitMaskOperators<T>         \
+        {                                        \
+            /** Enable bitmask operators on T */ \
+            static constexpr bool value = true;  \
+        };                                       \
+    }                                            \
+    typedef int TS_UNIQUE_NAME(for_trailing_semicolon)
 
 //!
 //! Bitmask "not" unary operator on enumeration types.

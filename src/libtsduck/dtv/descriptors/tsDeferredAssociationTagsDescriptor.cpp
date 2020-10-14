@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -76,17 +77,16 @@ ts::DeferredAssociationTagsDescriptor::DeferredAssociationTagsDescriptor(DuckCon
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DeferredAssociationTagsDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DeferredAssociationTagsDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(association_tags.size() * sizeof(uint16_t)));
+    buf.pushWriteSequenceWithLeadingLength(8); // association_tags_loop_length
     for (auto it = association_tags.begin(); it != association_tags.end(); ++it) {
-        bbp->appendUInt16(*it);
+        buf.putUInt16(*it);
     }
-    bbp->appendUInt16(transport_stream_id);
-    bbp->appendUInt16(program_number);
-    bbp->append(private_data);
-    serializeEnd(desc, bbp);
+    buf.popState(); // update association_tags_loop_length
+    buf.putUInt16(transport_stream_id);
+    buf.putUInt16(program_number);
+    buf.putBytes(private_data);
 }
 
 
@@ -94,30 +94,16 @@ void ts::DeferredAssociationTagsDescriptor::serialize(DuckContext& duck, Descrip
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DeferredAssociationTagsDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DeferredAssociationTagsDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    association_tags.clear();
-    private_data.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    if (_is_valid) {
-        size_t len = data[0];
-        data++; size--;
-        _is_valid = len % 2 == 0 && size >= len + 4;
-        if (_is_valid) {
-            while (len > 0) {
-                association_tags.push_back(GetUInt16(data));
-                data += 2; size -= 2; len -= 2;
-            }
-            transport_stream_id = GetUInt16(data);
-            program_number = GetUInt16(data + 2);
-            private_data.copy(data + 4, size - 4);
-        }
+    buf.pushReadSizeFromLength(8); // association_tags_loop_length
+    while (buf.canRead()) {
+        association_tags.push_back(buf.getUInt16());
     }
+    buf.popState(); // update association_tags_loop_length
+    transport_stream_id = buf.getUInt16();
+    program_number = buf.getUInt16();
+    buf.getBytes(private_data);
 }
 
 
@@ -125,28 +111,18 @@ void ts::DeferredAssociationTagsDescriptor::deserialize(DuckContext& duck, const
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DeferredAssociationTagsDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DeferredAssociationTagsDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        size_t len = data[0];
-        data++; size--;
-        while (size >= 2 && len >= 2) {
-            strm << margin << UString::Format(u"Association tag: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl;
-            data += 2; size -= 2; len -= 2;
-        }
-        if (size >= 4 && len == 0) {
-            strm << margin << UString::Format(u"Transport stream id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                 << margin << UString::Format(u"Program number: 0x%X (%d)", {GetUInt16(data + 2), GetUInt16(data + 2)}) << std::endl;
-            display.displayPrivateData(u"Private data", data + 4, size - 4, indent);
-            size = 0;
-        }
+    buf.pushReadSizeFromLength(8); // association_tags_loop_length
+    while (buf.canReadBytes(2)) {
+        disp << margin << UString::Format(u"Association tag: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
+    buf.popState(); // update association_tags_loop_length
+    if (buf.canReadBytes(4)) {
+        disp << margin << UString::Format(u"Transport stream id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Program number: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp.displayPrivateData(u"Private data", buf, NPOS, margin);
+    }
 }
 
 
@@ -173,14 +149,14 @@ bool ts::DeferredAssociationTagsDescriptor::analyzeXML(DuckContext& duck, const 
 {
     xml::ElementVector children;
     bool ok =
-        element->getIntAttribute<uint16_t>(transport_stream_id, u"transport_stream_id", true) &&
-        element->getIntAttribute<uint16_t>(program_number, u"program_number", true) &&
+        element->getIntAttribute(transport_stream_id, u"transport_stream_id", true) &&
+        element->getIntAttribute(program_number, u"program_number", true) &&
         element->getChildren(children, u"association") &&
         element->getHexaTextChild(private_data, u"private_data", false);
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         uint16_t tag = 0;
-        ok = children[i]->getIntAttribute<uint16_t>(tag, u"tag", true);
+        ok = children[i]->getIntAttribute(tag, u"tag", true);
         association_tags.push_back(tag);
     }
     return ok;

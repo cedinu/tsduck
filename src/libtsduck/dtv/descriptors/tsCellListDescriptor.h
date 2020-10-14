@@ -38,7 +38,7 @@
 namespace ts {
     //!
     //! Representation of a cell_list_descriptor
-    //! @see ETSI 300 468, 6.2.7.
+    //! @see ETSI EN 300 468, 6.2.7.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL CellListDescriptor : public AbstractDescriptor
@@ -97,19 +97,19 @@ namespace ts {
         CellListDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
 
     private:
         // Static method to print coordinates of a cell or subcell.
-        static void DisplayCoordinates(TablesDisplay& display, const uint8_t* data, size_t size, int indent);
+        static void DisplayCoordinates(TablesDisplay& display, PSIBuffer& buf, const UString& margin);
 
         // Static method to convert a raw latitude or longitude into a readable string.
         static UString ToDegrees(int32_t value, bool is_latitude);

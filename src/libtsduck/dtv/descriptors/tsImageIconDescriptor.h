@@ -38,7 +38,7 @@
 namespace ts {
     //!
     //! Representation of a image_icon_descriptor
-    //! @see ETSI 300 468, 6.4.7.
+    //! @see ETSI EN 300 468, 6.4.7.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL ImageIconDescriptor : public AbstractDescriptor
@@ -70,14 +70,15 @@ namespace ts {
         ImageIconDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual DID extendedTag() const override;
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

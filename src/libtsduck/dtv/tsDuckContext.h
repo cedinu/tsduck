@@ -131,38 +131,21 @@ namespace ts {
         void flush();
 
         //!
-        //! A utility method to interpret data as an ASCII string.
-        //! @param [in] data Address of data.
-        //! @param [in] size Size of data.
-        //! @return If all bytes in data are ASCII (optionally padded with zeroes), return the
-        //! equivalent ASCII string. Otherwise, return an empty string.
-        //!
-        std::string toASCII(const void *data, size_t size) const;
-
-        //!
-        //! A utility method to display data if it can be interpreted as an ASCII string.
-        //! @param [in] data Address of data.
-        //! @param [in] size Size of data.
-        //! @param [in] prefix To print before the ASCII data.
-        //! @param [in] suffix To print after the ASCII data.
-        //! @return A reference to the output stream.
-        //!
-        std::ostream& displayIfASCII(const void *data, size_t size, const UString& prefix = UString(), const UString& suffix = UString());
-
-        //!
         //! Get the default input character set for strings from tables and descriptors.
         //! The default is the DVB superset of ISO/IEC 6937 as defined in ETSI EN 300 468.
         //! Other defaults can be used in non-DVB contexts or when a DVB operator uses an incorrect
         //! signalization, assuming another default character set (usually from its own country).
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return The default input character set (never null).
         //!
-        const Charset* charsetIn() const { return _charsetIn; }
+        const Charset* charsetIn(const Charset* charset = nullptr) const { return charset != nullptr ? charset : _charsetIn; }
 
         //!
         //! Get the preferred output character set for strings to insert in tables and descriptors.
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return The preferred output character set (never null).
         //!
-        const Charset* charsetOut() const { return _charsetOut; }
+        const Charset* charsetOut(const Charset* charset = nullptr) const { return charset != nullptr ? charset : _charsetOut; }
 
         //!
         //! Convert a signalization string into UTF-16 using the default input character set.

@@ -65,18 +65,28 @@ test-all: test test-suite
 # Build and run unitary tests.
 .PHONY: test
 test: default
-	@$(MAKE) -C src/utest test
+	@$(MAKE) -C src/utest $@
 
 # Execute the TSDuck test suite from a sibling directory, if present.
 .PHONY: test-suite
 test-suite: default
 	@if [[ -d ../tsduck-test/.git ]]; then \
-	   cd ../tsduck-test; git pull; ./run-all-tests.sh --dev; \
+	   cd ../tsduck-test; git pull; PATH="$(BINDIR):$$PATH" ./run-all-tests.sh; \
 	 elif [[ -x ../tsduck-test/run-all-tests.sh ]]; then \
-	   ../tsduck-test/run-all-tests.sh --dev; \
+	   PATH="$(BINDIR):$$PATH" ../tsduck-test/run-all-tests.sh; \
 	 else \
 	   echo >&2 "No test repository in ../tsduck-test"; \
 	 fi
+
+# Build the sample applications.
+.PHONY: sample
+sample:
+	@$(MAKE) -C sample $@
+
+# Display the built version
+.PHONY: show-version
+show-version: default
+	$(BINDIR)/tsversion --version=all
 
 # Download the Dektec DTAPI. Automatically done during a global "make" since
 # we recurse in "dektec" before "src".
@@ -85,7 +95,8 @@ dtapi:
 	@$(MAKE) -C dektec
 
 # Install files, using SYSROOT as target system root if necessary.
-.PHONY: install install-devel
+.PHONY: install install-devel install-all
+install-all: install install-devel
 install install-devel:
 	$(MAKE) -C src $@
 	$(MAKE) -C build $@

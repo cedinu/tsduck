@@ -38,7 +38,7 @@
 namespace ts {
     //!
     //! Representation of a content_descriptor.
-    //! @see ETSI 300 468, 6.2.9.
+    //! @see ETSI EN 300 468, 6.2.9.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL ContentDescriptor : public AbstractDescriptor
@@ -78,10 +78,10 @@ namespace ts {
         struct TSDUCKDLL Entry
         {
             // Public members
-            uint8_t content_nibble_level_1;  //!< 4 bits, see ETSI 300 468, 6.2.9.
-            uint8_t content_nibble_level_2;  //!< 4 bits, see ETSI 300 468, 6.2.9.
-            uint8_t user_nibble_1;           //!< 4 bits, see ETSI 300 468, 6.2.9.
-            uint8_t user_nibble_2;           //!< 4 bits, see ETSI 300 468, 6.2.9.
+            uint8_t content_nibble_level_1;  //!< 4 bits, see ETSI EN 300 468, 6.2.9.
+            uint8_t content_nibble_level_2;  //!< 4 bits, see ETSI EN 300 468, 6.2.9.
+            uint8_t user_nibble_1;           //!< 4 bits, see ETSI EN 300 468, 6.2.9.
+            uint8_t user_nibble_2;           //!< 4 bits, see ETSI EN 300 468, 6.2.9.
 
             //!
             //! Default constructor.
@@ -111,14 +111,14 @@ namespace ts {
         };
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

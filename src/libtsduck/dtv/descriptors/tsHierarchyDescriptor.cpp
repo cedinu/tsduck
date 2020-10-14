@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -50,9 +51,10 @@ TS_REGISTER_DESCRIPTOR(MY_CLASS, ts::EDID::Standard(MY_DID), MY_XML_NAME, MY_CLA
 
 ts::HierarchyDescriptor::HierarchyDescriptor() :
     AbstractDescriptor(MY_DID, MY_XML_NAME, MY_STD, 0),
-    temporal_scalability(false),
-    spatial_scalability(false),
-    quality_scalability(false),
+    no_view_scalability_flag(false),
+    no_temporal_scalability(false),
+    no_spatial_scalability(false),
+    no_quality_scalability(false),
     hierarchy_type(0),
     hierarchy_layer_index(0),
     tref_present(false),
@@ -63,9 +65,10 @@ ts::HierarchyDescriptor::HierarchyDescriptor() :
 
 void ts::HierarchyDescriptor::clearContent()
 {
-    temporal_scalability = false;
-    spatial_scalability = false;
-    quality_scalability = false;
+    no_view_scalability_flag = false;
+    no_temporal_scalability = false;
+    no_spatial_scalability = false;
+    no_quality_scalability = false;
     hierarchy_type = 0;
     hierarchy_layer_index = 0;
     tref_present = false;
@@ -84,20 +87,20 @@ ts::HierarchyDescriptor::HierarchyDescriptor(DuckContext& duck, const Descriptor
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::HierarchyDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::HierarchyDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(0x80 |
-                     (temporal_scalability ? 0x40 : 0x00) |
-                     (spatial_scalability ? 0x20 : 0x00) |
-                     (quality_scalability ? 0x10 : 0x00) |
-                     (hierarchy_type & 0x0F));
-    bbp->appendUInt8(0xC0 | (hierarchy_layer_index & 0x3F));
-    bbp->appendUInt8((tref_present ? 0x80 : 0x00) |
-                     0x40 |
-                     (hierarchy_embedded_layer_index & 0x3F));
-    bbp->appendUInt8(0xC0 | (hierarchy_channel & 0x3F));
-    serializeEnd(desc, bbp);
+    buf.putBit(no_view_scalability_flag);
+    buf.putBit(no_temporal_scalability);
+    buf.putBit(no_spatial_scalability);
+    buf.putBit(no_quality_scalability);
+    buf.putBits(hierarchy_type, 4);
+    buf.putBits(0xFF, 2);
+    buf.putBits(hierarchy_layer_index, 6);
+    buf.putBit(tref_present);
+    buf.putBit(1);
+    buf.putBits(hierarchy_embedded_layer_index, 6);
+    buf.putBits(0xFF, 2);
+    buf.putBits(hierarchy_channel, 6);
 }
 
 
@@ -105,23 +108,20 @@ void ts::HierarchyDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::HierarchyDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::HierarchyDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 4;
-
-    if (_is_valid) {
-        temporal_scalability = (data[0] & 0x40) != 0;
-        spatial_scalability = (data[0] & 0x20) != 0;
-        quality_scalability = (data[0] & 0x10) != 0;
-        hierarchy_type = data[0] & 0x0F;
-        hierarchy_layer_index = data[1] & 0x3F;
-        tref_present = (data[2] & 0x80) != 0;
-        hierarchy_embedded_layer_index = data[2] & 0x3F;
-        hierarchy_channel = data[3] & 0x3F;
-    }
+    no_view_scalability_flag = buf.getBool();
+    no_temporal_scalability = buf.getBool();
+    no_spatial_scalability = buf.getBool();
+    no_quality_scalability = buf.getBool();
+    buf.getBits(hierarchy_type, 4);
+    buf.skipBits(2);
+    buf.getBits(hierarchy_layer_index, 6);
+    tref_present = buf.getBool();
+    buf.skipBits(1);
+    buf.getBits(hierarchy_embedded_layer_index, 6);
+    buf.skipBits(2);
+    buf.getBits(hierarchy_channel, 6);
 }
 
 
@@ -129,25 +129,22 @@ void ts::HierarchyDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::HierarchyDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::HierarchyDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 4) {
-        strm << margin << "Temporal scalability: " << UString::TrueFalse((data[0] & 0x40) != 0) << std::endl
-             << margin << "Spatial scalability: " << UString::TrueFalse((data[0] & 0x20) != 0) << std::endl
-             << margin << "Quality scalability: " << UString::TrueFalse((data[0] & 0x10) != 0) << std::endl
-             << margin << "Hierarchy type: " << NameFromSection(u"HierarchyType", data[0] & 0x0F, names::BOTH_FIRST) << std::endl
-             << margin << UString::Format(u"Hierarchy layer index: %d", {data[1] & 0x3F}) << std::endl
-             << margin << "Tref present: " << UString::TrueFalse((data[2] & 0x80) != 0) << std::endl
-             << margin << UString::Format(u"Hierarchy embedded layer index: %d", {data[2] & 0x3F}) << std::endl
-             << margin << UString::Format(u"Hierarchy channel: %d", {data[3] & 0x3F}) << std::endl;
-        data += 4; size -= 4;
+    if (buf.canReadBytes(4)) {
+        disp << margin << "No view scalability: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        disp << margin << "No temporal scalability: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        disp << margin << "No spatial scalability: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        disp << margin << "No quality scalability: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        disp << margin << "Hierarchy type: " << NameFromSection(u"HierarchyType", buf.getBits<uint8_t>(4), names::BOTH_FIRST) << std::endl;
+        buf.skipBits(2);
+        disp << margin << UString::Format(u"Hierarchy layer index: %d", {buf.getBits<uint8_t>(6)}) << std::endl;
+        disp << margin << "Tref present: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        buf.skipBits(1);
+        disp << margin << UString::Format(u"Hierarchy embedded layer index: %d", {buf.getBits<uint8_t>(6)}) << std::endl;
+        buf.skipBits(2);
+        disp << margin << UString::Format(u"Hierarchy channel: %d", {buf.getBits<uint8_t>(6)}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -157,9 +154,10 @@ void ts::HierarchyDescriptor::DisplayDescriptor(TablesDisplay& display, DID did,
 
 void ts::HierarchyDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    root->setBoolAttribute(u"temporal_scalability", temporal_scalability);
-    root->setBoolAttribute(u"spatial_scalability", spatial_scalability);
-    root->setBoolAttribute(u"quality_scalability", quality_scalability);
+    root->setBoolAttribute(u"no_view_scalability_flag", no_view_scalability_flag);
+    root->setBoolAttribute(u"no_temporal_scalability", no_temporal_scalability);
+    root->setBoolAttribute(u"no_spatial_scalability", no_spatial_scalability);
+    root->setBoolAttribute(u"no_quality_scalability", no_quality_scalability);
     root->setIntAttribute(u"hierarchy_type", hierarchy_type);
     root->setIntAttribute(u"hierarchy_layer_index", hierarchy_layer_index);
     root->setBoolAttribute(u"tref_present", tref_present);
@@ -174,12 +172,25 @@ void ts::HierarchyDescriptor::buildXML(DuckContext& duck, xml::Element* root) co
 
 bool ts::HierarchyDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getBoolAttribute(temporal_scalability, u"temporal_scalability", true) &&
-           element->getBoolAttribute(spatial_scalability, u"spatial_scalability", true) &&
-           element->getBoolAttribute(quality_scalability, u"quality_scalability", true) &&
-           element->getIntAttribute<uint8_t>(hierarchy_type, u"hierarchy_type", true, 0x00, 0x00, 0x0F) &&
-           element->getIntAttribute<uint8_t>(hierarchy_layer_index, u"hierarchy_layer_index", true, 0x00, 0x00, 0x3F) &&
+    // Attributes "no_temporal_scalability", "no_spatial_scalability" and "no_quality_scalability"
+    // were previously named without "no_". The name change was made in ISO 13818-1 and integrated
+    // in TSDuck. The field "no_view_scalability_flag" is new (never existed without "no_").
+    // For compatibility, all those flags are now optional with default value being true.
+
+    bool temporal_scalability = false;
+    bool spatial_scalability = false;
+    bool quality_scalability = false;
+
+    return element->getBoolAttribute(no_view_scalability_flag, u"no_view_scalability_flag", false, true) &&
+           element->getBoolAttribute(temporal_scalability, u"temporal_scalability", false, true) &&
+           element->getBoolAttribute(no_temporal_scalability, u"no_temporal_scalability", false, temporal_scalability) &&
+           element->getBoolAttribute(spatial_scalability, u"spatial_scalability", false, true) &&
+           element->getBoolAttribute(no_spatial_scalability, u"no_spatial_scalability", false, spatial_scalability) &&
+           element->getBoolAttribute(quality_scalability, u"quality_scalability", false, true) &&
+           element->getBoolAttribute(no_quality_scalability, u"no_quality_scalability", false, quality_scalability) &&
+           element->getIntAttribute(hierarchy_type, u"hierarchy_type", true, 0x00, 0x00, 0x0F) &&
+           element->getIntAttribute(hierarchy_layer_index, u"hierarchy_layer_index", true, 0x00, 0x00, 0x3F) &&
            element->getBoolAttribute(tref_present, u"tref_present", true) &&
-           element->getIntAttribute<uint8_t>(hierarchy_embedded_layer_index, u"hierarchy_embedded_layer_index", true, 0x00, 0x00, 0x3F) &&
-           element->getIntAttribute<uint8_t>(hierarchy_channel, u"hierarchy_channel", true, 0x00, 0x00, 0x3F);
+           element->getIntAttribute(hierarchy_embedded_layer_index, u"hierarchy_embedded_layer_index", true, 0x00, 0x00, 0x3F) &&
+           element->getIntAttribute(hierarchy_channel, u"hierarchy_channel", true, 0x00, 0x00, 0x3F);
 }

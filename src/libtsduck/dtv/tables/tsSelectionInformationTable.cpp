@@ -34,6 +34,7 @@
 #include "tsStreamIdentifierDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -71,6 +72,12 @@ ts::SelectionInformationTable::SelectionInformationTable(DuckContext& duck, cons
     deserialize(duck, table);
 }
 
+ts::SelectionInformationTable::Service::Service(const AbstractTable* table, uint8_t status) :
+    EntryWithDescriptors(table),
+    running_status(status)
+{
+}
+
 
 //----------------------------------------------------------------------------
 // Get the table id extension.
@@ -97,52 +104,15 @@ void ts::SelectionInformationTable::clearContent()
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::SelectionInformationTable::deserializeContent(DuckContext& duck, const BinaryTable& table)
+void ts::SelectionInformationTable::deserializePayload(PSIBuffer& buf, const Section& section)
 {
-    // Clear table content
-    descs.clear();
-    services.clear();
-
-    // Loop on all sections, although a Selection Information Table is not allowed
-    // to use more than one section, see ETSI EN 300 468, 7.1.2.
-    for (size_t si = 0; si < table.sectionCount(); ++si) {
-
-        // Reference to current section
-        const Section& sect(*table.sectionAt(si));
-
-        // Get common properties (should be identical in all sections)
-        version = sect.version();
-        is_current = sect.isCurrent();
-
-        // Analyze the section payload:
-        const uint8_t* data = sect.payload();
-        size_t remain = sect.payloadSize();
-
-        // Get global  descriptor list
-        if (remain < 2) {
-            return;
-        }
-        size_t info_length = GetUInt16(data) & 0x0FFF;
-        data += 2;
-        remain -= 2;
-        info_length = std::min(info_length, remain);
-        descs.add(data, info_length);
-        data += info_length; remain -= info_length;
-
-        // Get service description
-        while (remain >= 4) {
-            const uint16_t id = GetUInt16(data);
-            Service& srv(services[id]);
-            srv.running_status = (data[2] >> 4) & 0x07;
-            info_length = GetUInt16(data + 2) & 0x0FFF;
-            data += 4; remain -= 4;
-            info_length = std::min(info_length, remain);
-            srv.descs.add(data, info_length);
-            data += info_length; remain -= info_length;
-        }
+    buf.getDescriptorListWithLength(descs);
+    while (buf.canRead()) {
+        Service& srv(services[buf.getUInt16()]);
+        buf.skipBits(1);
+        buf.getBits(srv.running_status, 3);
+        buf.getDescriptorListWithLength(srv.descs);
     }
-
-    _is_valid = true;
 }
 
 
@@ -150,44 +120,17 @@ void ts::SelectionInformationTable::deserializeContent(DuckContext& duck, const 
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SelectionInformationTable::serializeContent(DuckContext& duck, BinaryTable& table) const
+void ts::SelectionInformationTable::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
-    // Build the section. Note that a Selection Information Table is not allowed
-    // to use more than one section, see ETSI EN 300 468, 7.1.2.
-    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
-    uint8_t* data = payload;
-    size_t remain = sizeof(payload);
+    // A Selection Information Table is not allowed to use more than one section, see ETSI EN 300 468, 7.1.2.
 
-    // Insert program_info descriptor list (with leading length field)
-    descs.lengthSerialize(data, remain);
-
-    // Add description of all services.
-    for (auto it = services.begin(); it != services.end() && remain >= 4; ++it) {
-
-        // Insert stream type and pid
-        PutUInt16(data, it->first); // service id
-        data += 2; remain -= 2;
-
-        // Insert descriptor list for service (with leading length field)
-        size_t next_index = it->second.descs.lengthSerialize(data, remain, 0, it->second.running_status | 0x08);
-        if (next_index != it->second.descs.count()) {
-            // Not enough space to serialize all descriptors in the section.
-            // A SelectionInformationTable cannot have more than one section.
-            // Return with table left in invalid state.
-            return;
-        }
+    buf.putPartialDescriptorListWithLength(descs);
+    for (auto it = services.begin(); !buf.error() && it != services.end(); ++it) {
+        buf.putUInt16(it->first); // service id
+        buf.putBit(1);
+        buf.putBits(it->second.running_status, 3);
+        buf.putPartialDescriptorListWithLength(it->second.descs);
     }
-
-    // Add one single section in the table
-    table.addSection(new Section(MY_TID,           // tid
-                                 true,             // is_private_section
-                                 0xFFFF,           // tid_ext
-                                 version,
-                                 is_current,
-                                 0,                // section_number,
-                                 0,                // last_section_number
-                                 payload,
-                                 data - payload)); // payload_size,
 }
 
 
@@ -195,46 +138,15 @@ void ts::SelectionInformationTable::serializeContent(DuckContext& duck, BinaryTa
 // A static method to display a SelectionInformationTable section.
 //----------------------------------------------------------------------------
 
-void ts::SelectionInformationTable::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::SelectionInformationTable::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    const uint8_t* data = section.payload();
-    size_t size = section.payloadSize();
-
-    if (size >= 2) {
-        // Fixed part
-        size_t info_length = GetUInt16(data) & 0x0FFF;
-        data += 2; size -= 2;
-        if (info_length > size) {
-            info_length = size;
-        }
-
-        // Process and display global descriptor list.
-        if (info_length > 0) {
-            strm << margin << "Global information:" << std::endl;
-            display.displayDescriptorList(section, data, info_length, indent);
-        }
-        data += info_length; size -= info_length;
-
-        // Process and display "service info"
-        while (size >= 4) {
-            const uint16_t id = GetUInt16(data);
-            const uint8_t rs = (data[2] >> 4) & 0x07;
-            info_length = GetUInt16(data + 2) & 0x0FFF;
-            data += 4; size -= 4;
-            if (info_length > size) {
-                info_length = size;
-            }
-            strm << margin << UString::Format(u"Service id: %d (0x%X), Status: %s", {id, id, RST::RunningStatusNames.name(rs)}) << std::endl;
-            display.displayDescriptorList(section, data, info_length, indent);
-            data += info_length; size -= info_length;
-        }
+    disp.displayDescriptorListWithLength(section, buf, margin, u"Global information:");
+    while (buf.canReadBytes(4)) {
+        disp << margin << UString::Format(u"Service id: %d (0x%<X)", {buf.getUInt16()});
+        buf.skipBits(1);
+        disp << ", Status: " << RST::RunningStatusNames.name(buf.getBits<uint8_t>(3)) << std::endl;
+        disp.displayDescriptorListWithLength(section, buf, margin);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -265,14 +177,14 @@ bool ts::SelectionInformationTable::analyzeXML(DuckContext& duck, const xml::Ele
 {
     xml::ElementVector children;
     bool ok =
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+        element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
         descs.fromXML(duck, children, element, u"service");
 
     for (size_t index = 0; ok && index < children.size(); ++index) {
         uint16_t id = 0;
-        ok = children[index]->getIntAttribute<uint16_t>(id, u"service_id", true) &&
-             children[index]->getIntEnumAttribute<uint8_t>(services[id].running_status, RST::RunningStatusNames, u"running_status", true);
+        ok = children[index]->getIntAttribute(id, u"service_id", true) &&
+             children[index]->getIntEnumAttribute(services[id].running_status, RST::RunningStatusNames, u"running_status", true);
              services[id].descs.fromXML(duck, children[index]);
     }
     return ok;

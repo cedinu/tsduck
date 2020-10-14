@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -72,32 +73,16 @@ ts::DCCDepartingRequestDescriptor::DCCDepartingRequestDescriptor(DuckContext& du
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DCCDepartingRequestDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DCCDepartingRequestDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(dcc_departing_request_type);
-    dcc_departing_request_text.lengthSerialize(duck, *bbp);
-    serializeEnd(desc, bbp);
+    buf.putUInt8(dcc_departing_request_type);
+    buf.putMultipleStringWithLength(dcc_departing_request_text);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::DCCDepartingRequestDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DCCDepartingRequestDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    dcc_departing_request_text.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2;
-
-    if (_is_valid) {
-        dcc_departing_request_type = *data++;
-        size--;
-        _is_valid = dcc_departing_request_text.lengthDeserialize(duck, data, size);
-    }
+    dcc_departing_request_type = buf.getUInt8();
+    buf.getMultipleStringWithLength(dcc_departing_request_text);
 }
 
 
@@ -105,19 +90,12 @@ void ts::DCCDepartingRequestDescriptor::deserialize(DuckContext& duck, const Des
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DCCDepartingRequestDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DCCDepartingRequestDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 2) {
-        strm << margin << UString::Format(u"DCC departing request type: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-        const size_t len = data[1];
-        data += 2; size -= 2;
-        ATSCMultipleString::Display(display, u"DCC departing request text: ", indent, data, size, len);
+    if (buf.canReadBytes(2)) {
+        disp << margin << UString::Format(u"DCC departing request type: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        disp.displayATSCMultipleString(buf, 1, margin, u"DCC departing request text: ");
     }
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -131,13 +109,8 @@ void ts::DCCDepartingRequestDescriptor::buildXML(DuckContext& duck, xml::Element
     dcc_departing_request_text.toXML(duck, root, u"dcc_departing_request_text", true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::DCCDepartingRequestDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(dcc_departing_request_type, u"dcc_departing_request_type", true) &&
+    return element->getIntAttribute(dcc_departing_request_type, u"dcc_departing_request_type", true) &&
            dcc_departing_request_text.fromXML(duck, element, u"dcc_departing_request_text", false);
 }

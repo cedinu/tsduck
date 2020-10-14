@@ -33,6 +33,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -79,33 +80,22 @@ void ts::DataBroadcastDescriptor::clearContent()
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DataBroadcastDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DataBroadcastDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
+    if (buf.canReadBytes(4)) {
+        const uint16_t dbid = buf.getUInt16();
+        disp << margin << "Data broadcast id: " << names::DataBroadcastId(dbid, names::BOTH_FIRST) << std::endl;
+        disp << margin << UString::Format(u"Component tag: %d (0x%<X), ", {buf.getUInt8()}) << std::endl;
 
-    if (size >= 4) {
-        const uint16_t dbid = GetUInt16(data);
-        const uint8_t ctag = data[2];
-        size_t slength = data[3];
-        data += 4; size -= 4;
-        if (slength > size) {
-            slength = size;
-        }
-        strm << margin << "Data broadcast id: " << names::DataBroadcastId(dbid, names::BOTH_FIRST) << std::endl
-             << margin << UString::Format(u"Component tag: %d (0x%X), ", {ctag, ctag})
-             << std::endl;
-        DataBroadcastIdDescriptor::DisplaySelectorBytes(display, data, slength, indent, dbid);
-        data += slength; size -= slength;
-        if (size >= 3) {
-            strm << margin << "Language: " << DeserializeLanguageCode(data) << std::endl;
-            data += 3; size -= 3;
-            strm << margin << "Description: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
+        buf.pushReadSizeFromLength(8); // selector_length
+        DataBroadcastIdDescriptor::DisplaySelectorBytes(disp, buf, margin, dbid);
+        buf.popState(); // end of selector_length
+
+        if (buf.canReadBytes(3)) {
+            disp << margin << "Language: " << buf.getLanguageCode() << std::endl;
+            disp << margin << "Description: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -113,21 +103,14 @@ void ts::DataBroadcastDescriptor::DisplayDescriptor(TablesDisplay& display, DID 
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DataBroadcastDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DataBroadcastDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    bbp->appendUInt16(data_broadcast_id);
-    bbp->appendUInt8(component_tag);
-    bbp->appendUInt8(int8_t(selector_bytes.size()));
-    bbp->append(selector_bytes);
-    if (!SerializeLanguageCode(*bbp, language_code)) {
-        desc.invalidate();
-        return;
-    }
-    bbp->append(duck.encodedWithByteLength(text));
-
-    serializeEnd(desc, bbp);
+    buf.putUInt16(data_broadcast_id);
+    buf.putUInt8(component_tag);
+    buf.putUInt8(uint8_t(selector_bytes.size()));
+    buf.putBytes(selector_bytes);
+    buf.putLanguageCode(language_code);
+    buf.putStringWithByteLength(text);
 }
 
 
@@ -135,35 +118,14 @@ void ts::DataBroadcastDescriptor::serialize(DuckContext& duck, Descriptor& desc)
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DataBroadcastDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DataBroadcastDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    selector_bytes.clear();
-    language_code.clear();
-    text.clear();
-
-    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 8)) {
-        return;
-    }
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    data_broadcast_id = GetUInt16(data);
-    component_tag = GetUInt8(data + 2);
-    size_t length = GetUInt8(data + 3);
-    data += 4; size -= 4;
-
-    if (length + 4 > size) {
-        _is_valid = false;
-        return;
-    }
-    selector_bytes.copy(data, length);
-    data += length; size -= length;
-
-    language_code = DeserializeLanguageCode(data);
-    data += 3; size -= 3;
-    duck.decodeWithByteLength(text, data, size);
-    _is_valid = size == 0;
+    data_broadcast_id = buf.getUInt16();
+    component_tag = buf.getUInt8();
+    const size_t length = buf.getUInt8();
+    buf.getBytes(selector_bytes, length);
+    buf.getLanguageCode(language_code);
+    buf.getStringWithByteLength(text);
 }
 
 
@@ -187,8 +149,8 @@ void ts::DataBroadcastDescriptor::buildXML(DuckContext& duck, xml::Element* root
 
 bool ts::DataBroadcastDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return  element->getIntAttribute<uint16_t>(data_broadcast_id, u"data_broadcast_id", true) &&
-            element->getIntAttribute<uint8_t>(component_tag, u"component_tag", true) &&
+    return  element->getIntAttribute(data_broadcast_id, u"data_broadcast_id", true) &&
+            element->getIntAttribute(component_tag, u"component_tag", true) &&
             element->getAttribute(language_code, u"language_code", true, u"", 3, 3) &&
             element->getHexaTextChild(selector_bytes, u"selector_bytes", true) &&
             element->getTextChild(text, u"text");

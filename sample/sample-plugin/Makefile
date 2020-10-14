@@ -1,12 +1,8 @@
 # Sample TSDuck plugin: Makefile for UNIX systems.
 # The TSDuck development package must have been installed.
 
-# TSDuck definitions.
-ifeq ($(shell uname -s),Darwin) # Mac
-    include /usr/local/include/tsduck/tsduck.mk
-else # Linux
-    include /usr/include/tsduck/tsduck.mk
-endif
+CXXFLAGS += $(shell tsconfig --cflags)
+LDLIBS += $(shell tsconfig --libs)
 
 # Default installation directory prefix.
 # RPM packagers should override this in the "make install" command line.
@@ -27,9 +23,9 @@ default: $(SHLIBS)
 	@true
 
 clean distclean:
-	rm -rf *.o *.so
+	@rm -rf *.o *.so
 
 .PHONY: install
 install: $(SHLIBS)
-	install -d -m 755 $(DESTDIR)/usr/bin
-	install -m 755 $(SHLIBS) $(DESTDIR)/usr/bin
+	install -d -m 755 $(DESTDIR)$(shell tsconfig --plugin)
+	install -m 755 $(SHLIBS) $(DESTDIR)$(shell tsconfig --plugin)

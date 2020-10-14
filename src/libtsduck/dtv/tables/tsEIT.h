@@ -363,20 +363,16 @@ namespace ts {
     protected:
         // Inherited methods
         virtual void clearContent() override;
-        virtual bool isValidTableId(TID tid) const override;
-        virtual void serializeContent(DuckContext&, BinaryTable&) const override;
-        virtual void deserializeContent(DuckContext&, const BinaryTable&) override;
+        virtual bool isValidTableId(TID) const override;
+        virtual void serializePayload(BinaryTable&, PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&, const Section&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
 
     private:
         constexpr static size_t EIT_HEADER_SIZE        = LONG_SECTION_HEADER_SIZE;
         constexpr static size_t EIT_PAYLOAD_FIXED_SIZE = 6;   // Payload size before event loop.
         constexpr static size_t EIT_EVENT_FIXED_SIZE   = 12;  // Event size before descriptor loop.
-
-        // Add a new section to a table being serialized
-        // Section number is incremented. Data and remain are reinitialized.
-        void addSection(BinaryTable& table, int& section_number, uint8_t* payload, uint8_t*& data, size_t& remain) const;
 
         // Get the table id from XML element.
         bool getTableId(const xml::Element*);

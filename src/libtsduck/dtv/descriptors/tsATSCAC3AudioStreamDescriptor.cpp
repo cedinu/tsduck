@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -104,22 +105,26 @@ void ts::ATSCAC3AudioStreamDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ATSCAC3AudioStreamDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ATSCAC3AudioStreamDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    bbp->appendUInt8(uint8_t(((sample_rate_code & 0x07) << 5) | (bsid & 0x1F)));
-    bbp->appendUInt8(uint8_t(((bit_rate_code & 0x3F) << 2) | (surround_mode & 0x03)));
-    bbp->appendUInt8(uint8_t(((bsmod & 0x07) << 5) | ((num_channels & 0x0F) << 1) | (full_svc ? 0x01 : 0x00)));
-    bbp->appendUInt8(0xFF); // langcod, deprecated
-    if ((num_channels & 0x0F) == 0) {
-        bbp->appendUInt8(0xFF); // langcod2, deprecated
+    buf.putBits(sample_rate_code, 3);
+    buf.putBits(bsid, 5);
+    buf.putBits(bit_rate_code, 6);
+    buf.putBits(surround_mode, 2);
+    buf.putBits(bsmod, 3);
+    buf.putBits(num_channels, 4);
+    buf.putBit(full_svc);
+    buf.putUInt8(0xFF); // langcod, deprecated
+    if (num_channels == 0) {
+        buf.putUInt8(0xFF); // langcod2, deprecated
     }
-    if ((bsmod & 0x07) < 2) {
-        bbp->appendUInt8(uint8_t(((mainid & 0x07) << 5) | ((priority & 0x03) << 2) | 0x07));
+    if (bsmod < 2) {
+        buf.putBits(mainid, 3);
+        buf.putBits(priority, 2);
+        buf.putBits(0xFF, 3);
     }
     else {
-        bbp->appendUInt8(asvcflags);
+        buf.putUInt8(asvcflags);
     }
 
     // Check if text shall be encoded in ISO Latin-1 (ISO 8859-1) or UTF-16.
@@ -129,21 +134,23 @@ void ts::ATSCAC3AudioStreamDescriptor::serialize(DuckContext& duck, Descriptor& 
     const ByteBlock bb(latin1 ? DVBCharTableSingleByte::RAW_ISO_8859_1.encoded(text, 0, 127) : DVBCharTableUTF16::RAW_UNICODE.encoded(text, 0, 63));
 
     // Serialize the text.
-    bbp->appendUInt8(uint8_t((bb.size() << 1) | (latin1 ? 0x01 : 0x00)));
-    bbp->append(bb);
+    buf.putBits(bb.size(), 7);
+    buf.putBit(latin1);
+    buf.putBytes(bb);
 
     // Serialize the languages.
-    bbp->appendUInt8((language.empty() ? 0x00 : 0x80) | (language_2.empty() ? 0x00 : 0x40) | 0x3F);
+    buf.putBit(!language.empty());
+    buf.putBit(!language_2.empty());
+    buf.putBits(0xFF, 6);
     if (!language.empty()) {
-        SerializeLanguageCode(*bbp, language);
+        buf.putLanguageCode(language);
     }
     if (!language_2.empty()) {
-        SerializeLanguageCode(*bbp, language_2);
+        buf.putLanguageCode(language_2);
     }
 
     // Trailing info.
-    bbp->append(additional_info);
-    serializeEnd(desc, bbp);
+    buf.putBytes(additional_info);
 }
 
 
@@ -151,107 +158,84 @@ void ts::ATSCAC3AudioStreamDescriptor::serialize(DuckContext& duck, Descriptor& 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ATSCAC3AudioStreamDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ATSCAC3AudioStreamDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    clear();
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 3;
-
-    if (!_is_valid) {
-        return;
-    }
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    // Fixed initial size: 3 bytes.
-    sample_rate_code = uint8_t((data[0] >> 5) & 0x07);
-    bsid = uint8_t(data[0] & 0x1F);
-    bit_rate_code = uint8_t((data[1] >> 2) & 0x3F);
-    surround_mode = uint8_t(data[1] & 0x03);
-    bsmod = uint8_t((data[2] >> 5) & 0x07);
-    num_channels = uint8_t((data[2] >> 1) & 0x0F);
-    full_svc = (data[2] & 0x01) != 0;
-    data += 3; size -= 3;
+    buf.getBits(sample_rate_code, 3);
+    buf.getBits(bsid, 5);
+    buf.getBits(bit_rate_code, 6);
+    buf.getBits(surround_mode, 2);
+    buf.getBits(bsmod, 3);
+    buf.getBits(num_channels, 4);
+    full_svc = buf.getBool();
 
     // End of descriptor allowed here
-    if (size == 0) {
+    if (buf.endOfRead()) {
         return;
     }
 
     // Ignore langcode, deprecated
-    data++; size--;
+    buf.skipBits(8);
 
     // End of descriptor allowed here
-    if (size == 0) {
+    if (buf.endOfRead()) {
         return;
     }
 
     // Ignore langcode2, deprecated
     if (num_channels == 0) {
-        data++; size--;
+        buf.skipBits(8);
     }
 
     // End of descriptor allowed here
-    if (size == 0) {
+    if (buf.endOfRead()) {
         return;
     }
 
     // Decode one byte depending on bsmod.
     if (bsmod < 2) {
-        mainid = uint8_t((data[0] >> 5) & 0x07);
-        priority = uint8_t((data[0] >> 3) & 0x03);
+        buf.getBits(mainid, 3);
+        buf.getBits(priority, 2);
+        buf.skipBits(3);
     }
     else {
-        asvcflags = data[0];
+        asvcflags = buf.getUInt8();
     }
-    data++; size--;
 
     // End of descriptor allowed here
-    if (size == 0) {
+    if (buf.endOfRead()) {
         return;
     }
 
     // Deserialize text. Can be ISO Latin-1 or UTF-16.
-    const size_t textlen = (data[0] >> 1) & 0x7F;
-    const bool latin1 = (data[0] & 0x01) != 0;
-    data++; size--;
-    if (size < textlen) {
-        _is_valid = false; // text is truncated
-        return;
-    }
-    _is_valid = latin1 ?
-                DVBCharTableSingleByte::RAW_ISO_8859_1.decode(text, data, textlen) :
-                DVBCharTableUTF16::RAW_UNICODE.decode(text, data, textlen);
-    data += textlen; size -= textlen;
+    const size_t textlen = buf.getBits<size_t>(7);
+    const bool latin1 = buf.getBool();
+    buf.getString(text, textlen, latin1 ? static_cast<const Charset*>(&DVBCharTableSingleByte::RAW_ISO_8859_1) : static_cast<const Charset*>(&DVBCharTableUTF16::RAW_UNICODE));
 
     // End of descriptor allowed here
-    if (!_is_valid || size == 0) {
+    if (buf.endOfRead()) {
         return;
     }
 
     // Decode one byte flags.
-    const bool has_language = (data[0] & 0x80) != 0;
-    const bool has_language_2 = (data[0] & 0x40) != 0;
-    data++; size--;
-    _is_valid = size >= size_t((has_language ? 3 : 0) + (has_language_2 ? 3 : 0));
+    const bool has_language = buf.getBool();
+    const bool has_language_2 = buf.getBool();
+    buf.skipBits(6);
 
     // End of descriptor allowed here
-    if (!_is_valid || size == 0) {
+    if (buf.endOfRead()) {
         return;
     }
 
     // Deserialize languages.
     if (has_language) {
-        language = DeserializeLanguageCode(data);
-        data += 3; size -= 3;
+        buf.getLanguageCode(language);
     }
     if (has_language_2) {
-        language_2 = DeserializeLanguageCode(data);
-        data += 3; size -= 3;
+        buf.getLanguageCode(language_2);
     }
 
     // Trailing info.
-    additional_info.copy(data, size);
+    buf.getBytes(additional_info);
 }
 
 
@@ -259,101 +243,67 @@ void ts::ATSCAC3AudioStreamDescriptor::deserialize(DuckContext& duck, const Desc
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ATSCAC3AudioStreamDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ATSCAC3AudioStreamDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    if (size >= 3) {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
+    if (buf.canReadBytes(3)) {
         // Fixed initial size: 3 bytes.
-        const uint8_t sample = uint8_t((data[0] >> 5) & 0x07);
-        const uint8_t bsid = uint8_t(data[0] & 0x1F);
-        const uint8_t bitrate = uint8_t((data[1] >> 2) & 0x3F);
-        const uint8_t surround = uint8_t(data[1] & 0x03);
-        const uint8_t bsmod = uint8_t((data[2] >> 5) & 0x07);
-        const uint8_t channels = uint8_t((data[2] >> 1) & 0x0F);
-        const bool full = (data[2] & 0x01) != 0;
-        data += 3; size -= 3;
-
-        strm << margin << UString::Format(u"Sample rate: %s", {NameFromSection(u"ATSCAC3SampleRateCode", sample, names::VALUE)}) << std::endl
-             << margin << UString::Format(u"AC-3 coding version: 0x%X (%d)", {bsid, bsid}) << std::endl
-             << margin << UString::Format(u"Bit rate: %s%s", {NameFromSection(u"ATSCAC3BitRateCode", bitrate & 0x1F, names::VALUE), (bitrate & 0x20) == 0 ? u"" : u" max"}) << std::endl
-             << margin << UString::Format(u"Surround mode: %s", {NameFromSection(u"ATSCAC3SurroundMode", surround, names::VALUE)}) << std::endl
-             << margin << UString::Format(u"Bitstream mode: %s", {NameFromSection(u"AC3BitStreamMode", bsmod, names::VALUE)}) << std::endl
-             << margin << UString::Format(u"Num. channels: %s", {NameFromSection(u"ATSCAC3NumChannels", channels, names::VALUE)}) << std::endl
-             << margin << UString::Format(u"Full service: %s", {full}) << std::endl;
+        disp << margin << "Sample rate: " << NameFromSection(u"ATSCAC3SampleRateCode", buf.getBits<uint8_t>(3), names::VALUE) << std::endl;
+        disp << margin << UString::Format(u"AC-3 coding version: 0x%X (%<d)", {buf.getBits<uint8_t>(5)}) << std::endl;
+        const uint8_t bitrate = buf.getBits<uint8_t>(6);
+        disp << margin << "Bit rate: " << NameFromSection(u"ATSCAC3BitRateCode", bitrate & 0x1F, names::VALUE) << ((bitrate & 0x20) == 0 ? "" : " max") << std::endl;
+        disp << margin << "Surround mode: " << NameFromSection(u"ATSCAC3SurroundMode", buf.getBits<uint8_t>(2), names::VALUE) << std::endl;
+        const uint8_t bsmod = buf.getBits<uint8_t>(3);
+        disp << margin << "Bitstream mode: " << NameFromSection(u"AC3BitStreamMode", bsmod, names::VALUE) << std::endl;
+        const uint8_t channels = buf.getBits<uint8_t>(4);
+        disp << margin << "Num. channels: " << NameFromSection(u"ATSCAC3NumChannels", channels, names::VALUE) << std::endl;
+        disp << margin << UString::Format(u"Full service: %s", {buf.getBool()}) << std::endl;
 
         // Ignore langcode and langcode2, deprecated
-        if (size > 0) {
-            data++; size--;
-        }
-        if (channels == 0 && size > 0) {
-            data++; size--;
+        buf.skipBits(8);
+        if (channels == 0) {
+            buf.skipBits(8);
         }
 
         // Decode one byte depending on bsmod.
-        if (size >= 1) {
+        if (buf.canRead()) {
             if (bsmod < 2) {
-                const uint8_t mainid = uint8_t((data[0] >> 5) & 0x07);
-                const uint8_t priority = uint8_t((data[0] >> 3) & 0x03);
-                strm << margin << UString::Format(u"Main audio service id: %d", {mainid}) << std::endl
-                     << margin << UString::Format(u"Priority: %d", {priority}) << std::endl;
+                disp << margin << UString::Format(u"Main audio service id: %d", {buf.getBits<uint8_t>(3)}) << std::endl;
+                disp << margin << UString::Format(u"Priority: %d", {buf.getBits<uint8_t>(2)}) << std::endl;
+                buf.skipBits(3);
             }
             else {
-                const uint8_t asvcflags = data[0];
-                strm << margin << UString::Format(u"Associated services flags: 0x%X", {asvcflags}) << std::endl;
+                disp << margin << UString::Format(u"Associated services flags: 0x%X", {buf.getUInt8()}) << std::endl;
             }
-            data++; size--;
         }
 
         // Decode text.
-        if (size >= 1) {
-            size_t textlen = (data[0] >> 1) & 0x7F;
-            const bool latin1 = (data[0] & 0x01) != 0;
-            data++; size--;
-            if (size < textlen) {
-                textlen = size;
-            }
-            UString text;
-            if (latin1) {
-                DVBCharTableSingleByte::RAW_ISO_8859_1.decode(text, data, textlen);
-            }
-            else {
-                DVBCharTableUTF16::RAW_UNICODE.decode(text, data, textlen);
-            }
-            data += textlen; size -= textlen;
-            strm << margin << "Text: \"" << text << "\"" << std::endl;
+        if (buf.canRead()) {
+            const size_t textlen = buf.getBits<size_t>(7);
+            const bool latin1 = buf.getBool();
+            const Charset* charset = latin1 ? static_cast<const Charset*>(&DVBCharTableSingleByte::RAW_ISO_8859_1) : static_cast<const Charset*>(&DVBCharTableUTF16::RAW_UNICODE);
+            disp << margin << "Text: \"" << buf.getString(textlen, charset) << "\"" << std::endl;
         }
 
         // Decode one byte flags.
         bool has_lang = false;
         bool has_lang2 = false;
-        if (size >= 1) {
-            has_lang = (data[0] & 0x80) != 0;
-            has_lang2 = (data[0] & 0x40) != 0;
-            data++; size--;
+        if (buf.canRead()) {
+            has_lang = buf.getBool();
+            has_lang2 = buf.getBool();
+            buf.skipBits(6);
         }
-        bool ok = size >= size_t((has_lang ? 3 : 0) + (has_lang2 ? 3 : 0));
 
         // Deserialize languages.
-        if (ok && has_lang) {
-            strm << margin << "Language: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-            data += 3; size -= 3;
+        if (has_lang) {
+            disp << margin << "Language: \"" << buf.getLanguageCode() << "\"" << std::endl;
         }
-        if (ok && has_lang2) {
-            strm << margin << "Language 2: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-            data += 3; size -= 3;
+        if (has_lang2) {
+            disp << margin << "Language 2: \"" << buf.getLanguageCode() << "\"" << std::endl;
         }
 
         // Trailing info.
-        if (ok) {
-            display.displayPrivateData(u"Additional information", data, size, indent);
-            data += size; size = 0;
-        }
+        disp.displayPrivateData(u"Additional information", buf, NPOS, margin);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -392,16 +342,16 @@ void ts::ATSCAC3AudioStreamDescriptor::buildXML(DuckContext& duck, xml::Element*
 
 bool ts::ATSCAC3AudioStreamDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(sample_rate_code, u"sample_rate_code", true, 0, 0, 0x07) &&
-           element->getIntAttribute<uint8_t>(bsid, u"bsid", true, 0, 0, 0x1F) &&
-           element->getIntAttribute<uint8_t>(bit_rate_code, u"bit_rate_code", true, 0, 0, 0x3F) &&
-           element->getIntAttribute<uint8_t>(surround_mode, u"surround_mode", true, 0, 0, 0x03) &&
-           element->getIntAttribute<uint8_t>(bsmod, u"bsmod", true, 0, 0, 0x07) &&
-           element->getIntAttribute<uint8_t>(num_channels, u"num_channels", true, 0, 0, 0x0F) &&
+    return element->getIntAttribute(sample_rate_code, u"sample_rate_code", true, 0, 0, 0x07) &&
+           element->getIntAttribute(bsid, u"bsid", true, 0, 0, 0x1F) &&
+           element->getIntAttribute(bit_rate_code, u"bit_rate_code", true, 0, 0, 0x3F) &&
+           element->getIntAttribute(surround_mode, u"surround_mode", true, 0, 0, 0x03) &&
+           element->getIntAttribute(bsmod, u"bsmod", true, 0, 0, 0x07) &&
+           element->getIntAttribute(num_channels, u"num_channels", true, 0, 0, 0x0F) &&
            element->getBoolAttribute(full_svc, u"full_svc", true) &&
-           element->getIntAttribute<uint8_t>(mainid, u"mainid", bsmod < 2, 0, 0, 0x07) &&
-           element->getIntAttribute<uint8_t>(priority, u"priority", bsmod < 2, 0, 0, 0x03) &&
-           element->getIntAttribute<uint8_t>(asvcflags, u"asvcflags", bsmod >= 2, 0, 0, 0xFF) &&
+           element->getIntAttribute(mainid, u"mainid", bsmod < 2, 0, 0, 0x07) &&
+           element->getIntAttribute(priority, u"priority", bsmod < 2, 0, 0, 0x03) &&
+           element->getIntAttribute(asvcflags, u"asvcflags", bsmod >= 2, 0, 0, 0xFF) &&
            element->getAttribute(text, u"text") &&
            element->getAttribute(language, u"language") &&
            element->getAttribute(language_2, u"language_2") &&

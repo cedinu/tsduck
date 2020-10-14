@@ -31,6 +31,7 @@
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -74,16 +75,10 @@ void ts::DiscontinuityInformationTable::clearContent()
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DiscontinuityInformationTable::deserializeContent(DuckContext& duck, const BinaryTable& table)
+void ts::DiscontinuityInformationTable::deserializePayload(PSIBuffer& buf, const Section& section)
 {
-    // Reference to single section
-    const Section& sect(*table.sectionAt(0));
-
-    // Get content
-    if (sect.payloadSize() >= 1) {
-        transition = (sect.payload()[0] & 0x80) != 0;
-        _is_valid = true;
-    }
+    transition = buf.getBool();
+    buf.skipBits(7);
 }
 
 
@@ -91,13 +86,10 @@ void ts::DiscontinuityInformationTable::deserializeContent(DuckContext& duck, co
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DiscontinuityInformationTable::serializeContent(DuckContext& duck, BinaryTable& table) const
+void ts::DiscontinuityInformationTable::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
-    // Encode the data in the payload
-    const uint8_t payload = transition ? 0xFF : 0x7F;
-
-    // Add the section in the table
-    table.addSection(new Section(MY_TID, true, &payload, 1));
+    buf.putBit(transition);
+    buf.putBits(0xFF, 7);
 }
 
 
@@ -105,19 +97,12 @@ void ts::DiscontinuityInformationTable::serializeContent(DuckContext& duck, Bina
 // A static method to display a DiscontinuityInformationTable section.
 //----------------------------------------------------------------------------
 
-void ts::DiscontinuityInformationTable::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::DiscontinuityInformationTable::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const uint8_t* data = section.payload();
-    size_t size = section.payloadSize();
-
-    if (size >= 1) {
-        strm << UString::Format(u"%*sTransition: %s", {indent, u"", UString::YesNo((data[0] & 0x80) != 0)}) << std::endl;
-        data++; size--;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Transition: " << UString::YesNo(buf.getBool()) << std::endl;
+        buf.skipBits(7);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 

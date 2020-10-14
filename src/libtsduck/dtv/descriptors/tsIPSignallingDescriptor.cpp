@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
@@ -71,25 +72,14 @@ void ts::IPSignallingDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::IPSignallingDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::IPSignallingDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt24(platform_id);
-    serializeEnd(desc, bbp);
+    buf.putUInt24(platform_id);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::IPSignallingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::IPSignallingDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 3;
-
-    if (_is_valid) {
-        platform_id = GetUInt24(desc.payload());
-    }
+    platform_id = buf.getUInt24();
 }
 
 
@@ -97,18 +87,11 @@ void ts::IPSignallingDescriptor::deserialize(DuckContext& duck, const Descriptor
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::IPSignallingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::IPSignallingDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 3) {
-        strm << margin << "Platform id: " << names::PlatformId(GetUInt24(data), names::FIRST) << std::endl;
-        data += 3; size -= 3;
+    if (buf.canReadBytes(3)) {
+        disp << margin << "Platform id: " << names::PlatformId(buf.getUInt24(), names::FIRST) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -121,12 +104,7 @@ void ts::IPSignallingDescriptor::buildXML(DuckContext& duck, xml::Element* root)
     root->setIntAttribute(u"platform_id", platform_id, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::IPSignallingDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint32_t>(platform_id, u"platform_id", true, 0, 0, 0x00FFFFFF);
+    return element->getIntAttribute(platform_id, u"platform_id", true, 0, 0, 0x00FFFFFF);
 }

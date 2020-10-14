@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -81,17 +82,15 @@ ts::ReferenceDescriptor::Reference::Reference() :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ReferenceDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ReferenceDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(information_provider_id);
-    bbp->appendUInt16(event_relation_id);
+    buf.putUInt16(information_provider_id);
+    buf.putUInt16(event_relation_id);
     for (auto it = references.begin(); it != references.end(); ++it) {
-        bbp->appendUInt16(it->reference_node_id);
-        bbp->appendUInt8(it->reference_number);
-        bbp->appendUInt8(it->last_reference_number);
+        buf.putUInt16(it->reference_node_id);
+        buf.putUInt8(it->reference_number);
+        buf.putUInt8(it->last_reference_number);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -99,27 +98,16 @@ void ts::ReferenceDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ReferenceDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ReferenceDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4 && size % 4 == 0;
-
-    references.clear();
-
-    if (_is_valid) {
-        information_provider_id = GetUInt16(data);
-        event_relation_id = GetUInt16(data + 2);
-        data += 4; size -= 4;
-
-        while (_is_valid && size >= 4) {
-            Reference ref;
-            ref.reference_node_id = GetUInt16(data);
-            ref.reference_number = data[2];
-            ref.last_reference_number = data[3];
-            data += 4; size -= 4;
-            references.push_back(ref);
-        }
+    information_provider_id = buf.getUInt16();
+    event_relation_id = buf.getUInt16();
+    while (buf.canRead()) {
+        Reference ref;
+        ref.reference_node_id = buf.getUInt16();
+        ref.reference_number = buf.getUInt8();
+        ref.last_reference_number = buf.getUInt8();
+        references.push_back(ref);
     }
 }
 
@@ -128,26 +116,17 @@ void ts::ReferenceDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ReferenceDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ReferenceDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        strm << margin << UString::Format(u"Information provider id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-             << margin << UString::Format(u"Event relation id: 0x%X (%d)", {GetUInt16(data + 2), GetUInt16(data + 2)}) << std::endl;
-        data += 4; size -= 4;
-
-        while (size >= 4) {
-            strm << margin << UString::Format(u"- Reference node id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                 << margin << UString::Format(u"  Reference number: 0x%X (%d)", {data[2], data[2]}) << std::endl
-                 << margin << UString::Format(u"  Last reference number: 0x%X (%d)", {data[3], data[3]}) << std::endl;
-            data += 4; size -= 4;
+    if (buf.canReadBytes(4)) {
+        disp << margin << UString::Format(u"Information provider id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Event relation id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        while (buf.canReadBytes(4)) {
+            disp << margin << UString::Format(u"- Reference node id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+            disp << margin << UString::Format(u"  Reference number: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+            disp << margin << UString::Format(u"  Last reference number: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -176,15 +155,15 @@ bool ts::ReferenceDescriptor::analyzeXML(DuckContext& duck, const xml::Element* 
 {
     xml::ElementVector xref;
     bool ok =
-        element->getIntAttribute<uint16_t>(information_provider_id, u"information_provider_id", true) &&
-        element->getIntAttribute<uint16_t>(event_relation_id, u"event_relation_id", true) &&
+        element->getIntAttribute(information_provider_id, u"information_provider_id", true) &&
+        element->getIntAttribute(event_relation_id, u"event_relation_id", true) &&
         element->getChildren(xref, u"reference");
 
     for (auto it = xref.begin(); ok && it != xref.end(); ++it) {
         Reference ref;
-        ok = (*it)->getIntAttribute<uint16_t>(ref.reference_node_id, u"reference_node_id", true) &&
-             (*it)->getIntAttribute<uint8_t>(ref.reference_number, u"reference_number", true) &&
-             (*it)->getIntAttribute<uint8_t>(ref.last_reference_number, u"last_reference_number", true);
+        ok = (*it)->getIntAttribute(ref.reference_node_id, u"reference_node_id", true) &&
+             (*it)->getIntAttribute(ref.reference_number, u"reference_number", true) &&
+             (*it)->getIntAttribute(ref.last_reference_number, u"last_reference_number", true);
         references.push_back(ref);
     }
     return ok;

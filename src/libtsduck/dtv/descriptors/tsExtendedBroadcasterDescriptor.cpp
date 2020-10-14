@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -85,21 +86,21 @@ void ts::ExtendedBroadcasterDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ExtendedBroadcasterDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ExtendedBroadcasterDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(broadcaster_type << 4) | 0x0F);
+    buf.putBits(broadcaster_type, 4);
+    buf.putBits(0xFF, 4);
     if (broadcaster_type == 0x01 || broadcaster_type == 0x02) {
-        bbp->appendUInt16(terrestrial_broadcaster_id);
-        bbp->appendUInt8(uint8_t(affiliation_ids.size() << 4) | uint8_t(broadcasters.size() & 0x0F));
-        bbp->append(affiliation_ids);
+        buf.putUInt16(terrestrial_broadcaster_id);
+        buf.putBits(affiliation_ids.size(), 4);
+        buf.putBits(broadcasters.size(), 4);
+        buf.putBytes(affiliation_ids);
         for (auto it = broadcasters.begin(); it != broadcasters.end(); ++ it) {
-            bbp->appendUInt16(it->original_network_id);
-            bbp->appendUInt8(it->broadcaster_id);
+            buf.putUInt16(it->original_network_id);
+            buf.putUInt8(it->broadcaster_id);
         }
     }
-    bbp->append(private_data);
-    serializeEnd(desc, bbp);
+    buf.putBytes(private_data);
 }
 
 
@@ -107,51 +108,25 @@ void ts::ExtendedBroadcasterDescriptor::serialize(DuckContext& duck, Descriptor&
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ExtendedBroadcasterDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ExtendedBroadcasterDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    affiliation_ids.clear();
-    broadcasters.clear();
-    private_data.clear();
-
-    if (_is_valid) {
-        broadcaster_type = (data[0] >> 4) & 0x0F;
-        data++; size--;
-        if (broadcaster_type == 0x01 || broadcaster_type == 0x02) {
-
-            // Same layout in both cases. Fixed part is 3 bytes.
-            if (size < 3) {
-                _is_valid = false;
-                return;
-            }
-            terrestrial_broadcaster_id = GetUInt16(data);
-            size_t aff_count = (data[2] >> 4) & 0x0F;
-            size_t bc_count = data[2] & 0x0F;
-            data += 3; size -= 3;
-
-            // Affiliation ids use 1 byte per id.
-            if (aff_count > size) {
-                _is_valid = false;
-                return;
-            }
-            affiliation_ids.copy(data, aff_count);
-            data += aff_count; size -= aff_count;
-
-            // Broadcasters ids use 3 bytes per id.
-            if (bc_count * 3 > size) {
-                _is_valid = false;
-                return;
-            }
-            while (bc_count-- > 0) {
-                broadcasters.push_back(Broadcaster(GetUInt16(data), data[2]));
-                data += 3; size -= 3;
-            }
+    buf.getBits(broadcaster_type, 4);
+    buf.skipBits(4);
+    if (broadcaster_type == 0x01 || broadcaster_type == 0x02) {
+        terrestrial_broadcaster_id = buf.getUInt16();
+        size_t aff_count = buf.getBits<size_t>(4);
+        size_t bc_count = buf.getBits<size_t>(4);
+        // Affiliation ids use 1 byte per id.
+        buf.getBytes(affiliation_ids, aff_count);
+        // Broadcasters ids use 3 bytes per id.
+        for (size_t i = 0; i < bc_count && buf.canRead(); ++i) {
+            Broadcaster bc;
+            bc.original_network_id = buf.getUInt16();
+            bc.broadcaster_id = buf.getUInt8();
+            broadcasters.push_back(bc);
         }
-        private_data.copy(data, size);
     }
+    buf.getBytes(private_data);
 }
 
 
@@ -159,43 +134,30 @@ void ts::ExtendedBroadcasterDescriptor::deserialize(DuckContext& duck, const Des
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ExtendedBroadcasterDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ExtendedBroadcasterDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
+    if (buf.canReadBytes(1)) {
+        const uint8_t btype = buf.getBits<uint8_t>(4);
+        buf.skipBits(4);
+        disp << margin << "Broadcaster type: " << NameFromSection(u"ISDBBroadcasterType", btype, names::HEXA_FIRST) << std::endl;
 
-    if (size == 0) {
-        return;
-    }
+        if ((btype == 0x01 || btype == 0x02) && buf.canReadBytes(3)) {
+            disp << margin << UString::Format(u"Terrestrial%s broadcaster id: 0x%X (%<d)", {btype == 0x02 ? u" sound" : u"", buf.getUInt16()}) << std::endl;
+            size_t aff_count = buf.getBits<size_t>(4);
+            size_t bc_count = buf.getBits<size_t>(4);
+            disp << margin << UString::Format(u"Number of affiliations: %d, number of broadcaster ids: %d", {aff_count, bc_count}) << std::endl;
 
-    const uint8_t btype = (data[0] >> 4) & 0x0F;
-    data++; size--;
-    strm << margin << "Broadcaster type: " << NameFromSection(u"ISDBBroadcasterType", btype, names::HEXA_FIRST) << std::endl;
+            while (aff_count-- > 0 && buf.canReadBytes(1)) {
+                disp << margin << UString::Format(u"- %s id: 0x%X (%<d)", {btype == 0x02 ? u"Sound broadcast affiliation" : u"Affiliation", buf.getUInt8()}) << std::endl;
+            }
 
-    if ((btype == 0x01 || btype == 0x02) && size >= 3) {
-
-        const uint16_t bcid = GetUInt16(data);
-        size_t aff_count = (data[2] >> 4) & 0x0F;
-        size_t bc_count = data[2] & 0x0F;
-        data += 3; size -= 3;
-
-        strm << margin << UString::Format(u"Terrestrial%s broadcaster id: 0x%X (%d)", {btype == 0x02 ? u" sound" : u"", bcid, bcid}) << std::endl
-             << margin << UString::Format(u"Number of affiliations: %d, number of broadcaster ids: %d", {aff_count, bc_count}) << std::endl;
-
-        while (aff_count > 0 && size > 0) {
-            strm << margin << UString::Format(u"- %s id: 0x%X (%d)", {btype == 0x02 ? u"Sound broadcast affiliation" : u"Affiliation", data[0], data[0]}) << std::endl;
-            data++; size--; aff_count--;
+            while (bc_count-- > 0 && buf.canReadBytes(3)) {
+                disp << margin << UString::Format(u"- Original network id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+                disp << margin << UString::Format(u"  Broadcaster id: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+            }
         }
-
-        while (bc_count > 0 && size >= 3) {
-            strm << margin << UString::Format(u"- Original network id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                 << margin << UString::Format(u"  Broadcaster id: 0x%X (%d)", {data[2], data[2]}) << std::endl;
-            data += 3; size -= 3; bc_count--;
-        }
+        disp.displayPrivateData(btype == 0x01 || btype == 0x02 ? u"Private data" : u"Reserve future use", buf, NPOS, margin);
     }
-
-    display.displayPrivateData(btype == 0x01 || btype == 0x02 ? u"Private data" : u"Reserve future use", data, size, indent);
 }
 
 
@@ -230,22 +192,22 @@ bool ts::ExtendedBroadcasterDescriptor::analyzeXML(DuckContext& duck, const xml:
     xml::ElementVector xaffiliations;
     xml::ElementVector xbroadcasters;
     bool ok =
-        element->getIntAttribute<uint8_t>(broadcaster_type, u"broadcaster_type", true, 0, 0, 15) &&
-        element->getIntAttribute<uint16_t>(terrestrial_broadcaster_id, u"terrestrial_broadcaster_id", broadcaster_type == 0x01 || broadcaster_type == 0x02) &&
+        element->getIntAttribute(broadcaster_type, u"broadcaster_type", true, 0, 0, 15) &&
+        element->getIntAttribute(terrestrial_broadcaster_id, u"terrestrial_broadcaster_id", broadcaster_type == 0x01 || broadcaster_type == 0x02) &&
         element->getChildren(xaffiliations, u"affiliation", 0, broadcaster_type == 0x01 || broadcaster_type == 0x02 ? 15 : 0) &&
         element->getChildren(xbroadcasters, u"broadcaster", 0, broadcaster_type == 0x01 || broadcaster_type == 0x02 ? 15 : 0) &&
         element->getHexaTextChild(private_data, u"private_data");
 
     for (auto it = xaffiliations.begin(); ok && it != xaffiliations.end(); ++it) {
         uint8_t id = 0;
-        ok = (*it)->getIntAttribute<uint8_t>(id, u"id", true);
+        ok = (*it)->getIntAttribute(id, u"id", true);
         affiliation_ids.push_back(id);
     }
 
     for (auto it = xbroadcasters.begin(); ok && it != xbroadcasters.end(); ++it) {
         Broadcaster bc;
-        ok = (*it)->getIntAttribute<uint16_t>(bc.original_network_id, u"original_network_id", true) &&
-             (*it)->getIntAttribute<uint8_t>(bc.broadcaster_id, u"broadcaster_id", true);
+        ok = (*it)->getIntAttribute(bc.original_network_id, u"original_network_id", true) &&
+             (*it)->getIntAttribute(bc.broadcaster_id, u"broadcaster_id", true);
         broadcasters.push_back(bc);
     }
     return ok;

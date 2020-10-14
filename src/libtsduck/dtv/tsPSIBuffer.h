@@ -34,6 +34,7 @@
 
 #pragma once
 #include "tsBuffer.h"
+#include "tsTime.h"
 #include "tsMPEG.h"
 #include "tsCharset.h"
 
@@ -42,6 +43,7 @@ namespace ts {
     class DuckContext;
     class Section;
     class DescriptorList;
+    class ATSCMultipleString;
 
     //!
     //! A specialized subclass of ts::Buffer for PSI serialization.
@@ -134,6 +136,15 @@ namespace ts {
         //! Read the next 24 bits as a 3-character language or country code and advance the read pointer.
         //! Set the read error flag if there are not enough bits to read or if the current read pointer
         //! is not at a byte boundary. Non-ASCII characters are ignored.
+        //! @param [out] str Returned decoded string.
+        //! @return True on success, false on error (truncated, unsupported format, etc.)
+        //!
+        bool getLanguageCode(UString& str);
+
+        //!
+        //! Read the next 24 bits as a 3-character language or country code and advance the read pointer.
+        //! Set the read error flag if there are not enough bits to read or if the current read pointer
+        //! is not at a byte boundary. Non-ASCII characters are ignored.
         //! @return The language or country code string.
         //!
         UString getLanguageCode();
@@ -144,11 +155,12 @@ namespace ts {
         //! @param [in] str The UTF-16 string to encode.
         //! @param [in] start Starting offset to convert in this UTF-16 string.
         //! @param [in] count Maximum number of characters to convert.
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return True on success, false if there is not enough space to write (and set write error flag).
         //!
-        bool putString(const UString& str, size_t start = 0, size_t count = NPOS)
+        bool putString(const UString& str, size_t start = 0, size_t count = NPOS, const Charset* charset = nullptr)
         {
-            return putStringCommon(str, start, count, &Charset::encode, false, 0) != 0;
+            return putStringCommon(str, start, count, &Charset::encode, false, 0, charset) != 0;
         }
 
         //!
@@ -158,11 +170,12 @@ namespace ts {
         //! @param [in] str The UTF-16 string to encode.
         //! @param [in] start Starting offset to convert in this UTF-16 string.
         //! @param [in] count Maximum number of characters to convert.
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return The number of serialized characters (which is usually not the same as the number of written bytes).
         //!
-        size_t putPartialString(const UString& str, size_t start = 0, size_t count = NPOS)
+        size_t putPartialString(const UString& str, size_t start = 0, size_t count = NPOS, const Charset* charset = nullptr)
         {
-            return putStringCommon(str, start, count, &Charset::encode, true, 0);
+            return putStringCommon(str, start, count, &Charset::encode, true, 0, charset);
         }
 
         //!
@@ -171,11 +184,12 @@ namespace ts {
         //! @param [in] str The UTF-16 string to encode.
         //! @param [in] start Starting offset to convert in this UTF-16 string.
         //! @param [in] count Maximum number of characters to convert.
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return True on success, false if there is not enough space to write (and set write error flag).
         //!
-        bool putStringWithByteLength(const UString& str, size_t start = 0, size_t count = NPOS)
+        bool putStringWithByteLength(const UString& str, size_t start = 0, size_t count = NPOS, const Charset* charset = nullptr)
         {
-            return putStringCommon(str, start, count, &Charset::encodeWithByteLength, false, 1) != 0;
+            return putStringCommon(str, start, count, &Charset::encodeWithByteLength, false, 1, charset) != 0;
         }
 
         //!
@@ -185,11 +199,12 @@ namespace ts {
         //! @param [in] str The UTF-16 string to encode.
         //! @param [in] start Starting offset to convert in this UTF-16 string.
         //! @param [in] count Maximum number of characters to convert.
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return The number of serialized characters (which is usually not the same as the number of written bytes).
         //!
-        size_t putPartialStringWithByteLength(const UString& str, size_t start = 0, size_t count = NPOS)
+        size_t putPartialStringWithByteLength(const UString& str, size_t start = 0, size_t count = NPOS, const Charset* charset = nullptr)
         {
-            return putStringCommon(str, start, count, &Charset::encodeWithByteLength, true, 1);
+            return putStringCommon(str, start, count, &Charset::encodeWithByteLength, true, 1, charset);
         }
 
         //!
@@ -198,33 +213,126 @@ namespace ts {
         //! @param [in] size Size in bytes of the encoded string. If specified as @a NPOS (the default), read up to
         //! the end of the buffer. If different from @a NPOS, the exact number of bytes must be available or a read
         //! error is generated.
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return True on success, false on error (truncated, unsupported format, etc.)
         //!
-        bool getString(UString& str, size_t size = NPOS);
+        bool getString(UString& str, size_t size = NPOS, const Charset* charset = nullptr);
 
         //!
         //! Get a string using the default input character set.
         //! @param [in] size Size in bytes of the encoded string. If specified as @a NPOS (the default), read up to
         //! the end of the buffer. If different from @a NPOS, the exact number of bytes must be available or a read
         //! error is generated.
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return The decoded string.
         //!
-        UString getString(size_t size = NPOS);
+        UString getString(size_t size = NPOS, const Charset* charset = nullptr);
 
         //!
         //! Get a string (preceded by its one-byte length) using the default input character set.
         //! The specified number of bytes must be available or a read error is generated.
         //! @param [out] str Returned decoded string.
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return True on success, false on error (truncated, unsupported format, etc.)
         //!
-        bool getStringWithByteLength(UString& str);
+        bool getStringWithByteLength(UString& str, const Charset* charset = nullptr);
 
         //!
         //! Get a string (preceded by its one-byte length) using the default input character set.
         //! The specified number of bytes must be available or a read error is generated.
+        //! @param [in] charset An optional specific character set to use instead of the default one.
         //! @return The decoded string.
         //!
-        UString getStringWithByteLength();
+        UString getStringWithByteLength(const Charset* charset = nullptr);
+
+        //!
+        //! Put (serialize) a full Modified Julian Date (MJD), date and time, 5 bytes.
+        //!
+        //! Generate a write error when the buffer is not large enough or when the write pointer is not byte-aligned.
+        //!
+        //! @param [in] time The date and time to serialize.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putFullMJD(const Time& time) { return putMJD(time, 5); }
+
+        //!
+        //! Put (serialize) the date part of a Modified Julian Date (MJD), the time part is ignored, 2 bytes.
+        //!
+        //! Generate a write error when the buffer is not large enough or when the write pointer is not byte-aligned.
+        //!
+        //! @param [in] time The date to serialize.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putDateMJD(const Time& time) { return putMJD(time, 2); }
+
+        //!
+        //! Put (serialize) a Modified Julian Date (MJD), 2 to 5 bytes.
+        //!
+        //! Generate a write error when the buffer is not large enough or when the write pointer is not byte-aligned.
+        //!
+        //! @param [in] time The date and time to serialize.
+        //! @param [in] mjd_size Size in bytes of the MJD area, 2 to 5 bytes.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putMJD(const Time& time, size_t mjd_size);
+
+        //!
+        //! Get a full Modified Julian Date (MJD), date and time, 5 bytes.
+        //!
+        //! Generate a read error when there is not enough bytes or when the write pointer is not byte-aligned.
+        //!
+        //! @return The deserialize date and time (Epoch on error).
+        //!
+        Time getFullMJD() { return getMJD(5); }
+
+        //!
+        //! Get the date part of a Modified Julian Date (MJD), the time part is ignored, 2 bytes.
+        //!
+        //! Generate a read error when there is not enough bytes or when the write pointer is not byte-aligned.
+        //!
+        //! @return The deserialize date and time (Epoch on error).
+        //!
+        Time getDateMJD() { return getMJD(2); }
+
+        //!
+        //! Get a Modified Julian Date (MJD), 2 to 5 bytes.
+        //!
+        //! Generate a read error when there is not enough bytes or when the write pointer is not byte-aligned.
+        //!
+        //! @param [in] mjd_size Size in bytes of the MJD area, 2 to 5 bytes.
+        //! @return The deserialize date and time (Epoch on error).
+        //!
+        Time getMJD(size_t mjd_size);
+
+        //!
+        //! Put (serialize) a duration in minutes as 4 BCD digits (HHMM), 2 bytes.
+        //! Generate a write error when the buffer is not large enough.
+        //! @param [in] duration A number of minutes.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putMinutesBCD(SubSecond duration);
+
+        //!
+        //! Put (serialize) a duration in seconds as 6 BCD digits (HHMMSS), 3 bytes.
+        //! Generate a write error when the buffer is not large enough.
+        //! @param [in] duration A number of seconds.
+        //! @return True on success, false if there is not enough space to write (and set write error flag).
+        //!
+        bool putSecondsBCD(Second duration);
+
+        //!
+        //! Get (deserialize) a duration in minutes as 4 BCD digits (HHMM), 2 bytes.
+        //! Generate a read error when there is not enough bytes.
+        //! @return The duration in minutes.
+        //!
+        SubSecond getMinutesBCD();
+
+        //!
+        //! Get (deserialize) a duration in seconds as 6 BCD digits (HHMMSS), 3 bytes.
+        //! Generate a read error when there is not enough bytes.
+        //! @return The duration in minutes.
+        //!
+        Second getSecondsBCD();
 
         //!
         //! Put (serialize) a complete descriptor list.
@@ -325,6 +433,42 @@ namespace ts {
         //!
         size_t getUnalignedLength(size_t length_bits);
 
+        //!
+        //! Get (deserialize) an ATSC multiple_string_structure() as defined in ATSC A/65.
+        //! @param [out] mss The deserialized multiple_string_structure.
+        //! @param [in] mss_size Optional size of the multiple_string_structure to deserialize.
+        //! If different from NPOS (the default), do not read more than @a mss_size bytes and move the
+        //! read pointer after @a mss_size bytes, even if the multiple_string_structure is shorter.
+        //! @param [in] ignore_empty If true and there is nothing left to read, then this is a valid empty multiple_string_structure.
+        //! @return True on success, false on error (truncated, misaligned, etc.)
+        //!
+        bool getMultipleString(ATSCMultipleString& mss, size_t mss_size = NPOS, bool ignore_empty = false);
+
+        //!
+        //! Get (deserialize) an ATSC multiple_string_structure() as defined in ATSC A/65, with a leading byte length.
+        //! @param [out] mss The deserialized multiple_string_structure.
+        //! @param [in] length_bytes Size in bytes of the leading length field (1 byte by default).
+        //! @return True on success, false on error (truncated, misaligned, etc.)
+        //!
+        bool getMultipleStringWithLength(ATSCMultipleString& mss, size_t length_bytes = 1);
+
+        //!
+        //! Put (serialize) an ATSC multiple_string_structure() as defined in ATSC A/65.
+        //! @param [in] mss The multiple_string_structure to serialize.
+        //! @param [in] max_size Max size to serialize, possibly lower than the buffer size.
+        //! @param [in] ignore_empty If true and the multiple_string_structure is empty, do nothing.
+        //! @return True on success, false on error (truncated, misaligned, etc.)
+        //!
+        bool putMultipleString(const ATSCMultipleString& mss, size_t max_size = NPOS, bool ignore_empty = false);
+
+        //!
+        //! Put (serialize) an ATSC multiple_string_structure() as defined in ATSC A/65, with a leading byte length.
+        //! @param [in] mss The multiple_string_structure to serialize.
+        //! @param [in] length_bytes Size in bytes of the leading length field (1 byte by default).
+        //! @return True on success, false on error (truncated, misaligned, etc.)
+        //!
+        bool putMultipleStringWithLength(const ATSCMultipleString& mss, size_t length_bytes = 1);
+
     private:
         DuckContext& _duck;
 
@@ -334,6 +478,6 @@ namespace ts {
         // Common code the various putString functions.
         // When partial == true, return the number of encoded characters.
         // When partial == false, return 1 on success, 0 on error.
-        size_t putStringCommon(const UString& str, size_t start, size_t count, EncodeMethod em, bool partial, size_t min_req_size);
+        size_t putStringCommon(const UString& str, size_t start, size_t count, EncodeMethod em, bool partial, size_t min_req_size, const Charset*);
     };
 }

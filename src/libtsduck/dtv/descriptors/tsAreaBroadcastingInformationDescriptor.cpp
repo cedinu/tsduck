@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -79,18 +80,16 @@ ts::AreaBroadcastingInformationDescriptor::Station::Station() :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AreaBroadcastingInformationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::AreaBroadcastingInformationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(stations.size()));
+    buf.putUInt8(uint8_t(stations.size()));
     for (auto it = stations.begin(); it != stations.end(); ++it) {
-        bbp->appendUInt24(it->station_id);
-        bbp->appendUInt16(it->location_code);
-        bbp->appendUInt8(it->broadcast_signal_format);
-        bbp->appendUInt8(uint8_t(it->additional_station_info.size()));
-        bbp->append(it->additional_station_info);
+        buf.putUInt24(it->station_id);
+        buf.putUInt16(it->location_code);
+        buf.putUInt8(it->broadcast_signal_format);
+        buf.putUInt8(uint8_t(it->additional_station_info.size()));
+        buf.putBytes(it->additional_station_info);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -98,36 +97,17 @@ void ts::AreaBroadcastingInformationDescriptor::serialize(DuckContext& duck, Des
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::AreaBroadcastingInformationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::AreaBroadcastingInformationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    stations.clear();
-
-    if (_is_valid) {
-        size_t count = data[0];
-        data++; size--;
-
-        while (_is_valid && count > 0 && size >= 7) {
-            Station st;
-            st.station_id = GetUInt24(data);
-            st.location_code = GetUInt16(data + 3);
-            st.broadcast_signal_format = GetUInt8(data + 5);
-            const size_t len = GetUInt8(data + 6);
-            data += 7; size -= 7;
-
-            if (len > size) {
-                _is_valid = false;
-            }
-            else {
-                st.additional_station_info.copy(data, len);
-                data += len; size -= len; count--;
-                stations.push_back(st);
-            }
-        }
-        _is_valid = _is_valid && size == 0 && count == 0;
+    const size_t count = buf.getUInt8();
+    for (size_t i = 0; i < count && buf.canRead(); ++i) {
+        Station st;
+        st.station_id = buf.getUInt24();
+        st.location_code = buf.getUInt16();
+        st.broadcast_signal_format = buf.getUInt8();
+        const size_t len = buf.getUInt8();
+        buf.getBytes(st.additional_station_info, len);
+        stations.push_back(st);
     }
 }
 
@@ -136,28 +116,17 @@ void ts::AreaBroadcastingInformationDescriptor::deserialize(DuckContext& duck, c
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::AreaBroadcastingInformationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::AreaBroadcastingInformationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        size_t count = data[0];
-        data++; size--;
-
-        while (count > 0 && size >= 7) {
-            strm << margin << UString::Format(u"- Station id: 0x%X (%d)", {GetUInt24(data), GetUInt24(data)}) << std::endl
-                 << margin << UString::Format(u"  Location code: 0x%X (%d)", {GetUInt16(data + 3), GetUInt16(data + 3)}) << std::endl
-                 << margin << "  Broadcast signal format: " << NameFromSection(u"ISDBBroadcastSignalFormat", GetUInt8(data + 5), names::HEXA_FIRST) << std::endl;
-            size_t len = GetUInt8(data + 6);
-            data += 7; size -= 7;
-            len = std::min(len, size);
-            display.displayPrivateData(u"Additional station info", data, len, indent + 2);
-            data += len; size -= len; count--;
+    if (buf.canReadBytes(1)) {
+        size_t count = buf.getUInt8();
+        while (count > 0 && buf.canReadBytes(7)) {
+            disp << margin << UString::Format(u"- Station id: 0x%X (%<d)", {buf.getUInt24()}) << std::endl;
+            disp << margin << UString::Format(u"  Location code: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+            disp << margin << "  Broadcast signal format: " << NameFromSection(u"ISDBBroadcastSignalFormat", buf.getUInt8(), names::HEXA_FIRST) << std::endl;
+            disp.displayPrivateData(u"Additional station info", buf, buf.getUInt8(), margin + u"  ");
         }
     }
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -186,11 +155,11 @@ bool ts::AreaBroadcastingInformationDescriptor::analyzeXML(DuckContext& duck, co
     xml::ElementVector xstation;
     bool ok = element->getChildren(xstation, u"station");
 
-    for (auto it = xstation.begin(); _is_valid && it != xstation.end(); ++it) {
+    for (auto it = xstation.begin(); ok && it != xstation.end(); ++it) {
         Station st;
-        ok = (*it)->getIntAttribute<uint32_t>(st.station_id, u"station_id", true, 0, 0, 0x00FFFFFF) &&
-             (*it)->getIntAttribute<uint16_t>(st.location_code, u"location_code", true) &&
-             (*it)->getIntAttribute<uint8_t>(st.broadcast_signal_format, u"broadcast_signal_format", true) &&
+        ok = (*it)->getIntAttribute(st.station_id, u"station_id", true, 0, 0, 0x00FFFFFF) &&
+             (*it)->getIntAttribute(st.location_code, u"location_code", true) &&
+             (*it)->getIntAttribute(st.broadcast_signal_format, u"broadcast_signal_format", true) &&
              (*it)->getHexaTextChild(st.additional_station_info, u"additional_station_info", false);
         stations.push_back(st);
     }

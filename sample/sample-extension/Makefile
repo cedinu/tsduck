@@ -7,8 +7,12 @@ MAKEFLAGS += --no-print-directory
 default install:
 	@$(MAKE) -C src $@
 
+# Installers:
+deb rpm: default
+	build/build-$@.sh
+
 # Cleanup non-source files:
 clean distclean:
-	$(MAKE) -C src $@
-	$(MAKE) -C msvc $@
-	rm -rf installers/tmp demo/*.ts
+	@$(MAKE) -C src $@
+	@$(MAKE) -C msvc $@
+	@rm -rf installers/tmp demo/*.ts

@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -89,20 +90,21 @@ void ts::SVCExtensionDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SVCExtensionDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SVCExtensionDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(width);
-    bbp->appendUInt16(height);
-    bbp->appendUInt16(frame_rate);
-    bbp->appendUInt16(average_bitrate);
-    bbp->appendUInt16(maximum_bitrate);
-    bbp->appendUInt8(uint8_t(dependency_id << 5) | 0x1F);
-    bbp->appendUInt8(uint8_t(quality_id_start << 4) | (quality_id_end & 0x0F));
-    bbp->appendUInt8(uint8_t(temporal_id_start << 5) |
-                     uint8_t((temporal_id_end & 0x07) << 2) |
-                     (no_sei_nal_unit_present ? 0x03 : 0x01));
-    serializeEnd(desc, bbp);
+    buf.putUInt16(width);
+    buf.putUInt16(height);
+    buf.putUInt16(frame_rate);
+    buf.putUInt16(average_bitrate);
+    buf.putUInt16(maximum_bitrate);
+    buf.putBits(dependency_id, 3);
+    buf.putBits(0xFF, 5);
+    buf.putBits(quality_id_start, 4);
+    buf.putBits(quality_id_end, 4);
+    buf.putBits(temporal_id_start, 3);
+    buf.putBits(temporal_id_end, 3);
+    buf.putBit(no_sei_nal_unit_present);
+    buf.putBit(1);
 }
 
 
@@ -110,26 +112,21 @@ void ts::SVCExtensionDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::SVCExtensionDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SVCExtensionDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 13;
-
-    if (_is_valid) {
-        width = GetUInt16(data);
-        height = GetUInt16(data + 2);
-        frame_rate = GetUInt16(data + 4);
-        average_bitrate = GetUInt16(data + 6);
-        maximum_bitrate = GetUInt16(data + 8);
-        dependency_id = (data[10] >> 5) & 0x07;
-        quality_id_start = (data[11] >> 4) & 0x0F;
-        quality_id_end = data[11] & 0x0F;
-        temporal_id_start = (data[12] >> 5) & 0x07;
-        temporal_id_end = (data[12] >> 2) & 0x07;
-        no_sei_nal_unit_present = (data[12] & 0x02) != 0;
-    }
+    width = buf.getUInt16();
+    height = buf.getUInt16();
+    frame_rate = buf.getUInt16();
+    average_bitrate = buf.getUInt16();
+    maximum_bitrate = buf.getUInt16();
+    buf.getBits(dependency_id, 3);
+    buf.skipBits(5);
+    buf.getBits(quality_id_start, 4);
+    buf.getBits(quality_id_end, 4);
+    buf.getBits(temporal_id_start, 3);
+    buf.getBits(temporal_id_end, 3);
+    no_sei_nal_unit_present = buf.getBool();
+    buf.skipBits(1);
 }
 
 
@@ -137,24 +134,23 @@ void ts::SVCExtensionDescriptor::deserialize(DuckContext& duck, const Descriptor
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SVCExtensionDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SVCExtensionDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 13) {
-        strm << margin << UString::Format(u"Frame size: %dx%d", {GetUInt16(data), GetUInt16(data + 2)}) << std::endl
-             << margin << UString::Format(u"Frame rate: %d frames / 256 seconds", {GetUInt16(data + 4)}) << std::endl
-             << margin << UString::Format(u"Average bitrate: %d kb/s, maximum: %d kb/s", {GetUInt16(data + 6), GetUInt16(data + 8)}) << std::endl
-             << margin << UString::Format(u"Dependency id: %d", {(data[10] >> 5) & 0x07}) << std::endl
-             << margin << UString::Format(u"Quality id start: %d, end: %d", {(data[11] >> 4) & 0x0F, data[11] & 0x0F}) << std::endl
-             << margin << UString::Format(u"Temporal id start: %d, end: %d", {(data[12] >> 5) & 0x07, (data[12] >> 2) & 0x07}) << std::endl
-             << margin << UString::Format(u"No SEI NALunit present: %s", {(data[12] & 0x02) != 0}) << std::endl;
-        data += 13; size -= 13;
+    if (buf.canReadBytes(13)) {
+        disp << margin << UString::Format(u"Frame size: %d", {buf.getUInt16()});
+        disp << UString::Format(u"x%d", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Frame rate: %d frames / 256 seconds", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Average bitrate: %d kb/s", {buf.getUInt16()});
+        disp << UString::Format(u", maximum: %d kb/s", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Dependency id: %d", {buf.getBits<uint8_t>(3)}) << std::endl;
+        buf.skipBits(5);
+        disp << margin << UString::Format(u"Quality id start: %d", {buf.getBits<uint8_t>(4)});
+        disp << UString::Format(u", end: %d", {buf.getBits<uint8_t>(4)}) << std::endl;
+        disp << margin << UString::Format(u"Temporal id start: %d", {buf.getBits<uint8_t>(3)});
+        disp << UString::Format(u", end: %d", {buf.getBits<uint8_t>(3)}) << std::endl;
+        disp << margin << UString::Format(u"No SEI NALunit present: %s", {buf.getBool()}) << std::endl;
+        buf.skipBits(1);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -184,15 +180,15 @@ void ts::SVCExtensionDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 
 bool ts::SVCExtensionDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return  element->getIntAttribute<uint16_t>(width, u"width", true) &&
-            element->getIntAttribute<uint16_t>(height, u"height", true) &&
-            element->getIntAttribute<uint16_t>(frame_rate, u"frame_rate", true) &&
-            element->getIntAttribute<uint16_t>(average_bitrate, u"average_bitrate", true) &&
-            element->getIntAttribute<uint16_t>(maximum_bitrate, u"maximum_bitrate", true) &&
-            element->getIntAttribute<uint8_t>(dependency_id, u"dependency_id", true, 0, 0x00, 0x07) &&
-            element->getIntAttribute<uint8_t>(quality_id_start, u"quality_id_start", true, 0, 0x00, 0x0F) &&
-            element->getIntAttribute<uint8_t>(quality_id_end, u"quality_id_end", true, 0, 0x00, 0x0F) &&
-            element->getIntAttribute<uint8_t>(temporal_id_start, u"temporal_id_start", true, 0, 0x00, 0x07) &&
-            element->getIntAttribute<uint8_t>(temporal_id_end, u"temporal_id_end", true, 0, 0x00, 0x07) &&
+    return  element->getIntAttribute(width, u"width", true) &&
+            element->getIntAttribute(height, u"height", true) &&
+            element->getIntAttribute(frame_rate, u"frame_rate", true) &&
+            element->getIntAttribute(average_bitrate, u"average_bitrate", true) &&
+            element->getIntAttribute(maximum_bitrate, u"maximum_bitrate", true) &&
+            element->getIntAttribute(dependency_id, u"dependency_id", true, 0, 0x00, 0x07) &&
+            element->getIntAttribute(quality_id_start, u"quality_id_start", true, 0, 0x00, 0x0F) &&
+            element->getIntAttribute(quality_id_end, u"quality_id_end", true, 0, 0x00, 0x0F) &&
+            element->getIntAttribute(temporal_id_start, u"temporal_id_start", true, 0, 0x00, 0x07) &&
+            element->getIntAttribute(temporal_id_end, u"temporal_id_end", true, 0, 0x00, 0x07) &&
             element->getBoolAttribute(no_sei_nal_unit_present, u"no_sei_nal_unit_present", true);
 }

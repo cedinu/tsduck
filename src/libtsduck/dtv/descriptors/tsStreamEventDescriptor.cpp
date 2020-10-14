@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -73,13 +74,12 @@ ts::StreamEventDescriptor::StreamEventDescriptor(DuckContext& duck, const Descri
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::StreamEventDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::StreamEventDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(event_id);
-    bbp->appendUInt64(TS_UCONST64(0xFFFFFFFE00000000) | event_NPT);
-    bbp->append(private_data);
-    serializeEnd(desc, bbp);
+    buf.putUInt16(event_id);
+    buf.putBits(0xFFFFFFFF, 31);
+    buf.putBits(event_NPT, 33);
+    buf.putBytes(private_data);
 }
 
 
@@ -87,17 +87,12 @@ void ts::StreamEventDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::StreamEventDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::StreamEventDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 10;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        event_id = GetUInt16(data);
-        event_NPT = GetUInt64(data + 2) & TS_UCONST64(0x00000001FFFFFFFF);
-        private_data.copy (data + 10, size - 10);
-    }
+    event_id = buf.getUInt16();
+    buf.skipBits(31);
+    buf.getBits(event_NPT, 33);
+    buf.getBytes(private_data);
 }
 
 
@@ -119,20 +114,13 @@ bool ts::StreamEventDescriptor::asciiPrivate() const
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::StreamEventDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::StreamEventDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 10) {
-        const uint16_t id = GetUInt16(data);
-        const uint64_t npt = GetUInt64(data + 2) & TS_UCONST64(0x00000001FFFFFFFF);
-        strm << margin << UString::Format(u"Event id: 0x%X (%d), NPT: 0x%09X (%d)", {id, id, npt, npt}) << std::endl;
-        display.displayPrivateData(u"Private data", data + 10, size - 10, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+    if (buf.canReadBytes(10)) {
+        disp << margin << UString::Format(u"Event id: 0x%X (%<d)", {buf.getUInt16()});
+        buf.skipBits(31);
+        disp << UString::Format(u", NPT: 0x%09X (%<d)", {buf.getBits<uint64_t>(33)}) << std::endl;
+        disp.displayPrivateData(u"Private data", buf, NPOS, margin);
     }
 }
 
@@ -164,8 +152,8 @@ bool ts::StreamEventDescriptor::analyzeXML(DuckContext& duck, const xml::Element
 {
     UString text;
     bool ok =
-        element->getIntAttribute<uint16_t>(event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
-        element->getIntAttribute<uint64_t>(event_NPT, u"event_NPT", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
+        element->getIntAttribute(event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
+        element->getIntAttribute(event_NPT, u"event_NPT", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
         element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 10) &&
         element->getTextChild(text, u"private_text", false, false, UString(), 0, MAX_DESCRIPTOR_SIZE - 10);
 

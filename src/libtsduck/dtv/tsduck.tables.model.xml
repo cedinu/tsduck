@@ -247,6 +247,36 @@
       </application>
     </AIT>
 
+    <!-- DVB Content Identifier Table -->
+    <CIT version="uint5, default=0"
+         current="bool, default=true"
+         service_id="uint16, required"
+         transport_stream_id="uint16, required"
+         original_network_id="uint16, required">
+      <!-- One per prepend string -->
+      <prepend_string value="string, required"/>
+      <!-- One per CRID (Content Reference Identifier) -->
+      <crid crid_ref="uint16, required"
+            prepend_string_index="uint8, optional"
+            unique_string="string, required"/>
+    </CIT>
+
+    <!-- Resolution provider Notification Table -->
+    <RNT version="uint5, default=0"
+         current="bool, default=true"
+         context_id="uint16, required"
+         context_id_type="uint8, required">
+      <_any in="_descriptors"/>
+      <!-- One per resolution provider -->
+      <resolution_provider name="string, required">
+        <_any in="_descriptors"/>
+        <!-- One per CRID authority -->
+        <CRID_authority name="string, required" policy="uint2, required">
+          <_any in="_descriptors"/>
+        </CRID_authority>
+      </resolution_provider>
+    </RNT>
+
     <!-- Discontinuity Information Table -->
     <discontinuity_information_table transition="bool, required"/>
 
@@ -910,10 +940,28 @@
         constraint_set0="bool, required"
         constraint_set1="bool, required"
         constraint_set2="bool, required"
-        AVC_compatible_flags="uint5, required"
+        constraint_set3="bool, default=false"
+        constraint_set4="bool, default=false"
+        constraint_set5="bool, default=false"
+        AVC_compatible_flags="uint2, required"
         level_idc="uint8, required"
         AVC_still_present="bool, required"
-        AVC_24_hour_picture="bool, required"/>
+        AVC_24_hour_picture="bool, required"
+        frame_packing_SEI_not_present="bool, default=false"/>
+
+    <basic_local_event_descriptor
+        segmentation_mode="uint4, required"
+        start_time_NPT="uint33, optional"
+        end_time_NPT="uint33, optional"
+        start_time="hh:mm:ss, optional"
+        duration="hh:mm:ss, optional"
+        start_time_extension="mmm, optional"
+        duration_extension="mmm, optional">
+      <reserved_data>
+        Hexadecimal content
+      </reserved_data>
+      <component tag="uint8, required"/>
+    </basic_local_event_descriptor>
 
     <board_information_descriptor
         title="string, required"
@@ -1085,6 +1133,31 @@
         </rating_description>
       </region>
     </content_advisory_descriptor>
+
+    <content_identifier_descriptor>
+      <crid crid_type="uint6, required"
+            crid_location="uint2, required"
+            crid_ref="uint16, optional"
+            crid="string, optional"/>
+    </content_identifier_descriptor>
+
+    <content_labelling_descriptor
+        metadata_application_format="uint16, required"
+        metadata_application_format_identifier="uint32, optional"
+        content_time_base_indicator="uint4, required"
+        content_time_base_value="uint33, optional"
+        metadata_time_base_value="uint33, optional"
+        content_id="uint7, optional">
+      <content_reference_id>
+        Hexadecimal content
+      </content_reference_id>
+      <time_base_association_data>
+        Hexadecimal content
+      </time_base_association_data>
+      <private_data>
+        Hexadecimal content
+      </private_data>
+    </content_labelling_descriptor>
 
     <copyright_descriptor copyright_identifier="uint32, required">
       <additional_copyright_info>
@@ -1528,7 +1601,7 @@
         FmxRateLength="uint8, required"/>
 
     <FMC_descriptor>
-      <!-- One per  SL_packetized stream -->
+      <!-- One per SL_packetized stream -->
       <stream ES_ID="uint16, required" FlexMuxChannel="uint8, required"/>
     </FMC_descriptor>
 
@@ -1573,6 +1646,11 @@
                visible_service="bool, default=true"/>
     </eacem_HD_simulcast_logical_channel_descriptor>
 
+    <green_extension_descriptor>
+      <constant_backlight_voltage_time_interval value="uint16, required"/>
+      <max_variation value="uint16, required"/>
+    </green_extension_descriptor>
+
     <!-- Previous version, still accepted for compatibility -->
     <HD_simulcast_logical_channel_descriptor>
       <!-- One per service -->
@@ -1580,6 +1658,16 @@
                logical_channel_number="uint10, required"
                visible_service="bool, default=true"/>
     </HD_simulcast_logical_channel_descriptor>
+
+    <HEVC_hierarchy_extension_descriptor
+        extension_dimension_bits="uint16, required"
+        hierarchy_layer_index="uint6, required"
+        temporal_id="uint3, required"
+        nuh_layer_id="uint6, required"
+        tref_present="bool, required"
+        hierarchy_channel="uint6, required">
+      <embedded_layer hierarchy_layer_index="uint6, required"/>
+    </HEVC_hierarchy_extension_descriptor>
 
     <HEVC_timing_and_HRD_descriptor
         hrd_management_valid="bool, required"
@@ -1612,9 +1700,14 @@
         reference_PID="uint13, required"/>
 
     <hierarchy_descriptor
-        temporal_scalability="bool, required"
-        spatial_scalability="bool, required"
-        quality_scalability="bool, required"
+        view_scalability_flag="bool, default=true"
+        temporal_scalability="bool, default=true"
+        spatial_scalability="bool, default=true"
+        quality_scalability="bool, default=true"
+        no_view_scalability_flag="bool, default=true"
+        no_temporal_scalability="bool, default=true"
+        no_spatial_scalability="bool, default=true"
+        no_quality_scalability="bool, default=true"
         hierarchy_type="uint4, required"
         hierarchy_layer_index="uint6, required"
         tref_present="bool, required"
@@ -1797,6 +1890,49 @@
 
     <maximum_bitrate_descriptor maximum_bitrate="uint32, in bits/second, required"/>
 
+    <metadata_descriptor
+        metadata_application_format="uint16, required"
+        metadata_application_format_identifier="uint32, optional"
+        metadata_format="uint8, required"
+        metadata_format_identifier="uint32, optional"
+        metadata_service_id="uint8, required"
+        decoder_config_flags="uint3, required"
+        decoder_config_metadata_service_id="uint8, optional">
+      <service_identification>
+        Hexadecimal content
+      </service_identification>
+      <decoder_config>
+        Hexadecimal content
+      </decoder_config>
+      <dec_config_identification>
+        Hexadecimal content
+      </dec_config_identification>
+      <reserved_data>
+        Hexadecimal content
+      </reserved_data>
+      <private_data>
+        Hexadecimal content
+      </private_data>
+    </metadata_descriptor>
+
+    <metadata_pointer_descriptor
+        metadata_application_format="uint16, required"
+        metadata_application_format_identifier="uint32, optional"
+        metadata_format="uint8, required"
+        metadata_format_identifier="uint32, optional"
+        metadata_service_id="uint8, required"
+        MPEG_carriage_flags="uint2, required"
+        program_number="uint16, optional"
+        transport_stream_location="uint16, optional"
+        transport_stream_id="uint16, optional">
+      <metadata_locator>
+        Hexadecimal content
+      </metadata_locator>
+      <private_data>
+        Hexadecimal content
+      </private_data>
+    </metadata_pointer_descriptor>
+
     <metadata_STD_descriptor
         metadata_input_leak_rate="uint22, required"
         metadata_buffer_size="uint22, required"
@@ -1835,6 +1971,30 @@
     <MPEG4_audio_descriptor MPEG4_audio_profile_and_level="uint8, required"/>
 
     <MPEG4_video_descriptor MPEG4_visual_profile_and_level="uint8, required"/>
+
+    <MPEGH_3D_audio_descriptor
+        mpegh_3da_profile_level_indication="uint8, required"
+        interactivity_enabled="bool, required"
+        reference_channel_layout="uint6, required">
+      <reserved>
+        Hexadecimal content
+      </reserved>
+    </MPEGH_3D_audio_descriptor>
+
+    <MPEGH_3D_audio_multi_stream_descriptor
+        this_is_main_stream="bool, required"
+        this_stream_id="uint7, required"
+        num_auxiliary_streams="uint7, optional">
+      <!-- One per group -->
+      <mae_group
+          mae_group_id="uint7, required"
+          is_in_main_stream="bool, required"
+          is_in_ts="bool, optional"
+          auxiliary_stream_id="uint7, optional"/>
+      <reserved>
+        Hexadecimal content
+      </reserved>
+    </MPEGH_3D_audio_multi_stream_descriptor>
 
     <multilingual_bouquet_name_descriptor>
       <!-- One per language -->
@@ -1877,6 +2037,25 @@
         temporal_id_end="uint3, required"
         no_sei_nal_unit_present="bool, required"
         no_prefix_nal_unit_present="bool, required"/>
+
+    <MVC_operation_point_descriptor
+        profile_idc="uint8, required"
+        constraint_set0="bool, required"
+        constraint_set1="bool, required"
+        constraint_set2="bool, required"
+        constraint_set3="bool, required"
+        constraint_set4="bool, required"
+        constraint_set5="bool, required"
+        AVC_compatible_flags="uint2, required">
+      <!-- One per level -->
+      <level level_idc="uint8, required">
+        <operation_point
+            applicable_temporal_id="uint3, required"
+            num_target_output_views="uint8, required">
+          <ES reference="uint6, required"/>
+        </operation_point>
+      </level>
+    </MVC_operation_point_descriptor>
 
     <network_change_notify_descriptor>
       <!-- One per cell -->
@@ -2004,6 +2183,8 @@
       </additional_identification_info>
     </registration_descriptor>
 
+    <related_content_descriptor/>
+
     <satellite_delivery_system_descriptor
         frequency="SatelliteFrequencyHz, required"
         orbital_position="SatelliteOrbitalPosition, eg. 19.2, required"
@@ -2016,9 +2197,11 @@
         FEC_inner="undefined|1/2|2/3|3/4|5/6|7/8|8/9|3/5|4/5|9/10|ISDB-S|2.6GHzMobile|AdvancedCS|none, required"/>
 
     <S2_satellite_delivery_system_descriptor
-        backwards_compatibility="bool, required"
+        backwards_compatibility="bool, default=false"
+        TS_GS_mode="uint2, default=3"
         scrambling_sequence_index="uint18, optional"
-        input_stream_identifier="uint8, optional"/>
+        input_stream_identifier="uint8, optional"
+        timeslice_number="uint8, optional"/>
 
     <S2X_satellite_delivery_system_descriptor
         receiver_profiles="uint5, required"
@@ -2271,6 +2454,20 @@
         max_holdoff_time="uint8, required"
         min_polling_interval="uint8, required"
         uri="string, required"/>
+
+    <STC_reference_descriptor
+        STC_reference_mode="uint4, required"
+        external_event_id="uint16, optional"
+        external_service_id="uint16, optional"
+        external_network_id="uint16, optional"
+        NPT_reference="uint33, optional"
+        STC_reference="uint33, optional"
+        time_reference="hh:mm:ss, optional"
+        time_reference_extension="mmm, optional">
+      <reserved_data>
+        Hexadecimal content
+      </reserved_data>
+    </STC_reference_descriptor>
 
     <STD_descriptor leak_valid="bool, required"/>
 
@@ -2588,6 +2785,10 @@
       </reserved_future_use>
     </TS_information_descriptor>
 
+    <TVA_id_descriptor>
+      <TVA id="uint16, required" running_status="uint3, required"/>
+    </TVA_id_descriptor>
+
     <update_descriptor
         update_flag="uint2, required"
         update_method="uint4, required"
@@ -2656,6 +2857,15 @@
         horizontal_offset="uint14, required"
         vertical_offset="uint14, required"
         window_priority="uint4, required"/>
+
+    <virtual_segmentation_descriptor ticks_per_second="uint21, optional">
+      <!-- One per partition -->
+      <partition
+          partition_id="uint3, required"
+          SAP_type_max="uint3, required"
+          boundary_PID="uint13, optional"
+          maximum_duration="uint29, optional"/>
+    </virtual_segmentation_descriptor>
 
   </_descriptors>
 

@@ -108,7 +108,7 @@ void ts::PMT::clearContent()
 
 void ts::PMT::deserializePayload(PSIBuffer& buf, const Section& section)
 {
-    // Get fixed pard.
+    // Get fixed part.
     service_id = section.tableIdExtension();
     pcr_pid = buf.getPID();
 
@@ -116,7 +116,7 @@ void ts::PMT::deserializePayload(PSIBuffer& buf, const Section& section)
     buf.getDescriptorListWithLength(descs);
 
     // Get elementary streams description
-    while (!buf.error() && !buf.endOfRead()) {
+    while (buf.canRead()) {
         const uint8_t type = buf.getUInt8();
         const PID pid = buf.getPID();
         Stream& str(streams[pid]);
@@ -130,25 +130,25 @@ void ts::PMT::deserializePayload(PSIBuffer& buf, const Section& section)
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::PMT::serializePayload(BinaryTable& table, PSIBuffer& payload) const
+void ts::PMT::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
     // Build the section. Note that a PMT is not allowed to use more than
     // one section, see ISO/IEC 13818-1:2000 2.4.4.8 & 2.4.4.9. For the sake
     // of completeness, we allow multi-section PMT for very large services.
 
     // Fixed part, to be repeated on all sections.
-    payload.putPID(pcr_pid);
-    payload.pushReadWriteState();
+    buf.putPID(pcr_pid);
+    buf.pushState();
 
     // Insert program_info descriptor list (with leading length field).
     // Add new section when the descriptor list overflows.
     for (size_t start = 0;;) {
-        start = payload.putPartialDescriptorListWithLength(descs, start);
-        if (payload.error() || start >= descs.size()) {
+        start = buf.putPartialDescriptorListWithLength(descs, start);
+        if (buf.error() || start >= descs.size()) {
             break;
         }
         else {
-            addOneSection(table, payload);
+            addOneSection(table, buf);
         }
     }
 
@@ -162,24 +162,24 @@ void ts::PMT::serializePayload(BinaryTable& table, PSIBuffer& payload) const
         const size_t entry_size = 5 + it->second.descs.binarySize();
 
         // If the current entry does not fit into the section, create a new section, unless we are at the beginning of the section.
-        if (entry_size > payload.remainingWriteBytes() && payload.currentWriteByteOffset() > payload_min_size) {
-            addOneSection(table, payload);
-            payload.putPartialDescriptorListWithLength(descs, 0, 0);
+        if (entry_size > buf.remainingWriteBytes() && buf.currentWriteByteOffset() > payload_min_size) {
+            addOneSection(table, buf);
+            buf.putPartialDescriptorListWithLength(descs, 0, 0);
         }
 
         // Insert stream entry
-        payload.putUInt8(it->second.stream_type);
-        payload.putPID(it->first); // PID
-        payload.putPartialDescriptorListWithLength(it->second.descs);
+        buf.putUInt8(it->second.stream_type);
+        buf.putPID(it->first); // PID
+        buf.putPartialDescriptorListWithLength(it->second.descs);
     }
 }
 
 
 //----------------------------------------------------------------------------
-// Check if an elementary stream carries audio, video or subtitles.
+// Check if an elementary stream carries video.
 //----------------------------------------------------------------------------
 
-bool ts::PMT::Stream::isVideo() const
+bool ts::PMT::Stream::isVideo(const DuckContext& duck) const
 {
     return IsVideoST(stream_type) ||
         descs.search(DID_AVC_VIDEO) < descs.count() ||
@@ -188,43 +188,81 @@ bool ts::PMT::Stream::isVideo() const
         descs.search(DID_J2K_VIDEO) < descs.count();
 }
 
-bool ts::PMT::Stream::isAudio() const
-{
-    // AC-3 or HE-AAC components may have "PES private data" stream type
-    // but are identified by specific descriptors.
 
-    return IsAudioST(stream_type) ||
-        descs.search(DID_DTS) < descs.count() ||
-        descs.search(DID_AC3) < descs.count() ||
-        descs.search(DID_ENHANCED_AC3) < descs.count() ||
-        descs.search(DID_AAC) < descs.count() ||
-        descs.search(EDID::ExtensionDVB(EDID_AC4)) < descs.count() ||
-        descs.search(EDID::ExtensionDVB(EDID_DTS_NEURAL)) < descs.count() ||
-        descs.search(EDID::ExtensionDVB(EDID_DTS_HD_AUDIO)) < descs.count();
-}
+//----------------------------------------------------------------------------
+// Check if an elementary stream carries audio.
+//----------------------------------------------------------------------------
 
-bool ts::PMT::Stream::isSubtitles() const
+bool ts::PMT::Stream::isAudio(const DuckContext& duck) const
 {
-    // A subtitling descriptor always indicates subtitles.
-    if (descs.search(DID_SUBTITLING) < descs.count()) {
+    // Check obvious audio stream types.
+    if (IsAudioST(stream_type)) {
         return true;
     }
-    // A teletext descriptor may indicate subtitles
-    for (size_t index = 0; (index = descs.search(DID_TELETEXT, index)) < descs.count(); ++index) {
-        // Get descriptor payload
-        const uint8_t* data = descs[index]->payload();
-        size_t size = descs[index]->payloadSize();
-        // Loop on all language entries, check if teletext type is a subtitle
-        while (size >= 5) {
-            uint8_t ttype = data[3] >> 3;
-            if (ttype == 0x02 || ttype == 0x05) {
-                return true; // teletext subtitles types
+
+    const bool isdb = (duck.standards() & Standards::ISDB) != Standards::NONE;
+
+    // Other audio components may have "PES private data" stream type
+    // but are identified by specific descriptors.
+    for (size_t index = 0; index < descs.count(); ++index) {
+        const DescriptorPtr& dsc(descs[index]);
+        if (!dsc.isNull() && dsc->isValid()) {
+            const DID did = dsc->tag();
+            const EDID edid(descs.edid(index));
+            if (did == DID_DTS ||
+                did == DID_AC3 ||
+                did == DID_ENHANCED_AC3 ||
+                did == DID_AAC ||
+                did == DID_MPEG2_AAC_AUDIO ||
+                did == DID_MPEG4_AUDIO ||
+                did == DID_MPEG4_AUDIO_EXT ||
+                edid == EDID::ExtensionDVB(EDID_AC4) ||
+                edid == EDID::ExtensionDVB(EDID_DTS_NEURAL) ||
+                edid == EDID::ExtensionDVB(EDID_DTS_HD_AUDIO) ||
+                (isdb && did == DID_ISDB_AUDIO_COMP))
+            {
+                return true;
             }
-            data += 5;
-            size -= 5;
         }
     }
-    // After all, no subtitle here...
+
+    return false;
+}
+
+
+//----------------------------------------------------------------------------
+// Check if an elementary stream carries subtitles.
+//----------------------------------------------------------------------------
+
+bool ts::PMT::Stream::isSubtitles(const DuckContext& duck) const
+{
+    const bool atsc = (duck.standards() & Standards::ATSC) != Standards::NONE;
+
+    for (size_t index = 0; index < descs.count(); ++index) {
+        const DescriptorPtr& dsc(descs[index]);
+        if (!dsc.isNull() && dsc->isValid()) {
+            const DID did = dsc->tag();
+            if (did == DID_SUBTITLING || (atsc && did == DID_ATSC_CAPTION)) {
+                // Always indicate a subtitle stream.
+                return true;
+            }
+            if (did == DID_TELETEXT || did == DID_VBI_TELETEXT) {
+                // A teletext descriptor may indicate subtitles, need to check the teletext type.
+                const uint8_t* data = dsc->payload();
+                size_t size = dsc->payloadSize();
+                // Loop on all language entries, check if teletext type is a subtitle
+                while (size >= 5) {
+                    const uint8_t ttype = data[3] >> 3;
+                    if (ttype == 0x02 || ttype == 0x05) {
+                        return true; // teletext subtitles types
+                    }
+                    data += 5;
+                    size -= 5;
+                }
+            }
+        }
+    }
+
     return false;
 }
 
@@ -273,10 +311,10 @@ ts::PID ts::PMT::componentTagToPID(uint8_t tag) const
 // Search the first video PID in the service.
 //----------------------------------------------------------------------------
 
-ts::PID ts::PMT::firstVideoPID() const
+ts::PID ts::PMT::firstVideoPID(const DuckContext& duck) const
 {
     for (auto it = streams.begin(); it != streams.end(); ++it) {
-        if (it->second.isVideo()) {
+        if (it->second.isVideo(duck)) {
             return it->first;
         }
     }
@@ -288,32 +326,24 @@ ts::PID ts::PMT::firstVideoPID() const
 // A static method to display a PMT section.
 //----------------------------------------------------------------------------
 
-void ts::PMT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::PMT::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    PSIBuffer buf(duck, section.payload(), section.payloadSize());
-
-    // Fixed part.
     const PID pcr_pid = buf.getPID();
-    strm << margin << UString::Format(u"Program: %d (0x%<X), PCR PID: ", {section.tableIdExtension()})
+    disp << margin << UString::Format(u"Program: %d (0x%<X), PCR PID: ", {section.tableIdExtension()})
          << (pcr_pid == PID_NULL ? u"none" : UString::Format(u"%d (0x%<X)", {pcr_pid}))
          << std::endl;
 
     // Process and display "program info" descriptors.
-    display.displayDescriptorListWithLength(section, buf, indent, u"Program information:");
+    disp.displayDescriptorListWithLength(section, buf, margin, u"Program information:");
 
     // Get elementary streams description
-    while (!buf.error() && !buf.endOfRead()) {
+    while (buf.canRead()) {
         const uint8_t type = buf.getUInt8();
         const PID pid = buf.getPID();
-        strm << margin << "Elementary stream: type " << names::StreamType(type, names::FIRST)
+        disp << margin << "Elementary stream: type " << names::StreamType(type, names::FIRST)
              << UString::Format(u", PID: %d (0x%<X)", {pid}) << std::endl;
-        display.displayDescriptorListWithLength(section, buf, indent);
+        disp.displayDescriptorListWithLength(section, buf, margin);
     }
-
-    display.displayExtraData(buf, indent);
 }
 
 
@@ -348,16 +378,16 @@ bool ts::PMT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     xml::ElementVector children;
     bool ok =
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+        element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
-        element->getIntAttribute<uint16_t>(service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
+        element->getIntAttribute(service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
         element->getIntAttribute<PID>(pcr_pid, u"PCR_PID", false, PID_NULL, 0x0000, 0x1FFF) &&
         descs.fromXML(duck, children, element, u"component");
 
     for (size_t index = 0; ok && index < children.size(); ++index) {
         PID pid = PID_NULL;
         ok = children[index]->getIntAttribute<PID>(pid, u"elementary_PID", true, 0, 0x0000, 0x1FFF) &&
-             children[index]->getIntAttribute<uint8_t>(streams[pid].stream_type, u"stream_type", true, 0, 0x00, 0xFF) &&
+             children[index]->getIntAttribute(streams[pid].stream_type, u"stream_type", true, 0, 0x00, 0xFF) &&
              streams[pid].descs.fromXML(duck, children[index]);
     }
     return ok;

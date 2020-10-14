@@ -44,11 +44,21 @@ namespace ts {
     //! @ingroup descriptor
     //!
     //! A descriptor subclass shall override the following methods:
+    //! - extendedTag() (for MPEG-defined and DVB-defined extension descriptors)
     //! - clearContent()
     //! - serializePayload()
     //! - deserializePayload()
     //! - buildXML()
     //! - analyzeXML()
+    //!
+    //! Important: With extension descriptors (MPEG or DVB), note the following:
+    //! - extendedTag() must be overriden and must return the expected extended descriptor tag.
+    //! - serializePayload() does not need to add the extended descriptor tag, it has
+    //!   already been added in the buffer by the AbstractDescriptor.
+    //! - deserializePayload() must not read the extended descriptor tag, it has already
+    //!   been extracted from the buffer and verified by AbstractDescriptor.
+    //! - The DisplayDescriptor() function is called without extended descriptor tag.
+    //!   See ts::TablesDisplay::displayDescriptorData()
     //!
     class TSDUCKDLL AbstractDescriptor: public AbstractSignalization
     {
@@ -58,6 +68,12 @@ namespace ts {
         //! @return The descriptor tag.
         //!
         DID tag() const { return _tag; }
+
+        //!
+        //! For MPEG-defined and DVB-defined extension descriptors, get the extended descriptor tag (first byte in payload).
+        //! @return The extended descriptor tag or EDID_NULL if this is not an extended descriptor.
+        //!
+        virtual DID extendedTag() const;
 
         //!
         //! Get the required private data specifier.
@@ -76,31 +92,19 @@ namespace ts {
 
         //!
         //! This method serializes a descriptor.
-        //!
-        //! The subclass shall preferably override serializePayload(). As legacy, the subclass may directly override
-        //! serialize() but this is not recommended for new descriptors. At some point, if we can refactor all
-        //! descriptors to the new scheme using serializePayload() (which seems unlikely), serialize() will
-        //! become "final" and will no longer allow override.
-        //!
         //! @param [in,out] duck TSDuck execution context.
         //! @param [out] bin A binary descriptor object. Its content is replaced with a binary representation of this descriptor.
         //!
-        virtual void serialize(DuckContext& duck, Descriptor& bin) const;
+        void serialize(DuckContext& duck, Descriptor& bin) const;
 
         //!
         //! This method deserializes a binary descriptor.
-        //!
-        //! The subclass shall preferably override deserializePayload(). As legacy, the subclass may directly override
-        //! deserialize() but this is not recommended for new descriptors. At some point, if we can refactor all
-        //! descriptors to the new scheme using deserializePayload() (which seems unlikely), deserialize() will
-        //! become "final" and will no longer allow override.
-        //!
         //! @param [in,out] duck TSDuck execution context.
         //! @param [in] bin A binary descriptor to interpret according to the descriptor subclass.
         //! In case of success, this object is replaced with the interpreted content of @a bin.
         //! In case of error, this object is invalidated.
         //!
-        virtual void deserialize(DuckContext& duck, const Descriptor& bin);
+        void deserialize(DuckContext& duck, const Descriptor& bin);
 
         //!
         //! Deserialize a descriptor from a descriptor list.
@@ -131,55 +135,37 @@ namespace ts {
         //!
         //! Serialize the payload of the descriptor.
         //!
-        //! This is now the preferred method for descriptor serialization: use the default implementation
-        //! of serialize() and let it call the overridden serializePayload().
+        //! When serialize() is called, the output binary descriptor is cleared and serializePayload()
+        //! is called. A subclass shall implement serializePayload().
         //!
-        //! The default implementation generates an error. So, if a subclass overrides neither serialize()
-        //! not serializePayload(), all serialization will fail.
+        //! Important: With extension descriptors (MPEG or DVB), serializePayload() does not need to add
+        //! the extended descriptor tag, it has already been added in the buffer by AbstractDescriptor::serialize().
         //!
         //! @param [in,out] buf Serialization buffer. The subclass shall write the descriptor payload into
         //! @a buf. If any kind of error is reported in the buffer, the serialization is considered as
         //! invalid and the binary descriptor is invalid. Such errors include write error, such as attempting
         //! to write more data than allowed in a binary descriptor or any user-generated error using
-        //! ts::Buffer::setUserError().
+        //! ts::Buffer::setUserError(). For "extended descriptors", the buffer starts after the "extension tag"
+        //! which was already written by the caller.
         //!
-        virtual void serializePayload(PSIBuffer& buf) const;
+        virtual void serializePayload(PSIBuffer& buf) const = 0;
 
         //!
         //! Deserialize the payload of the descriptor.
         //!
-        //! This is now the preferred method for descriptor deserialization: use the default implementation
-        //! of deserialize() and let it call the overridden deserializePayload().
+        //! When deserialize() is called, this object is cleared and validated. Then, deserializePayload()
+        //! is invoked. A subclass shall implement deserializePayload().
         //!
-        //! The default implementation generates an error. So, if a subclass overrides neither deserialize()
-        //! nor deserializePayload(), all deserialization will fail.
+        //! Important: With extension descriptors (MPEG or DVB), deserializePayload() must not read the
+        //! extended descriptor tag, it has already been extracted from the buffer and verified by
+        //! AbstractDescriptor::deserialize().
         //!
         //! @param [in,out] buf Deserialization buffer. The subclass shall read the descriptor payload from
         //! @a buf. The end of read is the end of the binary payload. If any kind of error is reported in
         //! the buffer or if the payload is not completely read, the deserialization is considered as invalid.
+        //! For "extended descriptors", the buffer starts after the "extension tag".
         //!
-        virtual void deserializePayload(PSIBuffer& buf);
-
-        //!
-        //! Tool for serialization: get a byte buffer for serialization.
-        //! Legacy warning: This method is useful only when serialize() is directly overridden instead
-        //! of serializePayload(). This is consquently considered as a legacy feature.
-        //! @return A safe pointer to a two-byte byffer containing the descriptor tag and zero as length.
-        //! @see serializeEnd()
-        //!
-        ByteBlockPtr serializeStart() const;
-
-        //!
-        //! Tool for serialization: complete a serialization.
-        //! Legacy warning: This method is useful only when serialize() is directly overridden instead
-        //! of serializeContent(). This is consquently considered as a legacy feature.
-        //! @param [out] bin A binary descriptor object which receives the serialized object.
-        //! @param [in] bbp Safe pointer containing the serialized data, typically returned by serializeStart().
-        //! The tag and length will be updated.
-        //! @return True if the serialized descriptor is valid.
-        //! @see serializeStart()
-        //!
-        bool serializeEnd(Descriptor& bin, const ByteBlockPtr& bbp) const;
+        virtual void deserializePayload(PSIBuffer& buf) = 0;
 
     private:
         DID _tag;           // Descriptor tag.

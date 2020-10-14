@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -84,18 +85,16 @@ ts::DTSDescriptor::DTSDescriptor(DuckContext& duck, const Descriptor& desc) :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DTSDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DTSDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    bbp->appendUInt8(uint8_t(sample_rate_code << 4) | ((bit_rate_code >> 2) & 0x0F));
-    bbp->appendUInt8(uint8_t(bit_rate_code << 6) | ((nblks >> 1) & 0x3F));
-    bbp->appendUInt8(uint8_t(nblks << 7) | (uint8_t(fsize >> 7) & 0x7F));
-    bbp->appendUInt8(uint8_t(fsize << 1) | ((surround_mode >> 5) & 0x01));
-    bbp->appendUInt8(uint8_t(surround_mode << 3) | (lfe ? 0x04 : 0x00) | (extended_surround & 0x03));
-    bbp->append(additional_info);
-
-    serializeEnd(desc, bbp);
+    buf.putBits(sample_rate_code, 4);
+    buf.putBits(bit_rate_code, 6);
+    buf.putBits(nblks, 7);
+    buf.putBits(fsize, 14);
+    buf.putBits(surround_mode, 6);
+    buf.putBit(lfe);
+    buf.putBits(extended_surround, 2);
+    buf.putBytes(additional_info);
 }
 
 
@@ -103,23 +102,16 @@ void ts::DTSDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DTSDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DTSDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 5;
-
-    if (_is_valid) {
-        sample_rate_code = (data[0] >> 4) & 0x0F;
-        bit_rate_code = (GetUInt16(data) >> 6) & 0x3F;
-        nblks = uint8_t(GetUInt16(data + 1) >> 7) & 0x7F;
-        fsize = (GetUInt16(data + 2) >> 1) & 0x3FFF;
-        surround_mode = (GetUInt16(data + 3) >> 3) & 0x3F;
-        lfe = (data[4] & 0x04) != 0;
-        extended_surround = data[4] & 0x03;
-        additional_info.copy(data + 5, size - 5);
-    }
+    buf.getBits(sample_rate_code, 4);
+    buf.getBits(bit_rate_code, 6);
+    buf.getBits(nblks, 7);
+    buf.getBits(fsize, 14);
+    buf.getBits(surround_mode, 6);
+    lfe = buf.getBool();
+    buf.getBits(extended_surround, 2);
+    buf.getBytes(additional_info);
 }
 
 
@@ -127,34 +119,17 @@ void ts::DTSDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DTSDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DTSDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 5) {
-        uint8_t sample_rate_code = (data[0] >> 4) & 0x0F;
-        uint8_t bit_rate_code = (GetUInt16(data) >> 6) & 0x3F;
-        uint8_t nblks = (GetUInt16(data + 1) >> 7) & 0x7F;
-        uint16_t fsize = (GetUInt16(data + 2) >> 1) & 0x3FFF;
-        uint8_t surround_mode = (GetUInt16(data + 3) >> 3) & 0x3F;
-        bool lfe_flag = ((data[4] >> 2) & 0x01) != 0;
-        uint8_t extended_surround_flag = data[4] & 0x03;
-        data += 5; size -= 5;
-
-        strm << margin << "Sample rate code: " << names::DTSSampleRateCode(sample_rate_code) << std::endl
-             << margin << "Bit rate code: " << names::DTSBitRateCode(bit_rate_code) << std::endl
-             << margin << "NBLKS: " << int(nblks) << std::endl
-             << margin << "FSIZE: " << int(fsize) << std::endl
-             << margin << "Surround mode: " << names::DTSSurroundMode(surround_mode) << std::endl
-             << margin << "LFE (Low Frequency Effect) audio channel: " << UString::OnOff(lfe_flag) << std::endl
-             << margin << "Extended surround flag: " << names::DTSExtendedSurroundMode(extended_surround_flag) << std::endl;
-
-        display.displayPrivateData(u"Additional information", data, size, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+    if (buf.canReadBytes(5)) {
+        disp << margin << "Sample rate code: " << names::DTSSampleRateCode(buf.getBits<uint8_t>(4)) << std::endl;
+        disp << margin << "Bit rate code: " << names::DTSBitRateCode(buf.getBits<uint8_t>(6)) << std::endl;
+        disp << margin << "NBLKS: " << buf.getBits<uint16_t>(7) << std::endl;
+        disp << margin << "FSIZE: " << buf.getBits<uint16_t>(14) << std::endl;
+        disp << margin << "Surround mode: " << names::DTSSurroundMode(buf.getBits<uint8_t>(6)) << std::endl;
+        disp << margin << "LFE (Low Frequency Effect) audio channel: " << UString::OnOff(buf.getBool()) << std::endl;
+        disp << margin << "Extended surround flag: " << names::DTSExtendedSurroundMode(buf.getBits<uint8_t>(2)) << std::endl;
+        disp.displayPrivateData(u"Additional information", buf, NPOS, margin);
     }
 }
 
@@ -182,12 +157,12 @@ void ts::DTSDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 
 bool ts::DTSDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return  element->getIntAttribute<uint8_t>(sample_rate_code, u"sample_rate_code", true, 0x00, 0x00, 0x0F) &&
-            element->getIntAttribute<uint8_t>(bit_rate_code, u"bit_rate_code", true, 0x00, 0x00, 0x3F) &&
-            element->getIntAttribute<uint8_t>(nblks, u"nblks", true, 0x00, 0x05, 0x7F) &&
-            element->getIntAttribute<uint16_t>(fsize, u"fsize", true, 0x0000, 0x005F, 0x2000) &&
-            element->getIntAttribute<uint8_t>(surround_mode, u"surround_mode", true, 0x00, 0x00, 0x3F) &&
+    return  element->getIntAttribute(sample_rate_code, u"sample_rate_code", true, 0x00, 0x00, 0x0F) &&
+            element->getIntAttribute(bit_rate_code, u"bit_rate_code", true, 0x00, 0x00, 0x3F) &&
+            element->getIntAttribute(nblks, u"nblks", true, 0x00, 0x05, 0x7F) &&
+            element->getIntAttribute(fsize, u"fsize", true, 0x0000, 0x005F, 0x2000) &&
+            element->getIntAttribute(surround_mode, u"surround_mode", true, 0x00, 0x00, 0x3F) &&
             element->getBoolAttribute(lfe, u"lfe", false, false) &&
-            element->getIntAttribute<uint8_t>(extended_surround, u"extended_surround", false, 0x00, 0x00, 0x03) &&
+            element->getIntAttribute(extended_surround, u"extended_surround", false, 0x00, 0x00, 0x03) &&
             element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 7);
 }

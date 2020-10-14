@@ -106,7 +106,7 @@ void ts::ISO639LanguageDescriptor::serializePayload(PSIBuffer& buf) const
 
 void ts::ISO639LanguageDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    while (!buf.endOfRead()) {
+    while (buf.canRead()) {
         const UString lang(buf.getLanguageCode());
         entries.push_back(Entry(lang, buf.getUInt8()));
     }
@@ -117,18 +117,12 @@ void ts::ISO639LanguageDescriptor::deserializePayload(PSIBuffer& buf)
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ISO639LanguageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ISO639LanguageDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    PSIBuffer buf(duck, data, size);
-
-    while (buf.remainingReadBytes() >= 4) {
-        strm << margin << "Language: " << buf.getLanguageCode();
-        strm << ", Type: " << names::AudioType(buf.getUInt8(), names::FIRST) << std::endl;
+    while (buf.canReadBytes(4)) {
+        disp << margin << "Language: " << buf.getLanguageCode();
+        disp << ", Type: " << names::AudioType(buf.getUInt8(), names::FIRST) << std::endl;
     }
-    display.displayExtraData(buf, indent);
 }
 
 
@@ -138,7 +132,7 @@ void ts::ISO639LanguageDescriptor::DisplayDescriptor(TablesDisplay& display, DID
 
 void ts::ISO639LanguageDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    for (EntryList::const_iterator it = entries.begin(); it != entries.end(); ++it) {
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
         xml::Element* e = root->addElement(u"language");
         e->setAttribute(u"code", it->language_code);
         e->setIntAttribute(u"audio_type", it->audio_type, true);
@@ -158,7 +152,7 @@ bool ts::ISO639LanguageDescriptor::analyzeXML(DuckContext& duck, const xml::Elem
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
         ok = children[i]->getAttribute(entry.language_code, u"code", true, u"", 3, 3) &&
-             children[i]->getIntAttribute<uint8_t>(entry.audio_type, u"audio_type", true, 0, 0x00, 0xFF);
+             children[i]->getIntAttribute(entry.audio_type, u"audio_type", true, 0, 0x00, 0xFF);
         entries.push_back(entry);
     }
     return ok;

@@ -54,6 +54,7 @@ public:
     void testUTF();
     void testDiacritical();
     void testSurrogate();
+    void testFromWChar();
     void testWidth();
     void testDisplayPosition();
     void testTrim();
@@ -108,6 +109,7 @@ public:
     TSUNIT_TEST(testUTF);
     TSUNIT_TEST(testDiacritical);
     TSUNIT_TEST(testSurrogate);
+    TSUNIT_TEST(testFromWChar);
     TSUNIT_TEST(testWidth);
     TSUNIT_TEST(testDisplayPosition);
     TSUNIT_TEST(testTrim);
@@ -344,6 +346,13 @@ void UStringTest::testSurrogate()
     TSUNIT_ASSERT(!ts::IsTrailingSurrogate(MATH_B1));
     TSUNIT_ASSERT(!ts::IsLeadingSurrogate(MATH_B2));
     TSUNIT_ASSERT(ts::IsTrailingSurrogate(MATH_B2));
+}
+
+void UStringTest::testFromWChar()
+{
+    TSUNIT_EQUAL(u"", ts::UString::FromWChar(nullptr));
+    TSUNIT_EQUAL(u"", ts::UString::FromWChar(L""));
+    TSUNIT_EQUAL(u"abcdef", ts::UString::FromWChar(L"abcdef"));
 }
 
 void UStringTest::testWidth()
@@ -674,6 +683,19 @@ void UStringTest::testSplit()
     TSUNIT_EQUAL(u"a", v4[0]);
     TSUNIT_EQUAL(u", ,  fr,  ", v4[1]);
     TSUNIT_EQUAL(u"e ,t", v4[2]);
+
+    // Make sure that the null character is a valid separator.
+    ts::UStringVector v5;
+    ts::UString s5(u"abcd");
+    s5.append(ts::CHAR_NULL);
+    s5.append(u"ef");
+    s5.append(ts::CHAR_NULL);
+    s5.append(u"ghi");
+    s5.split(v5, ts::CHAR_NULL);
+    TSUNIT_EQUAL(3, v5.size());
+    TSUNIT_EQUAL(u"abcd", v5[0]);
+    TSUNIT_EQUAL(u"ef", v5[1]);
+    TSUNIT_EQUAL(u"ghi", v5[2]);
 }
 
 void UStringTest::testSplitShellStyle()

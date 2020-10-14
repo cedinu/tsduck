@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -78,33 +79,40 @@ ts::TargetRegionDescriptor::Region::Region() :
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::TargetRegionDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::TargetRegionDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::TargetRegionDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
-    if (!SerializeLanguageCode(*bbp, country_code)) {
-        return;
-    }
+    buf.putLanguageCode(country_code);
     for (auto it = regions.begin(); it != regions.end(); ++it) {
         const bool has_cc = it->country_code.size() == 3;
-        bbp->appendUInt8((has_cc ? 0xFC : 0xF8) | (it->region_depth & 0x03));
+        buf.putBits(0xFF, 5);
+        buf.putBit(has_cc);
+        buf.putBits(it->region_depth, 2);
         if (has_cc) {
-            SerializeLanguageCode(*bbp, it->country_code);
+            buf.putLanguageCode(it->country_code);
         }
         if (it->region_depth >= 1) {
-            bbp->appendUInt8(it->primary_region_code);
+            buf.putUInt8(it->primary_region_code);
             if (it->region_depth >= 2) {
-                bbp->appendUInt8(it->secondary_region_code);
+                buf.putUInt8(it->secondary_region_code);
                 if (it->region_depth >= 3) {
-                    bbp->appendUInt16(it->tertiary_region_code);
+                    buf.putUInt16(it->tertiary_region_code);
                 }
             }
         }
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -112,50 +120,27 @@ void ts::TargetRegionDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::TargetRegionDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::TargetRegionDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4 && data[0] == MY_EDID;
-    regions.clear();
-
-    if (_is_valid) {
-        data++; size--;
-        _is_valid = deserializeLanguageCode(country_code, data, size);
-    }
-    while (_is_valid && size >= 1) {
+    buf.getLanguageCode(country_code);
+    while (buf.canRead()) {
         Region region;
-        region.region_depth = data[0] & 0x03;
-        const bool has_cc = (data[0] & 0x04) != 0;
-        data++; size--;
-
+        buf.skipBits(5);
+        const bool has_cc = buf.getBool();
+        buf.getBits(region.region_depth, 2);
         if (has_cc) {
-            _is_valid = deserializeLanguageCode(region.country_code, data, size);
+            buf.getLanguageCode(region.country_code);
         }
-        if (_is_valid && region.region_depth >= 1) {
-            _is_valid = size >= 1;
-            if (_is_valid) {
-                region.primary_region_code = data[0];
-                data++; size--;
+        if (region.region_depth >= 1) {
+            region.primary_region_code = buf.getUInt8();
+            if (region.region_depth >= 2) {
+                region.secondary_region_code = buf.getUInt8();
+                if (region.region_depth >= 3) {
+                    region.tertiary_region_code = buf.getUInt16();
+                }
             }
         }
-        if (_is_valid && region.region_depth >= 2) {
-            _is_valid = size >= 1;
-            if (_is_valid) {
-                region.secondary_region_code = data[0];
-                data++; size--;
-            }
-        }
-        if (_is_valid && region.region_depth >= 3) {
-            _is_valid = size >= 2;
-            if (_is_valid) {
-                region.tertiary_region_code = GetUInt16(data);
-                data += 2; size -= 2;
-            }
-        }
-        if (_is_valid) {
-            regions.push_back(region);
-        }
+        regions.push_back(region);
     }
 }
 
@@ -164,60 +149,29 @@ void ts::TargetRegionDescriptor::deserialize(DuckContext& duck, const Descriptor
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::TargetRegionDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::TargetRegionDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    bool ok = size >= 3;
-    int index = 0;
-
-    if (ok) {
-        strm << margin << "Country code: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-        data += 3; size -= 3;
-    }
-    while (ok && size >= 1) {
-        strm << margin << "- Region #" << index++ << std::endl;
-
-        const int depth = data[0] & 0x03;
-        const bool has_cc = (data[0] & 0x04) != 0;
-        data++; size--;
-
-        if (has_cc) {
-            ok = size >= 3;
-            if (ok) {
-                strm << margin << "  Country code: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-                data += 3; size -= 3;
+    if (buf.canReadBytes(3)) {
+        disp << margin << "Country code: \"" << buf.getLanguageCode() << "\"" << std::endl;
+        for (size_t index = 0; buf.canReadBytes(1); ++index) {
+            disp << margin << "- Region #" << index << std::endl;
+            buf.skipBits(5);
+            const bool has_cc = buf.getBool();
+            const uint8_t depth = buf.getBits<uint8_t>(2);
+            if (has_cc) {
+                disp << margin << "  Country code: \"" << buf.getLanguageCode() << "\"" << std::endl;
             }
-        }
-        if (ok && depth >= 1) {
-            ok = size >= 1;
-            if (ok) {
-                strm << margin << UString::Format(u"  Primary region code: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-                data++; size--;
-            }
-        }
-        if (ok && depth >= 2) {
-            ok = size >= 1;
-            if (ok) {
-                strm << margin << UString::Format(u"  Secondary region code: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-                data++; size--;
-            }
-        }
-        if (ok && depth >= 3) {
-            ok = size >= 2;
-            if (ok) {
-                strm << margin << UString::Format(u"  Tertiary region code: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl;
-                data += 2; size -= 2;
+            if (depth >= 1) {
+                disp << margin << UString::Format(u"  Primary region code: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+                if (depth >= 2) {
+                    disp << margin << UString::Format(u"  Secondary region code: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+                    if (depth >= 3) {
+                        disp << margin << UString::Format(u"  Tertiary region code: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+                    }
+                }
             }
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -258,9 +212,9 @@ bool ts::TargetRegionDescriptor::analyzeXML(DuckContext& duck, const xml::Elemen
     for (size_t i = 0; ok && i < xregions.size(); ++i) {
         Region region;
         ok = xregions[i]->getAttribute(region.country_code, u"country_code", false, u"", 3, 3) &&
-             xregions[i]->getIntAttribute<uint8_t>(region.primary_region_code, u"primary_region_code", false) &&
-             xregions[i]->getIntAttribute<uint8_t>(region.secondary_region_code, u"secondary_region_code", false) &&
-             xregions[i]->getIntAttribute<uint16_t>(region.tertiary_region_code, u"tertiary_region_code", false);
+             xregions[i]->getIntAttribute(region.primary_region_code, u"primary_region_code", false) &&
+             xregions[i]->getIntAttribute(region.secondary_region_code, u"secondary_region_code", false) &&
+             xregions[i]->getIntAttribute(region.tertiary_region_code, u"tertiary_region_code", false);
         if (xregions[i]->hasAttribute(u"tertiary_region_code")) {
             region.region_depth = 3;
         }

@@ -39,18 +39,18 @@
 namespace ts {
     //!
     //! Representation of a DVB AC-3_descriptor.
-    //! @see ETSI 300 468, D.3.
+    //! @see ETSI EN 300 468, D.3.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL DVBAC3Descriptor : public AbstractDescriptor
     {
     public:
         // Public members:
-        Variable<uint8_t> component_type;   //!< See ETSI 300 468, D.3.
-        Variable<uint8_t> bsid;             //!< See ETSI 300 468, D.3.
-        Variable<uint8_t> mainid;           //!< See ETSI 300 468, D.3.
-        Variable<uint8_t> asvc;             //!< See ETSI 300 468, D.3.
-        ByteBlock         additional_info;  //!< See ETSI 300 468, D.3.
+        Variable<uint8_t> component_type;   //!< See ETSI EN 300 468, D.3.
+        Variable<uint8_t> bsid;             //!< See ETSI EN 300 468, D.3.
+        Variable<uint8_t> mainid;           //!< See ETSI EN 300 468, D.3.
+        Variable<uint8_t> asvc;             //!< See ETSI EN 300 468, D.3.
+        ByteBlock         additional_info;  //!< See ETSI EN 300 468, D.3.
 
         //!
         //! Default constructor.
@@ -71,15 +71,15 @@ namespace ts {
         void merge(const DVBAC3Descriptor& other);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 
     //!

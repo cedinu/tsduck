@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -80,7 +81,7 @@ ts::AnnouncementSupportDescriptor::Announcement::Announcement(uint8_t type) :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AnnouncementSupportDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::AnnouncementSupportDescriptor::serializePayload(PSIBuffer& buf) const
 {
     // Rebuild announcement_support_indicator
     uint16_t indicator = 0;
@@ -88,18 +89,18 @@ void ts::AnnouncementSupportDescriptor::serialize(DuckContext& duck, Descriptor&
         indicator |= uint16_t(1 << it->announcement_type);
     }
 
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(indicator);
+    buf.putUInt16(indicator);
     for (auto it = announcements.begin(); it != announcements.end(); ++it) {
-        bbp->appendUInt8(uint8_t(it->announcement_type << 4) | 0x08 | (it->reference_type & 0x07));
+        buf.putBits(it->announcement_type, 4);
+        buf.putBit(1);
+        buf.putBits(it->reference_type, 3);
         if (it->reference_type >= 1 && it->reference_type <= 3) {
-            bbp->appendUInt16(it->original_network_id);
-            bbp->appendUInt16(it->transport_stream_id);
-            bbp->appendUInt16(it->service_id);
-            bbp->appendUInt8(it->component_tag);
+            buf.putUInt16(it->original_network_id);
+            buf.putUInt16(it->transport_stream_id);
+            buf.putUInt16(it->service_id);
+            buf.putUInt8(it->component_tag);
         }
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -107,52 +108,32 @@ void ts::AnnouncementSupportDescriptor::serialize(DuckContext& duck, Descriptor&
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::AnnouncementSupportDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::AnnouncementSupportDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2;
-    announcements.clear();
-
-    if (!_is_valid) {
-        return;
-    }
-
     // Get announcement_support_indicator.
     // We will check later that all annoucement types are present.
-    uint16_t indicator = GetUInt16(data);
-    data += 2; size -= 2;
+    uint16_t indicator = buf.getUInt16();
 
-    while (_is_valid && size >= 1) {
+    while (buf.canRead()) {
         Announcement ann;
-        ann.announcement_type = (data[0] >> 4) & 0x0F;
-        ann.reference_type = data[0] & 0x07;
-        data++; size--;
+        buf.getBits(ann.announcement_type, 4);
+        buf.skipBits(1);
+        buf.getBits(ann.reference_type, 3);
 
         // Clear types one by one in announcement_support_indicator.
         indicator &= ~uint16_t(1 << ann.announcement_type);
 
         if (ann.reference_type >= 1 && ann.reference_type <= 3) {
-            _is_valid = size >= 7;
-            if (_is_valid) {
-                ann.original_network_id = GetUInt16(data);
-                ann.transport_stream_id = GetUInt16(data + 2);
-                ann.service_id = GetUInt16(data + 4);
-                ann.component_tag = data[6];
-                data += 7; size -= 7;
-            }
+            ann.original_network_id = buf.getUInt16();
+            ann.transport_stream_id = buf.getUInt16();
+            ann.service_id = buf.getUInt16();
+            ann.component_tag = buf.getUInt8();
         }
-
-        if (_is_valid) {
-            announcements.push_back(ann);
-        }
+        announcements.push_back(ann);
     }
 
-    // Make sure there is no truncated trailing data.
-    _is_valid = _is_valid && size == 0;
-
     // Create additional entries for missing types.
-    for (uint8_t type = 0; _is_valid && indicator != 0 && type < 16; ++type) {
+    for (uint8_t type = 0; indicator != 0 && type < 16; ++type) {
         const uint16_t mask = uint16_t(1 << type);
         if ((indicator & mask) != 0) {
             indicator &= ~mask;
@@ -166,39 +147,30 @@ void ts::AnnouncementSupportDescriptor::deserialize(DuckContext& duck, const Des
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::AnnouncementSupportDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::AnnouncementSupportDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 2) {
+    if (buf.canReadBytes(2)) {
         // Get announcement_support_indicator.
         // We will check later that all annoucement types are present.
-        uint16_t indicator = GetUInt16(data);
-        data += 2; size -= 2;
-        strm << margin << UString::Format(u"Annoucement support indicator: 0x%X", {indicator}) << std::endl;
+        uint16_t indicator = buf.getUInt16();
+        disp << margin << UString::Format(u"Annoucement support indicator: 0x%X", {indicator}) << std::endl;
 
         // List all entries.
-        while (size >= 1) {
-            const uint8_t type = (data[0] >> 4) & 0x0F;
-            const uint8_t ref = data[0] & 0x07;
-            data++; size--;
+        while (buf.canReadBytes(1)) {
+            const uint8_t type = buf.getBits<uint8_t>(4);
+            buf.skipBits(1);
+            const uint8_t ref = buf.getBits<uint8_t>(3);
 
             // Clear types one by one in announcement_support_indicator.
             indicator &= ~uint16_t(1 << type);
 
-            strm << margin << "- Announcement type: " << NameFromSection(u"AnnouncementType", type, names::DECIMAL_FIRST) << std::endl
-                 << margin << "  Reference type: " << NameFromSection(u"AnnouncementReferenceType", ref, names::DECIMAL_FIRST) << std::endl;
-            if (ref >= 1 && ref <= 3) {
-                if (size < 7) {
-                    break;
-                }
-                strm << margin << UString::Format(u"  Original network id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                     << margin << UString::Format(u"  Transport stream id: 0x%X (%d)", {GetUInt16(data + 2), GetUInt16(data + 2)}) << std::endl
-                     << margin << UString::Format(u"  Service id: 0x%X (%d)", {GetUInt16(data + 4), GetUInt16(data + 4)}) << std::endl
-                     << margin << UString::Format(u"  Component tag: 0x%X (%d)", {data[6], data[6]}) << std::endl;
-                data += 7; size -= 7;
+            disp << margin << "- Announcement type: " << NameFromSection(u"AnnouncementType", type, names::DECIMAL_FIRST) << std::endl;
+            disp << margin << "  Reference type: " << NameFromSection(u"AnnouncementReferenceType", ref, names::DECIMAL_FIRST) << std::endl;
+            if (ref >= 1 && ref <= 3 && buf.canReadBytes(7)) {
+                disp << margin << UString::Format(u"  Original network id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+                disp << margin << UString::Format(u"  Transport stream id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+                disp << margin << UString::Format(u"  Service id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+                disp << margin << UString::Format(u"  Component tag: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
             }
         }
 
@@ -207,12 +179,10 @@ void ts::AnnouncementSupportDescriptor::DisplayDescriptor(TablesDisplay& display
             const uint16_t mask = uint16_t(1 << type);
             if ((indicator & mask) != 0) {
                 indicator &= ~mask;
-                strm << margin << "- Missing announcement type: " << NameFromSection(u"AnnouncementType", type, names::DECIMAL_FIRST) << std::endl;
+                disp << margin << "- Missing announcement type: " << NameFromSection(u"AnnouncementType", type, names::DECIMAL_FIRST) << std::endl;
             }
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -247,12 +217,12 @@ bool ts::AnnouncementSupportDescriptor::analyzeXML(DuckContext& duck, const xml:
 
     for (size_t i = 0; ok && i < xann.size(); ++i) {
         Announcement ann;
-        ok = xann[i]->getIntAttribute<uint8_t>(ann.announcement_type, u"announcement_type", true, 0, 0x00, 0x0F) &&
-             xann[i]->getIntAttribute<uint8_t>(ann.reference_type, u"reference_type", true, 0, 0x00, 0x07) &&
-             xann[i]->getIntAttribute<uint16_t>(ann.original_network_id, u"original_network_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
-             xann[i]->getIntAttribute<uint16_t>(ann.transport_stream_id, u"transport_stream_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
-             xann[i]->getIntAttribute<uint16_t>(ann.service_id, u"service_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
-             xann[i]->getIntAttribute<uint8_t>(ann.component_tag, u"component_tag", ann.reference_type >= 1 && ann.reference_type <= 3);
+        ok = xann[i]->getIntAttribute(ann.announcement_type, u"announcement_type", true, 0, 0x00, 0x0F) &&
+             xann[i]->getIntAttribute(ann.reference_type, u"reference_type", true, 0, 0x00, 0x07) &&
+             xann[i]->getIntAttribute(ann.original_network_id, u"original_network_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
+             xann[i]->getIntAttribute(ann.transport_stream_id, u"transport_stream_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
+             xann[i]->getIntAttribute(ann.service_id, u"service_id", ann.reference_type >= 1 && ann.reference_type <= 3) &&
+             xann[i]->getIntAttribute(ann.component_tag, u"component_tag", ann.reference_type >= 1 && ann.reference_type <= 3);
         if (ok) {
             announcements.push_back(ann);
         }

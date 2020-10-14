@@ -89,14 +89,10 @@ bool ts::DSMCCStreamDescriptorsTable::isPrivate() const
 // A static method to display a section.
 //----------------------------------------------------------------------------
 
-void ts::DSMCCStreamDescriptorsTable::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::DSMCCStreamDescriptorsTable::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    strm << margin << UString::Format(u"Table id extension: 0x%X (%d)", {section.tableIdExtension(), section.tableIdExtension()}) << std::endl;
-    AbstractDescriptorsTable::DisplaySection(display, section, indent);
+    disp << margin << UString::Format(u"Table id extension: 0x%X (%<d)", {section.tableIdExtension()}) << std::endl;
+    AbstractDescriptorsTable::DisplaySection(disp, section, buf, margin);
 }
 
 
@@ -118,5 +114,5 @@ void ts::DSMCCStreamDescriptorsTable::buildXML(DuckContext& duck, xml::Element* 
 bool ts::DSMCCStreamDescriptorsTable::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     return AbstractDescriptorsTable::analyzeXML(duck, element) &&
-           element->getIntAttribute<uint16_t>(_tid_ext, u"table_id_extension", false, 0xFFFF);
+           element->getIntAttribute(_tid_ext, u"table_id_extension", false, 0xFFFF);
 }

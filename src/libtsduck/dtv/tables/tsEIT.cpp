@@ -36,6 +36,7 @@
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -250,69 +251,25 @@ void ts::EIT::setActual(bool is_actual)
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::EIT::deserializeContent(DuckContext& duck, const BinaryTable& table)
+void ts::EIT::deserializePayload(PSIBuffer& buf, const Section& section)
 {
-    // Clear table content
-    service_id = 0;
-    ts_id = 0;
-    onetw_id = 0;
-    last_table_id = _table_id;
-    events.clear();
+    // Get common properties (should be identical in all sections)
+    service_id = section.tableIdExtension();
+    ts_id = buf.getUInt16();
+    onetw_id = buf.getUInt16();
+    buf.skipBytes(1); // segment_last_section_number
+    last_table_id = buf.getUInt8();
 
-    // Loop on all sections
-    for (size_t si = 0; si < table.sectionCount(); ++si) {
-
-        // Reference to current section
-        const Section& sect(*table.sectionAt(si));
-
-        // Abort if not expected table
-        if (sect.tableId() != _table_id) {
-            return;
-        }
-
-        // Get common properties (should be identical in all sections)
-        version = sect.version();
-        is_current = sect.isCurrent();
-        service_id = sect.tableIdExtension();
-
-        // Analyze the section payload:
-        const uint8_t* data = sect.payload();
-        size_t remain = sect.payloadSize();
-
-        if (remain < EIT_PAYLOAD_FIXED_SIZE) {
-            return;
-        }
-
-        ts_id = GetUInt16(data);
-        onetw_id = GetUInt16(data + 2);
-        last_table_id = data[5];
-        data += EIT_PAYLOAD_FIXED_SIZE;
-        remain -= EIT_PAYLOAD_FIXED_SIZE;
-
-        // Get events description
-        while (remain >= EIT_EVENT_FIXED_SIZE) {
-            Event& event(events.newEntry());
-            event.event_id = GetUInt16(data);
-            DecodeMJD(data + 2, 5, event.start_time);
-            const int hour = DecodeBCD(data[7]);
-            const int min = DecodeBCD(data[8]);
-            const int sec = DecodeBCD(data[9]);
-            event.duration = (hour * 3600) + (min * 60) + sec;
-            event.running_status = (data[10] >> 5) & 0x07;
-            event.CA_controlled = (data[10] >> 4) & 0x01;
-
-            size_t info_length = GetUInt16(data + 10) & 0x0FFF;
-            data += EIT_EVENT_FIXED_SIZE;
-            remain -= EIT_EVENT_FIXED_SIZE;
-
-            info_length = std::min(info_length, remain);
-            event.descs.add(data, info_length);
-            data += info_length;
-            remain -= info_length;
-        }
+    // Get events description
+    while (buf.canRead()) {
+        Event& event(events.newEntry());
+        event.event_id = buf.getUInt16();
+        event.start_time = buf.getFullMJD();
+        event.duration = buf.getSecondsBCD();
+        buf.getBits(event.running_status, 3);
+        event.CA_controlled = buf.getBool();
+        buf.getDescriptorListWithLength(event.descs);
     }
-
-    _is_valid = true;
 }
 
 
@@ -320,7 +277,7 @@ void ts::EIT::deserializeContent(DuckContext& duck, const BinaryTable& table)
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::EIT::serializeContent(DuckContext& duck, BinaryTable& table) const
+void ts::EIT::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
     // In the serialize() method, we do not attempt to reorder events and
     // sections according to rules from ETSI TS 101 211. This is impossible in
@@ -329,80 +286,46 @@ void ts::EIT::serializeContent(DuckContext& duck, BinaryTable& table) const
     // Applications wanting to produce a conformant set of EIT sections shall
     // use the static method EIT::ReorganizeSections().
 
-    // Build the sections
-    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
-    int section_number = 0;
-    uint8_t* data = payload;
-    size_t remain = sizeof(payload);
+    // Fixed part, to be repeated on all sections.
+    buf.putUInt16(ts_id);
+    buf.putUInt16(onetw_id);
+    buf.putUInt8(0); // segment_last_section_number, will be fixed later.
+    buf.putUInt8(last_table_id);
+    buf.pushState();
 
-    // The first 6 bytes are identical in all sections. Build them once.
-    PutUInt16(data, ts_id);
-    PutUInt16(data + 2, onetw_id);
-    data[4] = 0; // segment_last_section_number, will be fixed later.
-    data[5] = last_table_id;
-    data += EIT_PAYLOAD_FIXED_SIZE;
-    remain -= EIT_PAYLOAD_FIXED_SIZE;
+    // Minimum size of a section: fixed part.
+    const size_t payload_min_size = buf.currentWriteByteOffset();
 
     // Add all events in time order.
     for (auto evit = events.begin(); evit != events.end(); ++evit) {
         const Event& ev(evit->second);
 
-        // Insert the characteristics of the event. When the rest of the section is not
-        // large enough to hold the entire event description, open a new section. Unless
-        // we are at the beginning of the section, in which case the event will be truncated.
+        // Binary size of the event entry.
+        const size_t entry_size = EIT_EVENT_FIXED_SIZE + ev.descs.binarySize();
 
-        if (data > payload + EIT_PAYLOAD_FIXED_SIZE && EIT_EVENT_FIXED_SIZE + ev.descs.binarySize() > remain) {
-            addSection(table, section_number, payload, data, remain);
+        // If the current entry does not fit into the section, create a new section, unless we are at the beginning of the section.
+        if (entry_size > buf.remainingWriteBytes() && buf.currentWriteByteOffset() > payload_min_size) {
+            addOneSection(table, buf);
         }
 
-        // Insert common characteristics of the service
-        assert(remain >= 12);
-        PutUInt16(data, ev.event_id);
-        EncodeMJD(ev.start_time, data + 2, 5);
-        data[7] = EncodeBCD(int(ev.duration / 3600));
-        data[8] = EncodeBCD(int((ev.duration / 60) % 60));
-        data[9] = EncodeBCD(int(ev.duration % 60));
-        data += 10;
-        remain -= 10;
-
-        // The following fields are inserted in the 4 "reserved" bits of the descriptor_loop_length.
-        const uint16_t reserved_bits = uint8_t(ev.running_status << 1) | (ev.CA_controlled ? 0x01 : 0x00);
-
-        // Insert descriptors (all or some).
-        ev.descs.lengthSerialize(data, remain, 0, reserved_bits);
+        // Insert event entry.
+        buf.putUInt16(ev.event_id);
+        buf.putFullMJD(ev.start_time);
+        buf.putSecondsBCD(ev.duration);
+        buf.putBits(ev.running_status, 3);
+        buf.putBit(ev.CA_controlled);
+        buf.putPartialDescriptorListWithLength(ev.descs);
     }
 
-    // Add partial section (if there is one)
-    if (data > payload + EIT_PAYLOAD_FIXED_SIZE || table.sectionCount() == 0) {
-        addSection(table, section_number, payload, data, remain);
+    // Add partial section (if there is one). Normally, we do not have to do this.
+    // This is done automatically in the caller. However, in the specific case of
+    // an EIT, we must have a complete binary table to call Fix().
+    if (buf.currentWriteByteOffset() > payload_min_size || table.sectionCount() == 0) {
+        addOneSection(table, buf);
     }
 
     // Finally, fix the segmentation values in the serialized binary table.
     Fix(table, FIX_EXISTING);
-}
-
-
-//----------------------------------------------------------------------------
-// Private method: Add a new section to a table being serialized.
-// Session number is incremented. Data and remain are reinitialized.
-//----------------------------------------------------------------------------
-
-void ts::EIT::addSection(BinaryTable& table, int& section_number, uint8_t* payload, uint8_t*& data, size_t& remain) const
-{
-    table.addSection(new Section(_table_id,
-                                 true,         // is_private_section
-                                 service_id,   // tid_ext
-                                 version,
-                                 is_current,
-                                 uint8_t(section_number),
-                                 uint8_t(section_number), //last_section_number
-                                 payload,
-                                 data - payload)); // payload_size,
-
-    // Reinitialize pointers. Restart after constant part of payload (6 bytes).
-    remain += data - payload - EIT_PAYLOAD_FIXED_SIZE;
-    data = payload + EIT_PAYLOAD_FIXED_SIZE;
-    section_number++;
 }
 
 
@@ -519,59 +442,31 @@ void ts::EIT::Fix(BinaryTable& table, FixMode mode)
 // A static method to display an EIT section.
 //----------------------------------------------------------------------------
 
-void ts::EIT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::EIT::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    const uint8_t* data = section.payload();
-    size_t size = section.payloadSize();
-    const uint16_t sid = section.tableIdExtension();
-
-    strm << margin << UString::Format(u"Service Id: %d (0x%X)", {sid, sid}) << std::endl;
-
-    if (size >= 6) {
-        uint16_t tsid = GetUInt16(data);
-        uint16_t onid = GetUInt16(data + 2);
-        uint8_t seg_last = data[4];
-        uint8_t last_tid = data[5];
-        data += 6; size -= 6;
-
-        strm << margin << UString::Format(u"TS Id: %d (0x%X)", {tsid, tsid}) << std::endl
-             << margin << UString::Format(u"Original Network Id: %d (0x%X)", {onid, onid}) << std::endl
-             << margin << UString::Format(u"Segment last section: %d (0x%X)", {seg_last, seg_last}) << std::endl
-             << margin << UString::Format(u"Last Table Id: %d (0x%X), ", {last_tid, last_tid})
-             << names::TID(duck, last_tid) << std::endl;
-    }
-
     // The time reference is UTC as defined by DVB, but JST in Japan.
-    const char* const zone = (duck.standards() & Standards::JAPAN) == Standards::JAPAN ? "JST" : "UTC";
+    const char* const zone = (disp.duck().standards() & Standards::JAPAN) == Standards::JAPAN ? "JST" : "UTC";
 
-    while (size >= 12) {
-        uint16_t evid = GetUInt16(data);
-        Time start;
-        DecodeMJD(data + 2, 5, start);
-        int hour = DecodeBCD(data[7]);
-        int min = DecodeBCD(data[8]);
-        int sec = DecodeBCD(data[9]);
-        uint8_t run = (data[10] >> 5) & 0x07;
-        uint8_t ca_mode = (data[10] >> 4) & 0x01;
-        size_t loop_length = GetUInt16(data + 10) & 0x0FFF;
-        data += 12; size -= 12;
-        if (loop_length > size) {
-            loop_length = size;
+    disp << margin << UString::Format(u"Service Id: %d (0x%<X)", {section.tableIdExtension()}) << std::endl;
+
+    if (buf.canReadBytes(6)) {
+        disp << margin << UString::Format(u"TS Id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Original Network Id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Segment last section: %d (0x%<X)", {buf.getUInt8()}) << std::endl;
+        const uint8_t last_tid = buf.getUInt8();
+        disp << margin << UString::Format(u"Last Table Id: %d (0x%<X), %s", {last_tid, names::TID(disp.duck(), last_tid)}) << std::endl;
+
+        while (buf.canReadBytes(12)) {
+            disp << margin << UString::Format(u"- Event Id: %d (0x%<X)", {buf.getUInt16()}) << std::endl;
+            disp << margin << "  Start " << zone << ": " << buf.getFullMJD().format(Time::DATE | Time::TIME) << std::endl;
+            disp << margin << UString::Format(u"  Duration: %02d", {buf.getBCD<int>(2)});
+            disp << UString::Format(u":%02d", {buf.getBCD<int>(2)});
+            disp << UString::Format(u":%02d", {buf.getBCD<int>(2)}) << std::endl;
+            disp << margin << "  Running status: " << names::RunningStatus(buf.getBits<uint8_t>(3)) << std::endl;
+            disp << margin << "  CA mode: " << (buf.getBool() ? "controlled" : "free") << std::endl;
+            disp.displayDescriptorListWithLength(section, buf, margin + u"  ");
         }
-        strm << margin << UString::Format(u"Event Id: %d (0x%X)", {evid, evid}) << std::endl
-             << margin << "Start " << zone << ": " << start.format(Time::DATE | Time::TIME) << std::endl
-             << margin << UString::Format(u"Duration: %02d:%02d:%02d", {hour, min, sec}) << std::endl
-             << margin << "Running status: " << names::RunningStatus(run) << std::endl
-             << margin << "CA mode: " << (ca_mode ? "controlled" : "free") << std::endl;
-        display.displayDescriptorList(section, data, loop_length, indent);
-        data += loop_length; size -= loop_length;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -616,21 +511,21 @@ bool ts::EIT::analyzeXML(DuckContext& duck, const xml::Element* element)
     xml::ElementVector children;
     bool ok =
         getTableId(element) &&
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+        element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
-        element->getIntAttribute<uint16_t>(service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
-        element->getIntAttribute<uint16_t>(ts_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
-        element->getIntAttribute<uint16_t>(onetw_id, u"original_network_id", true, 0, 0x00, 0xFFFF) &&
+        element->getIntAttribute(service_id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
+        element->getIntAttribute(ts_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
+        element->getIntAttribute(onetw_id, u"original_network_id", true, 0, 0x00, 0xFFFF) &&
         element->getIntAttribute<TID>(last_table_id, u"last_table_id", false, _table_id, 0x00, 0xFF) &&
         element->getChildren(children, u"event");
 
     // Get all events.
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Event& event(events.newEntry());
-        ok = children[i]->getIntAttribute<uint16_t>(event.event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
+        ok = children[i]->getIntAttribute(event.event_id, u"event_id", true, 0, 0x0000, 0xFFFF) &&
              children[i]->getDateTimeAttribute(event.start_time, u"start_time", true) &&
              children[i]->getTimeAttribute(event.duration, u"duration", true) &&
-             children[i]->getIntEnumAttribute<uint8_t>(event.running_status, RST::RunningStatusNames, u"running_status", false, 0) &&
+             children[i]->getIntEnumAttribute(event.running_status, RST::RunningStatusNames, u"running_status", false, 0) &&
              children[i]->getBoolAttribute(event.CA_controlled, u"CA_mode", false, false) &&
              event.descs.fromXML(duck, children[i]);
     }

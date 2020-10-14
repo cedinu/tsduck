@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -70,25 +71,14 @@ void ts::PrivateDataSpecifierDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::PrivateDataSpecifierDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::PrivateDataSpecifierDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt32(pds);
-    serializeEnd(desc, bbp);
+    buf.putUInt32(pds);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::PrivateDataSpecifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::PrivateDataSpecifierDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 4;
-
-    if (_is_valid) {
-        pds = GetUInt32 (desc.payload());
-    }
+    pds = buf.getUInt32();
 }
 
 
@@ -96,19 +86,11 @@ void ts::PrivateDataSpecifierDescriptor::deserialize(DuckContext& duck, const De
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::PrivateDataSpecifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::PrivateDataSpecifierDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 4) {
-        uint32_t sp = GetUInt32(data);
-        data += 4; size -= 4;
-        strm << margin << "Specifier: " << names::PrivateDataSpecifier(sp, names::FIRST) << std::endl;
+    if (buf.canReadBytes(4)) {
+        disp << margin << "Specifier: " << names::PrivateDataSpecifier(buf.getUInt32(), names::FIRST) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -120,11 +102,6 @@ void ts::PrivateDataSpecifierDescriptor::buildXML(DuckContext& duck, xml::Elemen
 {
     root->setIntEnumAttribute(PrivateDataSpecifierEnum, u"private_data_specifier", pds);
 }
-
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
 
 bool ts::PrivateDataSpecifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {

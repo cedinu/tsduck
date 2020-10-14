@@ -160,16 +160,12 @@ uint64_t ts::SpliceInsert::lowestPTS() const
 // Display a SpliceInsert command.
 //----------------------------------------------------------------------------
 
-void ts::SpliceInsert::display(TablesDisplay& display, int indent) const
+void ts::SpliceInsert::display(TablesDisplay& disp, const UString& margin) const
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    strm << margin << UString::Format(u"Splice event id: 0x%X, cancel: %d", {event_id, canceled}) << std::endl;
+    disp << margin << UString::Format(u"Splice event id: 0x%X, cancel: %d", {event_id, canceled}) << std::endl;
 
     if (!canceled) {
-        strm << margin
+        disp << margin
              << "Out of network: " << UString::YesNo(splice_out)
              << ", program splice: " << UString::YesNo(program_splice)
              << ", duration set: " << UString::YesNo(use_duration)
@@ -178,23 +174,23 @@ void ts::SpliceInsert::display(TablesDisplay& display, int indent) const
 
         if (program_splice && !immediate) {
             // The complete program switches at a given time.
-            strm << margin << "Time PTS: " << program_pts.toString() << std::endl;
+            disp << margin << "Time PTS: " << program_pts.toString() << std::endl;
         }
         if (!program_splice) {
             // Program components switch individually.
-            strm << margin << "Number of components: " << components_pts.size() << std::endl;
+            disp << margin << "Number of components: " << components_pts.size() << std::endl;
             for (SpliceByComponent::const_iterator it = components_pts.begin(); it != components_pts.end(); ++it) {
-                strm << margin << UString::Format(u"  Component tag: 0x%X (%d)", {it->first, it->first});
+                disp << margin << UString::Format(u"  Component tag: 0x%X (%d)", {it->first, it->first});
                 if (!immediate) {
-                    strm << ", time PTS: " << it->second.toString();
+                    disp << ", time PTS: " << it->second.toString();
                 }
-                strm << std::endl;
+                disp << std::endl;
             }
         }
         if (use_duration) {
-            strm << margin << UString::Format(u"Duration PTS: 0x%09X (%d), auto return: %s", {duration_pts, duration_pts, UString::YesNo(auto_return)}) << std::endl;
+            disp << margin << UString::Format(u"Duration PTS: 0x%09X (%d), auto return: %s", {duration_pts, duration_pts, UString::YesNo(auto_return)}) << std::endl;
         }
-        strm << margin << UString::Format(u"Unique program id: 0x%X (%d), avail: 0x%X (%d), avails expected: %d", {program_id, program_id, avail_num, avail_num, avails_expected}) << std::endl;
+        disp << margin << UString::Format(u"Unique program id: 0x%X (%d), avail: 0x%X (%d), avails expected: %d", {program_id, program_id, avail_num, avail_num, avails_expected}) << std::endl;
     }
 }
 
@@ -205,9 +201,12 @@ void ts::SpliceInsert::display(TablesDisplay& display, int indent) const
 
 int ts::SpliceInsert::deserialize(const uint8_t* data, size_t size)
 {
-    const uint8_t* const start = data;
+    // Clear object content, make it a valid empty object.
     clear();
+
+    const uint8_t* const start = data;
     if (size < 5) {
+        invalidate();
         return -1; // too short
     }
 
@@ -216,10 +215,10 @@ int ts::SpliceInsert::deserialize(const uint8_t* data, size_t size)
     data += 5; size -= 5;
 
     if (canceled) {
-        _is_valid = true;
         return int(data - start);  // end of command
     }
     if (size < 1) {
+        invalidate();
         return -1; // too short
     }
 
@@ -233,6 +232,7 @@ int ts::SpliceInsert::deserialize(const uint8_t* data, size_t size)
         // The complete program switches at a given time.
         const int s = program_pts.deserialize(data, size);
         if (s < 0) {
+            invalidate();
             return -1; // invalid
         }
         data += s; size -= s;
@@ -240,12 +240,14 @@ int ts::SpliceInsert::deserialize(const uint8_t* data, size_t size)
     if (!program_splice) {
         // Program components switch individually.
         if (size < 1) {
+            invalidate();
             return -1; // too short
         }
         size_t count = data[0];
         data++; size--;
         while (count-- > 0) {
             if (size < 1) {
+                invalidate();
                 return -1; // too short
             }
             const uint8_t ctag = data[0];
@@ -254,6 +256,7 @@ int ts::SpliceInsert::deserialize(const uint8_t* data, size_t size)
             if (!immediate) {
                 const int s = pts.deserialize(data, size);
                 if (s < 0) {
+                    invalidate();
                     return -1; // invalid
                 }
                 data += s; size -= s;
@@ -263,6 +266,7 @@ int ts::SpliceInsert::deserialize(const uint8_t* data, size_t size)
     }
     if (use_duration) {
         if (size < 5) {
+            invalidate();
             return -1; // too short
         }
         auto_return = (data[0] & 0x80) != 0;
@@ -270,6 +274,7 @@ int ts::SpliceInsert::deserialize(const uint8_t* data, size_t size)
         data += 5; size -= 5;
     }
     if (size < 4) {
+        invalidate();
         return -1; // too short
     }
     program_id = GetUInt16(data);
@@ -277,7 +282,6 @@ int ts::SpliceInsert::deserialize(const uint8_t* data, size_t size)
     avails_expected = data[3];
     data += 4; size -= 4;
 
-    _is_valid = true;
     return int(data - start);
 }
 

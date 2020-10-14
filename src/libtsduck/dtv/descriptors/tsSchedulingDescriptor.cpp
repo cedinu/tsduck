@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsMJD.h"
@@ -98,21 +99,19 @@ ts::SchedulingDescriptor::SchedulingDescriptor(DuckContext& duck, const Descript
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SchedulingDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SchedulingDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    EncodeMJD(start_date_time, bbp->enlarge(MJD_SIZE), MJD_SIZE);
-    EncodeMJD(end_date_time, bbp->enlarge(MJD_SIZE), MJD_SIZE);
-    bbp->appendUInt8((final_availability ? 0x80 : 0x00) |
-                     (periodicity ? 0x40 : 0x00) |
-                     uint8_t((period_unit & 0x03) << 4) |
-                     uint8_t((duration_unit & 0x03) << 2) |
-                     (estimated_cycle_time_unit & 0x03));
-    bbp->appendUInt8(period);
-    bbp->appendUInt8(duration);
-    bbp->appendUInt8(estimated_cycle_time);
-    bbp->append(private_data);
-    serializeEnd(desc, bbp);
+    buf.putMJD(start_date_time, MJD_SIZE);
+    buf.putMJD(end_date_time, MJD_SIZE);
+    buf.putBit(final_availability);
+    buf.putBit(periodicity);
+    buf.putBits(period_unit, 2);
+    buf.putBits(duration_unit, 2);
+    buf.putBits(estimated_cycle_time_unit, 2);
+    buf.putUInt8(period);
+    buf.putUInt8(duration);
+    buf.putUInt8(estimated_cycle_time);
+    buf.putBytes(private_data);
 }
 
 
@@ -120,27 +119,19 @@ void ts::SchedulingDescriptor::serialize(DuckContext& duck, Descriptor& desc) co
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::SchedulingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SchedulingDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 14;
-    private_data.clear();
-
-    if (_is_valid) {
-        DecodeMJD(data, 5, start_date_time);
-        DecodeMJD(data + 5, 5, end_date_time);
-        final_availability = (data[10] & 0x80) != 0;
-        periodicity = (data[10] & 0x40) != 0;
-        period_unit = (data[10] >> 4) & 0x03;
-        duration_unit = (data[10] >> 2) & 0x03;
-        estimated_cycle_time_unit = data[10] & 0x03;
-        period = data[11];
-        duration = data[12];
-        estimated_cycle_time = data[13];
-        private_data.copy(data + 14, size - 14);
-    }
+    start_date_time = buf.getMJD(MJD_SIZE);
+    end_date_time = buf.getMJD(MJD_SIZE);
+    final_availability = buf.getBool();
+    periodicity = buf.getBool();
+    buf.getBits(period_unit, 2);
+    buf.getBits(duration_unit, 2);
+    buf.getBits(estimated_cycle_time_unit, 2);
+    period = buf.getUInt8();
+    duration = buf.getUInt8();
+    estimated_cycle_time = buf.getUInt8();
+    buf.getBytes(private_data);
 }
 
 
@@ -148,27 +139,20 @@ void ts::SchedulingDescriptor::deserialize(DuckContext& duck, const Descriptor& 
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SchedulingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SchedulingDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 14) {
-        Time start, end;
-        DecodeMJD(data, 5, start);
-        DecodeMJD(data + 5, 5, end);
-        strm << margin << "Start time: " << start.format(Time::DATETIME) << std::endl
-             << margin << "End time:   " << end.format(Time::DATETIME) << std::endl
-             << margin << UString::Format(u"Final availability: %s", {(data[10] & 0x80) != 0}) << std::endl
-             << margin << UString::Format(u"Periodicity: %s", {(data[10] & 0x40) != 0}) << std::endl
-             << margin << UString::Format(u"Period: %d %ss", {data[11], SchedulingUnitNames.name((data[10] >> 4) & 0x03)}) << std::endl
-             << margin << UString::Format(u"Duration: %d %ss", {data[12], SchedulingUnitNames.name((data[10] >> 2) & 0x03)}) << std::endl
-             << margin << UString::Format(u"Estimated cycle time: %d %ss", {data[13], SchedulingUnitNames.name(data[10] & 0x03)}) << std::endl;
-        display.displayPrivateData(u"Private data", data + 14, size - 14, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+    if (buf.canReadBytes(14)) {
+        disp << margin << "Start time: " << buf.getMJD(MJD_SIZE).format(Time::DATETIME) << std::endl;
+        disp << margin << "End time:   " << buf.getMJD(MJD_SIZE).format(Time::DATETIME) << std::endl;
+        disp << margin << UString::Format(u"Final availability: %s", {buf.getBool()}) << std::endl;
+        disp << margin << UString::Format(u"Periodicity: %s", {buf.getBool()}) << std::endl;
+        const uint8_t period_unit = buf.getBits<uint8_t>(2);
+        const uint8_t duration_unit = buf.getBits<uint8_t>(2);
+        const uint8_t cycle_unit = buf.getBits<uint8_t>(2);
+        disp << margin << UString::Format(u"Period: %d %ss", {buf.getUInt8(), SchedulingUnitNames.name(period_unit)}) << std::endl;
+        disp << margin << UString::Format(u"Duration: %d %ss", {buf.getUInt8(), SchedulingUnitNames.name(duration_unit)}) << std::endl;
+        disp << margin << UString::Format(u"Estimated cycle time: %d %ss", {buf.getUInt8(), SchedulingUnitNames.name(cycle_unit)}) << std::endl;
+        disp.displayPrivateData(u"Private data", buf, NPOS, margin);
     }
 }
 
@@ -206,8 +190,8 @@ bool ts::SchedulingDescriptor::analyzeXML(DuckContext& duck, const xml::Element*
             element->getIntEnumAttribute(period_unit, SchedulingUnitNames, u"period_unit", true) &&
             element->getIntEnumAttribute(duration_unit, SchedulingUnitNames, u"duration_unit", true) &&
             element->getIntEnumAttribute(estimated_cycle_time_unit, SchedulingUnitNames, u"estimated_cycle_time_unit", true) &&
-            element->getIntAttribute<uint8_t>(period, u"period", true) &&
-            element->getIntAttribute<uint8_t>(duration, u"duration", true) &&
-            element->getIntAttribute<uint8_t>(estimated_cycle_time, u"estimated_cycle_time", true) &&
+            element->getIntAttribute(period, u"period", true) &&
+            element->getIntAttribute(duration, u"duration", true) &&
+            element->getIntAttribute(estimated_cycle_time, u"estimated_cycle_time", true) &&
             element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 16);
 }

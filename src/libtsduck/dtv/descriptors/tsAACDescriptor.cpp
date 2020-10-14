@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -76,20 +77,18 @@ void ts::AACDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AACDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::AACDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    bbp->appendUInt8(profile_and_level);
+    buf.putUInt8(profile_and_level);
     if (SAOC_DE || AAC_type.set() || !additional_info.empty()) {
-        bbp->appendUInt8((AAC_type.set() ? 0x80 : 0x00) | (SAOC_DE ? 0x40 : 0x00));
+        buf.putBit(AAC_type.set());
+        buf.putBit(SAOC_DE);
+        buf.putBits(0, 6);
         if (AAC_type.set()) {
-            bbp->appendUInt8(AAC_type.value());
+            buf.putUInt8(AAC_type.value());
         }
-        bbp->append(additional_info);
+        buf.putBytes(additional_info);
     }
-
-    serializeEnd(desc, bbp);
 }
 
 
@@ -97,32 +96,17 @@ void ts::AACDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::AACDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::AACDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    if (_is_valid) {
-        profile_and_level = data[0];
-        SAOC_DE = false;
-        AAC_type.clear();
-        additional_info.clear();
-        data++; size--;
-
-        if (size > 0) {
-            SAOC_DE = (data[0] & 0x40) != 0;
-            if ((data[0] & 0x40) != 0) {
-                _is_valid = size > 1;
-                if (_is_valid) {
-                    AAC_type = data[1];
-                    data++; size--;
-                }
-            }
-            data++; size--;
-            additional_info.copy(data, size);
+    profile_and_level = buf.getUInt8();
+    if (buf.canRead()) {
+        bool has_AAC_type = buf.getBool();
+        SAOC_DE = buf.getBool();
+        buf.skipBits(6);
+        if (has_AAC_type) {
+            AAC_type = buf.getUInt8();
         }
+        buf.getBytes(additional_info);
     }
 }
 
@@ -131,30 +115,21 @@ void ts::AACDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::AACDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::AACDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        uint8_t prof_lev = data[0];
-        data++; size--;
-        strm << margin << UString::Format(u"Profile and level: 0x%X", {prof_lev}) << std::endl;
-        if (size >= 1) {
-            uint8_t flags = data[0];
-            data++; size--;
-            if ((flags & 0x80) && size >= 1) { // AAC_type
-                uint8_t type = data[0];
-                data++; size--;
-                strm << margin << "AAC type: " << NameFromSection(u"ComponentType", 0x6F00 | type, names::HEXA_FIRST, 8) << std::endl;
-            }
-            display.displayPrivateData(u"Additional information", data, size, indent);
-            data += size; size = 0;
-        }
+    if (buf.canRead()) {
+        disp << margin << UString::Format(u"Profile and level: 0x%X", {buf.getUInt8()}) << std::endl;
     }
 
-    display.displayExtraData(data, size, indent);
+    if (buf.canRead()) {
+        bool has_AAC_type = buf.getBool();
+        disp << margin << UString::Format(u"SOAC DE flag: %s", {buf.getBool()}) << std::endl;
+        buf.skipBits(6);
+        if (has_AAC_type) {
+            disp << margin << "AAC type: " << NameFromSection(u"ComponentType", 0x6F00 | buf.getUInt8(), names::HEXA_FIRST, 8) << std::endl;
+        }
+        disp.displayPrivateData(u"Additional information", buf, NPOS, margin);
+    }
 }
 
 
@@ -177,7 +152,7 @@ void ts::AACDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 
 bool ts::AACDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(profile_and_level, u"profile_and_level", true) &&
+    return element->getIntAttribute(profile_and_level, u"profile_and_level", true) &&
            element->getBoolAttribute(SAOC_DE, u"SAOC_DE", false) &&
            element->getOptionalIntAttribute(AAC_type, u"AAC_type") &&
            element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 5);

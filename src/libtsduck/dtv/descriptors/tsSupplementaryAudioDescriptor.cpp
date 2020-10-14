@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -78,25 +79,29 @@ void ts::SupplementaryAudioDescriptor::clearContent()
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::SupplementaryAudioDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SupplementaryAudioDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SupplementaryAudioDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    bbp->appendUInt8(MY_EDID);
-    bbp->appendUInt8(uint8_t(mix_type << 7) |
-                     uint8_t((editorial_classification & 0x1F) << 2) |
-                     0x02 |
-                     (language_code.empty() ? 0x00 : 0x01));
-    if (!language_code.empty() && !SerializeLanguageCode(*bbp, language_code)) {
-        desc.invalidate();
-        return;
+    buf.putBit(mix_type);
+    buf.putBits(editorial_classification, 5);
+    buf.putBit(1);
+    buf.putBit(!language_code.empty());
+    if (!language_code.empty()) {
+        buf.putLanguageCode(language_code);
     }
-    bbp->append(private_data);
-
-    serializeEnd(desc, bbp);
+    buf.putBytes(private_data);
 }
 
 
@@ -104,33 +109,16 @@ void ts::SupplementaryAudioDescriptor::serialize(DuckContext& duck, Descriptor& 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::SupplementaryAudioDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SupplementaryAudioDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    language_code.clear();
-    private_data.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID)) {
-        return;
-    }
-
-    mix_type = (data[1] >> 7) & 0x01;
-    editorial_classification = (data[1] >> 2) & 0x1F;
-    const bool has_lang = (data[1] & 0x01) != 0;
-    data += 2; size -= 2;
-
+    mix_type = buf.getBit();
+    buf.getBits(editorial_classification, 5);
+    buf.skipBits(1);
+    const bool has_lang = buf.getBool();
     if (has_lang) {
-        if (size < 3) {
-            _is_valid = false;
-            return;
-        }
-        language_code = DeserializeLanguageCode(data);
-        data += 3; size -= 3;
+        buf.getLanguageCode(language_code);
     }
-
-    private_data.copy(data, size);
+    buf.getBytes(private_data);
 }
 
 
@@ -153,8 +141,8 @@ void ts::SupplementaryAudioDescriptor::buildXML(DuckContext& duck, xml::Element*
 
 bool ts::SupplementaryAudioDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(mix_type, u"mix_type", true, 0, 0, 1) &&
-           element->getIntAttribute<uint8_t>(editorial_classification, u"editorial_classification", true, 0, 0x00, 0x1F) &&
+    return element->getIntAttribute(mix_type, u"mix_type", true, 0, 0, 1) &&
+           element->getIntAttribute(editorial_classification, u"editorial_classification", true, 0, 0x00, 0x1F) &&
            element->getAttribute(language_code, u"language_code", false, u"", 3, 3) &&
            element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 7);
 }
@@ -164,43 +152,15 @@ bool ts::SupplementaryAudioDescriptor::analyzeXML(DuckContext& duck, const xml::
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SupplementaryAudioDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SupplementaryAudioDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        const uint8_t mix_type = (data[0] >> 7) & 0x01;
-        const uint8_t editorial = (data[0] >> 2) & 0x1F;
-        const uint8_t lang_present = data[0] & 0x01;
-        data++; size--;
-        strm << margin << "Mix type: ";
-        switch (mix_type) {
-            case 0:  strm << "supplementary stream"; break;
-            case 1:  strm << "complete and independent stream"; break;
-            default: assert(false);
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Mix type: " << NameFromSection(u"SuppAudioMixType", buf.getBit()) << std::endl;
+        disp << margin << "Editorial classification: " << NameFromSection(u"SuppAudioClass", buf.getBits<uint8_t>(5)) << std::endl;
+        buf.skipBits(1);
+        if (buf.getBool() && buf.canReadBytes(3)) {
+            disp << margin << "Language: " << buf.getLanguageCode() << std::endl;
         }
-        strm << std::endl << margin << "Editorial classification: ";
-        switch (editorial) {
-            case 0x00: strm << "main audio"; break;
-            case 0x01: strm << "audio description for the visually impaired"; break;
-            case 0x02: strm << "clean audio for the hearing impaired"; break;
-            case 0x03: strm << "spoken subtitles for the visually impaired"; break;
-            default:   strm << UString::Format(u"reserved value 0x%X", {editorial}); break;
-        }
-        strm << std::endl;
-        if (lang_present && size >= 3) {
-            strm << margin << "Language: " << DeserializeLanguageCode(data) << std::endl;
-            data += 3; size -= 3;
-        }
-        display.displayPrivateData(u"Private data", data, size, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+        disp.displayPrivateData(u"Private data", buf, NPOS, margin);
     }
 }

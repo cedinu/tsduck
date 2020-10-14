@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -72,37 +73,16 @@ ts::DVBHTMLApplicationBoundaryDescriptor::DVBHTMLApplicationBoundaryDescriptor(D
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DVBHTMLApplicationBoundaryDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DVBHTMLApplicationBoundaryDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->append(duck.encodedWithByteLength(label));
-    bbp->append(duck.encoded(regular_expression));
-    serializeEnd(desc, bbp);
+    buf.putStringWithByteLength(label);
+    buf.putString(regular_expression);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::DVBHTMLApplicationBoundaryDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DVBHTMLApplicationBoundaryDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    label.clear();
-    regular_expression.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    if (_is_valid) {
-        const size_t len = data[0];
-        _is_valid = len + 1 <= size;
-        if (_is_valid) {
-            duck.decode(label, data + 1, len);
-            duck.decode(regular_expression, data + 1 + len, size - len - 1);
-        }
-    }
+    buf.getStringWithByteLength(label);
+    buf.getString(regular_expression);
 }
 
 
@@ -110,20 +90,12 @@ void ts::DVBHTMLApplicationBoundaryDescriptor::deserialize(DuckContext& duck, co
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DVBHTMLApplicationBoundaryDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DVBHTMLApplicationBoundaryDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        size_t len = std::min<size_t>(data[0], size - 1);
-        strm << margin << "Label: \"" << duck.decoded(data + 1, len) << "\"" << std::endl
-             << margin << "Regexp: \"" << duck.decoded(data + 1 + len, size - len - 1) << "\"" << std::endl;
-        size = 0;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Label: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
+        disp << margin << "Regexp: \"" << buf.getString() << "\"" << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -136,11 +108,6 @@ void ts::DVBHTMLApplicationBoundaryDescriptor::buildXML(DuckContext& duck, xml::
     root->setAttribute(u"label", label);
     root->setAttribute(u"regular_expression", regular_expression);
 }
-
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
 
 bool ts::DVBHTMLApplicationBoundaryDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {

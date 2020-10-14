@@ -48,6 +48,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -96,24 +97,22 @@ void ts::HybridInformationDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::HybridInformationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::HybridInformationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8((has_location ? 0x80 : 0x00) |
-                     (location_type ? 0x40 : 0x00) |
-                     uint8_t((format & 0x0F) << 2) |
-                     0x03);
+    buf.putBit(has_location);
+    buf.putBit(location_type);
+    buf.putBits(format, 4);
+    buf.putBits(0xFF, 2);
     if (has_location) {
         if (location_type) {
             // We assume here that the URL is encoded in ARIB STD-B24. Could be in ASCII ?
-            bbp->append(duck.encodedWithByteLength(URL));
+            buf.putStringWithByteLength(URL);
         }
         else {
-            bbp->appendUInt8(component_tag);
-            bbp->appendUInt16(module_id);
+            buf.putUInt8(component_tag);
+            buf.putUInt16(module_id);
         }
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -121,35 +120,20 @@ void ts::HybridInformationDescriptor::serialize(DuckContext& duck, Descriptor& d
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::HybridInformationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::HybridInformationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-    URL.clear();
-
-    if (_is_valid) {
-        has_location = (data[0] & 0x80) != 0;
-        location_type = (data[0] & 0x40) != 0;
-        format = (data[0] >> 2) & 0x0F;
-        data++; size--;
-
-        if (has_location) {
-            if (location_type) {
-                _is_valid = size > 0;
-                if (_is_valid) {
-                    // We assume here that the URL is encoded in ARIB STD-B24. Could be in ASCII ?
-                    duck.decodeWithByteLength(URL, data, size);
-                    _is_valid = size == 0;
-                }
-            }
-            else {
-                _is_valid = size == 3;
-                if (_is_valid) {
-                    component_tag = data[0];
-                    module_id = GetUInt16(data + 1);
-                }
-            }
+    has_location = buf.getBool();
+    location_type = buf.getBool();
+    buf.getBits(format, 4);
+    buf.skipBits(2);
+    if (has_location) {
+        if (location_type) {
+            // We assume here that the URL is encoded in ARIB STD-B24. Could be in ASCII ?
+            buf.getStringWithByteLength(URL);
+        }
+        else {
+            component_tag = buf.getUInt8();
+            module_id = buf.getUInt16();
         }
     }
 }
@@ -159,34 +143,24 @@ void ts::HybridInformationDescriptor::deserialize(DuckContext& duck, const Descr
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::HybridInformationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::HybridInformationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size > 0) {
-        const bool has = (data[0] & 0x80) != 0;
-        const bool type = (data[0] & 0x40) != 0;
-        const uint8_t format = (data[0] >> 2) & 0x0F;
-        data++; size--;
-
-        strm << margin << "Has location: " << UString::YesNo(has) << std::endl
-             << margin << "Location type: " << (type ? "connected" : "broadcast") << std::endl
-             << margin << "Format: " << NameFromSection(u"ISDBHybridInformationFormat", format, names::DECIMAL_FIRST) << std::endl;
-
-        if (has) {
-            if (type) {
-                strm << margin << "URL: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
+    if (buf.canReadBytes(1)) {
+        const bool has_location = buf.getBool();
+        const bool location_type = buf.getBool();
+        disp << margin << "Has location: " << UString::YesNo(has_location) << std::endl;
+        disp << margin << "Location type: " << (location_type ? "connected" : "broadcast") << std::endl;
+        disp << margin << "Format: " << NameFromSection(u"ISDBHybridInformationFormat", buf.getBits<uint8_t>(4), names::DECIMAL_FIRST) << std::endl;
+        buf.skipBits(2);
+        if (has_location) {
+            if (location_type) {
+                disp << margin << "URL: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
             }
-            else if (size >= 3) {
-                strm << margin << UString::Format(u"Component tag: 0x0%X (%d)", {data[0], data[0]}) << std::endl
-                     << margin << UString::Format(u"Module id: 0x0%X (%d)", {GetUInt16(data + 1), GetUInt16(data + 1)}) << std::endl;
-                data += 3; size -= 3;
+            else if (buf.canReadBytes(3)) {
+                disp << margin << UString::Format(u"Component tag: 0x0%X (%<d)", {buf.getUInt8()}) << std::endl;
+                disp << margin << UString::Format(u"Module id: 0x0%X (%<d)", {buf.getUInt16()}) << std::endl;
             }
         }
-
-        display.displayExtraData(data, size, indent);
     }
 }
 
@@ -230,7 +204,7 @@ bool ts::HybridInformationDescriptor::analyzeXML(DuckContext& duck, const xml::E
         element->report().error(u"attribute 'URL' and attributes 'component_tag', 'module_id' are mutually exclusive in <%s>, line %d", {element->name(), element->lineNumber()});
         return false;
     }
-    else if (!element->getIntAttribute<uint8_t>(format, u"format", true, 0, 0, 15)) {
+    else if (!element->getIntAttribute(format, u"format", true, 0, 0, 15)) {
         return false;
     }
     else if (!has_location) {
@@ -240,6 +214,6 @@ bool ts::HybridInformationDescriptor::analyzeXML(DuckContext& duck, const xml::E
         return element->getAttribute(URL, u"URL");
     }
     else {
-        return element->getIntAttribute<uint8_t>(component_tag, u"component_tag") && element->getIntAttribute<uint16_t>(module_id, u"module_id");
+        return element->getIntAttribute(component_tag, u"component_tag") && element->getIntAttribute(module_id, u"module_id");
     }
 }

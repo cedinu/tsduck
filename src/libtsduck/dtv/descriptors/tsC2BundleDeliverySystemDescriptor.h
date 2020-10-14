@@ -39,7 +39,7 @@ namespace ts {
     //!
     //! Representation of a C2_bundle_delivery_system_descriptor.
     //!
-    //! @see ETSI 300 468, 6.4.6.4
+    //! @see ETSI EN 300 468, 6.4.6.4
     //! @see C2DeliverySystemDescriptor
     //! @ingroup descriptor
     //!
@@ -87,14 +87,15 @@ namespace ts {
         C2BundleDeliverySystemDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual DID extendedTag() const override;
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

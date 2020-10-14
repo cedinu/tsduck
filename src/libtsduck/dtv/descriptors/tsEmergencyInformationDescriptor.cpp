@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -78,18 +79,20 @@ ts::EmergencyInformationDescriptor::Event::Event() :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::EmergencyInformationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::EmergencyInformationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
     for (auto it1 = events.begin(); it1 != events.end(); ++it1) {
-        bbp->appendUInt16(it1->service_id);
-        bbp->appendUInt8((it1->started ? 0x80 : 0x00) | (it1->signal_level != 0 ? 0x7F : 0x3F));
-        bbp->appendUInt8(uint8_t(2 * it1->area_codes.size()));
+        buf.putUInt16(it1->service_id);
+        buf.putBit(it1->started);
+        buf.putBit(it1->signal_level);
+        buf.putBits(0xFF, 6);
+        buf.pushWriteSequenceWithLeadingLength(8); // area_code_length
         for (auto it2 = it1->area_codes.begin(); it2 != it1->area_codes.end(); ++it2) {
-            bbp->appendUInt16(uint16_t(*it2 << 4) | 0x000F);
+            buf.putBits(*it2, 12);
+            buf.putBits(0xFF, 4);
         }
+        buf.popState(); // update area_code_length
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -97,34 +100,22 @@ void ts::EmergencyInformationDescriptor::serialize(DuckContext& duck, Descriptor
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::EmergencyInformationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::EmergencyInformationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag();
-
-    events.clear();
-
-    while (_is_valid && size >= 4) {
+    while (buf.canRead()) {
         Event ev;
-        ev.service_id = GetUInt16(data);
-        ev.started = (data[2] & 0x80) != 0;
-        ev.signal_level = (data[2] >> 6) & 0x01;
-        size_t len = data[3];
-        data += 4; size -= 4;
-
-        if (len > size || len % 2 != 0) {
-            _is_valid = false;
+        ev.service_id = buf.getUInt16();
+        ev.started = buf.getBool();
+        ev.signal_level = buf.getBool();
+        buf.skipBits(6);
+        buf.pushReadSizeFromLength(8); // area_code_length
+        while (buf.canRead()) {
+            ev.area_codes.push_back(buf.getBits<uint16_t>(12));
+            buf.skipBits(4);
         }
-        else {
-            while (len >= 2) {
-                ev.area_codes.push_back((GetUInt16(data) >> 4) & 0x0FFF);
-                data += 2; size -= 2; len -= 2;
-            }
-            events.push_back(ev);
-        }
+        buf.popState(); // end of  area_code_length
+        events.push_back(ev);
     }
-    _is_valid = _is_valid && size == 0;
 }
 
 
@@ -132,30 +123,20 @@ void ts::EmergencyInformationDescriptor::deserialize(DuckContext& duck, const De
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::EmergencyInformationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::EmergencyInformationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 4) {
-        strm << margin << UString::Format(u"- Event service id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-             << margin << UString::Format(u"  Event is started: %s", {(data[2] & 0x80) != 0}) << std::endl
-             << margin << UString::Format(u"  Signal level: %d", {(data[2] >> 6) & 0x01}) << std::endl;
-        size_t len = data[3];
-        data += 4; size -= 4;
-        len = std::min(len, size);
-        while (len >= 2) {
-            const uint16_t ac = (GetUInt16(data) >> 4) & 0x0FFF;
-            strm << margin << UString::Format(u"  Area code: 0x%03X (%d)", {ac, ac}) << std::endl;
-            data += 2; size -= 2; len -= 2;
+    while (buf.canReadBytes(4)) {
+        disp << margin << UString::Format(u"- Event service id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"  Event is started: %s", {buf.getBool()}) << std::endl;
+        disp << margin << UString::Format(u"  Signal level: %d", {buf.getBit()}) << std::endl;
+        buf.skipBits(6);
+        buf.pushReadSizeFromLength(8); // area_code_length
+        while (buf.canRead()) {
+            disp << margin << UString::Format(u"  Area code: 0x%03X (%<d)", {buf.getBits<uint16_t>(12)}) << std::endl;
+            buf.skipBits(4);
         }
-        if (len > 0) {
-            break;
-        }
+        buf.popState(); // end of  area_code_length
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -189,13 +170,13 @@ bool ts::EmergencyInformationDescriptor::analyzeXML(DuckContext& duck, const xml
     for (auto it1 = xevent.begin(); ok && it1 != xevent.end(); ++it1) {
         Event ev;
         xml::ElementVector xarea;
-        ok = (*it1)->getIntAttribute<uint16_t>(ev.service_id, u"service_id", true) &&
+        ok = (*it1)->getIntAttribute(ev.service_id, u"service_id", true) &&
              (*it1)->getBoolAttribute(ev.started, u"started", true) &&
-             (*it1)->getIntAttribute<uint8_t>(ev.signal_level, u"signal_level", true, 0, 0, 1) &&
+             (*it1)->getIntAttribute(ev.signal_level, u"signal_level", true, 0, 0, 1) &&
              (*it1)->getChildren(xarea, u"area");
         for (auto it2 = xarea.begin(); ok && it2 != xarea.end(); ++it2) {
             uint16_t code = 0;
-            ok = (*it2)->getIntAttribute<uint16_t>(code, u"code", true, 0, 0, 0x0FFF);
+            ok = (*it2)->getIntAttribute(code, u"code", true, 0, 0, 0x0FFF);
             ev.area_codes.push_back(code);
         }
         events.push_back(ev);

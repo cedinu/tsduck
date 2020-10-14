@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -80,36 +81,18 @@ ts::ApplicationIconsDescriptor::ApplicationIconsDescriptor(DuckContext& duck, co
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationIconsDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ApplicationIconsDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->append(duck.encodedWithByteLength(icon_locator));
-    bbp->appendUInt16(icon_flags);
-    bbp->append(reserved_future_use);
-    serializeEnd(desc, bbp);
+    buf.putStringWithByteLength(icon_locator);
+    buf.putUInt16(icon_flags);
+    buf.putBytes(reserved_future_use);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::ApplicationIconsDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ApplicationIconsDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    icon_locator.clear();
-    reserved_future_use.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1 && size >= size_t(data[0]) + 3;
-
-    if (_is_valid) {
-        duck.decodeWithByteLength(icon_locator, data, size);
-        assert(size >= 2);
-        icon_flags = GetUInt16(data);
-        reserved_future_use.copy(data + 2, size - 2);
-    }
+    buf.getStringWithByteLength(icon_locator);
+    icon_flags = buf.getUInt16();
+    buf.getBytes(reserved_future_use);
 }
 
 
@@ -117,23 +100,19 @@ void ts::ApplicationIconsDescriptor::deserialize(DuckContext& duck, const Descri
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ApplicationIconsDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ApplicationIconsDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size > 0) {
-        strm << margin << "Icon locator: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
-        if (size >= 2) {
-            const uint16_t flags = GetUInt16(data);
-            strm << margin << UString::Format(u"Icon flags: 0x%X", {flags}) << std::endl;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Icon locator: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
+        if (buf.canReadBytes(2)) {
+            const uint16_t flags = buf.getUInt16();
+            disp << margin << UString::Format(u"Icon flags: 0x%X", {flags}) << std::endl;
             for (uint16_t mask = 0x0001; mask != 0; mask <<= 1) {
                 if ((flags & mask) != 0) {
-                    strm << margin << "  - " << NameFromSection(u"ApplicationIconFlags", mask) << std::endl;
+                    disp << margin << "  - " << NameFromSection(u"ApplicationIconFlags", mask) << std::endl;
                 }
             }
-            display.displayPrivateData(u"Reserved bytes", data + 2, size - 2, indent);
+            disp.displayPrivateData(u"Reserved bytes", buf, NPOS, margin);
         }
     }
 }
@@ -150,14 +129,9 @@ void ts::ApplicationIconsDescriptor::buildXML(DuckContext& duck, xml::Element* r
     root->addHexaTextChild(u"reserved_future_use", reserved_future_use, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::ApplicationIconsDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     return element->getAttribute(icon_locator, u"icon_locator", true) &&
-           element->getIntAttribute<uint16_t>(icon_flags, u"icon_flags", true) &&
+           element->getIntAttribute(icon_flags, u"icon_flags", true) &&
            element->getHexaTextChild(reserved_future_use, u"reserved_future_use");
 }

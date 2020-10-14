@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -71,21 +72,25 @@ ts::ApplicationSignallingDescriptor::ApplicationSignallingDescriptor(DuckContext
     deserialize(duck, desc);
 }
 
+ts::ApplicationSignallingDescriptor::Entry::Entry(uint16_t type, uint8_t version) :
+    application_type(type),
+    AIT_version_number(version)
+{
+}
+
 
 //----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationSignallingDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ApplicationSignallingDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    for (EntryList::const_iterator it = entries.begin(); it != entries.end(); ++it) {
-        bbp->appendUInt16(0x8000 | it->application_type);
-        bbp->appendUInt8(0xE0 | it->AIT_version_number);
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        buf.putBit(1);
+        buf.putBits(it->application_type, 15);
+        buf.putBits(0xFF, 3);
+        buf.putBits(it->AIT_version_number, 5);
     }
-
-    serializeEnd(desc, bbp);
 }
 
 
@@ -93,19 +98,30 @@ void ts::ApplicationSignallingDescriptor::serialize(DuckContext& duck, Descripto
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationSignallingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ApplicationSignallingDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() % 3 == 0;
-    entries.clear();
+    while (buf.canRead()) {
+        Entry e;
+        buf.skipBits(1);
+        buf.getBits(e.application_type, 15);
+        buf.skipBits(3);
+        buf.getBits(e.AIT_version_number, 5);
+        entries.push_back(e);
+    }
+}
 
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        while (size >= 3) {
-            entries.push_back(Entry(GetUInt16(data) & 0X7FFF, data[2] & 0x1F));
-            data += 3;
-            size -= 3;
-        }
+
+//----------------------------------------------------------------------------
+// Static method to display a descriptor.
+//----------------------------------------------------------------------------
+
+void ts::ApplicationSignallingDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
+{
+    while (buf.canReadBytes(3)) {
+        buf.skipBits(1);
+        disp << margin << UString::Format(u"Application type: %d (0x%<X)", {buf.getBits<uint16_t>(15)});
+        buf.skipBits(3);
+        disp << UString::Format(u", AIT Version: %d (0x%<X)", {buf.getBits<uint8_t>(5)}) << std::endl;
     }
 }
 
@@ -116,7 +132,7 @@ void ts::ApplicationSignallingDescriptor::deserialize(DuckContext& duck, const D
 
 void ts::ApplicationSignallingDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    for (EntryList::const_iterator it = entries.begin(); it != entries.end(); ++it) {
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
         xml::Element* e = root->addElement(u"application");
         e->setIntAttribute(u"application_type", it->application_type, true);
         e->setIntAttribute(u"AIT_version_number", it->AIT_version_number, true);
@@ -135,30 +151,9 @@ bool ts::ApplicationSignallingDescriptor::analyzeXML(DuckContext& duck, const xm
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        ok = children[i]->getIntAttribute<uint16_t>(entry.application_type, u"application_type", true, 0, 0x0000, 0x7FFF) &&
-             children[i]->getIntAttribute<uint8_t>(entry.AIT_version_number, u"AIT_version_number", true, 0, 0x00, 0x1F);
+        ok = children[i]->getIntAttribute(entry.application_type, u"application_type", true, 0, 0x0000, 0x7FFF) &&
+             children[i]->getIntAttribute(entry.AIT_version_number, u"AIT_version_number", true, 0, 0x00, 0x1F);
         entries.push_back(entry);
     }
     return ok;
-}
-
-
-//----------------------------------------------------------------------------
-// Static method to display a descriptor.
-//----------------------------------------------------------------------------
-
-void ts::ApplicationSignallingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
-{
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 3) {
-        uint16_t app_type = GetUInt16(data) & 0x7FFF;
-        uint8_t ait_version = data[2] & 0x1F;
-        data += 3; size -= 3;
-        strm << margin << UString::Format(u"Application type: %d (0x%X), AIT Version: %d (0x%X)", {app_type, app_type, ait_version, ait_version}) << std::endl;
-    }
-
-    display.displayExtraData(data, size, indent);
 }

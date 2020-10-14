@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -66,28 +67,17 @@ void ts::PrivateDataIndicatorDescriptor::clearContent()
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// Serialization / deserialization.
 //----------------------------------------------------------------------------
 
-void ts::PrivateDataIndicatorDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::PrivateDataIndicatorDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt32(private_data_indicator);
-    serializeEnd(desc, bbp);
+    buf.putUInt32(private_data_indicator);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::PrivateDataIndicatorDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::PrivateDataIndicatorDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 4;
-
-    if (_is_valid) {
-        private_data_indicator = GetUInt32(desc.payload());
-    }
+    private_data_indicator = buf.getUInt32();
 }
 
 
@@ -95,26 +85,17 @@ void ts::PrivateDataIndicatorDescriptor::deserialize(DuckContext& duck, const De
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::PrivateDataIndicatorDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::PrivateDataIndicatorDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 4) {
+    if (buf.canReadBytes(4)) {
         // Sometimes, the indicator is made of ASCII characters. Try to display them.
-        strm << margin << UString::Format(u"Private data indicator: 0x%X", {GetUInt32(data)});
-        duck.displayIfASCII(data, 4, u" (\"", u"\")");
-        strm << std::endl;
-        data += 4; size -= 4;
+        disp.displayIntAndASCII(u"Private data indicator: 0x%08X", buf, 4, margin);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML serialization / deserialization.
 //----------------------------------------------------------------------------
 
 void ts::PrivateDataIndicatorDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -122,12 +103,7 @@ void ts::PrivateDataIndicatorDescriptor::buildXML(DuckContext& duck, xml::Elemen
     root->setIntAttribute(u"private_data_indicator", private_data_indicator, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::PrivateDataIndicatorDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint32_t>(private_data_indicator, u"private_data_indicator", true);
+    return element->getIntAttribute(private_data_indicator, u"private_data_indicator", true);
 }

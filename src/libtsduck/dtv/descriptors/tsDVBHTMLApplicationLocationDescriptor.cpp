@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -72,37 +73,16 @@ ts::DVBHTMLApplicationLocationDescriptor::DVBHTMLApplicationLocationDescriptor(D
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DVBHTMLApplicationLocationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DVBHTMLApplicationLocationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->append(duck.encodedWithByteLength(physical_root));
-    bbp->append(duck.encoded(initial_path));
-    serializeEnd(desc, bbp);
+    buf.putStringWithByteLength(physical_root);
+    buf.putString(initial_path);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::DVBHTMLApplicationLocationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DVBHTMLApplicationLocationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    physical_root.clear();
-    initial_path.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    if (_is_valid) {
-        const size_t len = data[0];
-        _is_valid = len + 1 <= size;
-        if (_is_valid) {
-            duck.decode(physical_root, data + 1, len);
-            duck.decode(initial_path, data + 1 + len, size - len - 1);
-        }
-    }
+    buf.getStringWithByteLength(physical_root);
+    buf.getString(initial_path);
 }
 
 
@@ -110,20 +90,12 @@ void ts::DVBHTMLApplicationLocationDescriptor::deserialize(DuckContext& duck, co
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DVBHTMLApplicationLocationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DVBHTMLApplicationLocationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        size_t len = std::min<size_t>(data[0], size - 1);
-        strm << margin << "Physical root: \"" << duck.decoded(data + 1, len) << "\"" << std::endl
-             << margin << "Initial path: \"" << duck.decoded(data + 1 + len, size - len - 1) << "\"" << std::endl;
-        size = 0;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Physical root: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
+        disp << margin << "Initial path: \"" << buf.getString() << "\"" << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -136,11 +108,6 @@ void ts::DVBHTMLApplicationLocationDescriptor::buildXML(DuckContext& duck, xml::
     root->setAttribute(u"physical_root", physical_root);
     root->setAttribute(u"initial_path", initial_path);
 }
-
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
 
 bool ts::DVBHTMLApplicationLocationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {

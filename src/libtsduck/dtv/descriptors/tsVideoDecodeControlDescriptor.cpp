@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -77,14 +78,12 @@ ts::VideoDecodeControlDescriptor::VideoDecodeControlDescriptor(DuckContext& duck
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::VideoDecodeControlDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::VideoDecodeControlDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8((still_picture ? 0x80 : 0x00) |
-                     (sequence_end_code ? 0x40 : 0x00) |
-                     uint8_t((video_encode_format & 0x0F) << 2) |
-                     (reserved_future_use & 0x03));
-    serializeEnd(desc, bbp);
+    buf.putBit(still_picture);
+    buf.putBit(sequence_end_code);
+    buf.putBits(video_encode_format, 4);
+    buf.putBits(reserved_future_use, 2);
 }
 
 
@@ -92,18 +91,12 @@ void ts::VideoDecodeControlDescriptor::serialize(DuckContext& duck, Descriptor& 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::VideoDecodeControlDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::VideoDecodeControlDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 1;
-
-    if (_is_valid) {
-        still_picture = (data[0] & 0x80) != 0;
-        sequence_end_code = (data[0] & 0x40) != 0;
-        video_encode_format = (data[0] >> 2) & 0x0F;
-        reserved_future_use = data[0] & 0x03;
-    }
+    still_picture = buf.getBool();
+    sequence_end_code = buf.getBool();
+    buf.getBits(video_encode_format, 4);
+    buf.getBits(reserved_future_use, 2);
 }
 
 
@@ -111,20 +104,14 @@ void ts::VideoDecodeControlDescriptor::deserialize(DuckContext& duck, const Desc
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::VideoDecodeControlDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::VideoDecodeControlDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size > 0) {
-        strm << margin << UString::Format(u"Still picture: %s", {(data[0] & 0x80) != 0}) << std::endl
-             << margin << UString::Format(u"Sequence end code: %s", {(data[0] & 0x40) != 0}) << std::endl
-             << margin << "Video encode format: " << NameFromSection(u"VideoEncodeFormat", (data[0] >> 2) & 0x0F, names::DECIMAL_FIRST) << std::endl
-             << margin << UString::Format(u"Reserve future use: %d", {data[0] & 0x03}) << std::endl;
-        data++; size--;
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Still picture: %s", {buf.getBool()}) << std::endl;
+        disp << margin << UString::Format(u"Sequence end code: %s", {buf.getBool()}) << std::endl;
+        disp << margin << "Video encode format: " << NameFromSection(u"VideoEncodeFormat", buf.getBits<uint8_t>(4), names::DECIMAL_FIRST) << std::endl;
+        disp << margin << UString::Format(u"Reserve future use: %d", {buf.getBits<uint8_t>(2)}) << std::endl;
     }
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -151,6 +138,6 @@ bool ts::VideoDecodeControlDescriptor::analyzeXML(DuckContext& duck, const xml::
 {
     return element->getBoolAttribute(still_picture, u"still_picture", true) &&
            element->getBoolAttribute(sequence_end_code, u"sequence_end_code", true) &&
-           element->getIntAttribute<uint8_t>(video_encode_format, u"video_encode_format", true, 0, 0, 0x0F) &&
-           element->getIntAttribute<uint8_t>(reserved_future_use, u"reserved_future_use", false, 3, 0, 3);
+           element->getIntAttribute(video_encode_format, u"video_encode_format", true, 0, 0, 0x0F) &&
+           element->getIntAttribute(reserved_future_use, u"reserved_future_use", false, 3, 0, 3);
 }

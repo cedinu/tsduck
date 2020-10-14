@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -76,45 +77,21 @@ ts::AssociationTagDescriptor::AssociationTagDescriptor(DuckContext& duck, const 
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AssociationTagDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::AssociationTagDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(association_tag);
-    bbp->appendUInt16(use);
-    bbp->appendUInt8(uint8_t(selector_bytes.size()));
-    bbp->append(selector_bytes);
-    bbp->append(private_data);
-    serializeEnd(desc, bbp);
+    buf.putUInt16(association_tag);
+    buf.putUInt16(use);
+    buf.putUInt8(uint8_t(selector_bytes.size()));
+    buf.putBytes(selector_bytes);
+    buf.putBytes(private_data);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::AssociationTagDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::AssociationTagDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    selector_bytes.clear();
-    private_data.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 5;
-
-    if (_is_valid) {
-        association_tag = GetUInt16(data);
-        use = GetUInt16(data + 2);
-        const size_t len = GetUInt8(data + 4);
-        data += 5; size -= 5;
-        if (len > size) {
-            _is_valid = false;
-        }
-        else {
-            selector_bytes.copy(data, len);
-            private_data.copy(data + len, size - len);
-        }
-    }
+    association_tag = buf.getUInt16();
+    use = buf.getUInt16();
+    buf.getBytes(selector_bytes, buf.getUInt8());
+    buf.getBytes(private_data);
 }
 
 
@@ -122,24 +99,13 @@ void ts::AssociationTagDescriptor::deserialize(DuckContext& duck, const Descript
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::AssociationTagDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::AssociationTagDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 5) {
-        const uint16_t tag = GetUInt16(data);
-        const uint16_t use = GetUInt16(data + 2);
-        const size_t len = std::min<size_t>(size - 5, GetUInt8(data + 4));
-        data += 5; size -= 5;
-
-        strm << margin << UString::Format(u"Association tag: 0x%X (%d), use: 0x%X (%d)", {tag, tag, use, use}) << std::endl;
-        display.displayPrivateData(u"Selector bytes", data, len, indent);
-        display.displayPrivateData(u"Private data", data + len, size - len, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+    if (buf.canReadBytes(5)) {
+        disp << margin << UString::Format(u"Association tag: 0x%X (%<d)", {buf.getUInt16()});
+        disp << UString::Format(u", use: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp.displayPrivateData(u"Selector bytes", buf, buf.getUInt8(), margin);
+        disp.displayPrivateData(u"Private data", buf, NPOS, margin);
     }
 }
 
@@ -152,23 +118,14 @@ void ts::AssociationTagDescriptor::buildXML(DuckContext& duck, xml::Element* roo
 {
     root->setIntAttribute(u"association_tag", association_tag, true);
     root->setIntAttribute(u"use", use, true);
-    if (!selector_bytes.empty()) {
-        root->addHexaTextChild(u"selector_bytes", selector_bytes);
-    }
-    if (!private_data.empty()) {
-        root->addHexaTextChild(u"private_data", private_data);
-    }
+    root->addHexaTextChild(u"selector_bytes", selector_bytes, true);
+    root->addHexaTextChild(u"private_data", private_data, true);
 }
-
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
 
 bool ts::AssociationTagDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint16_t>(association_tag, u"association_tag", true) &&
-           element->getIntAttribute<uint16_t>(use, u"use", true) &&
+    return element->getIntAttribute(association_tag, u"association_tag", true) &&
+           element->getIntAttribute(use, u"use", true) &&
            element->getHexaTextChild(selector_bytes, u"selector_bytes", false) &&
            element->getHexaTextChild(private_data, u"private_data", false);
 }

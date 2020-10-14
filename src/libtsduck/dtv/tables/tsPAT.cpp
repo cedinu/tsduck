@@ -101,7 +101,7 @@ void ts::PAT::deserializePayload(PSIBuffer& buf, const Section& section)
     ts_id = section.tableIdExtension();
 
     // The paylaod is a list of service_id/pmt_pid pairs
-    while (!buf.error() && !buf.endOfRead()) {
+    while (buf.canRead()) {
         const uint16_t id = buf.getUInt16();
         const uint16_t pid = buf.getPID();
         if (id == 0) {
@@ -118,25 +118,25 @@ void ts::PAT::deserializePayload(PSIBuffer& buf, const Section& section)
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::PAT::serializePayload(BinaryTable& table, PSIBuffer& payload) const
+void ts::PAT::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
     // Add the NIT PID once in the first section
     if (nit_pid != PID_NULL) {
-        payload.putUInt16(0); // pseudo service_id
-        payload.putPID(nit_pid);
+        buf.putUInt16(0); // pseudo service_id
+        buf.putPID(nit_pid);
     }
 
     // Add all services
     for (auto it = pmts.begin(); it != pmts.end(); ++it) {
 
         // If current section payload is full, close the current section.
-        if (payload.remainingWriteBytes() < 4) {
-            addOneSection(table, payload);
+        if (buf.remainingWriteBytes() < 4) {
+            addOneSection(table, buf);
         }
 
         // Add current service entry into the PAT section
-        payload.putUInt16(it->first);  // service_id
-        payload.putPID(it->second);    // pmt pid
+        buf.putUInt16(it->first);  // service_id
+        buf.putPID(it->second);    // pmt pid
     }
 }
 
@@ -145,23 +145,13 @@ void ts::PAT::serializePayload(BinaryTable& table, PSIBuffer& payload) const
 // A static method to display a PAT section.
 //----------------------------------------------------------------------------
 
-void ts::PAT::DisplaySection(TablesDisplay& display, const Section& section, int indent)
+void ts::PAT::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    PSIBuffer buf(duck, section);
-
-    strm << margin << UString::Format(u"TS id:   %5d (0x%<04X)", {section.tableIdExtension()}) << std::endl;
-
-    // Loop through all program / pid pairs
-    while (!buf.endOfRead()) {
+    disp << margin << UString::Format(u"TS id:   %5d (0x%<04X)", {section.tableIdExtension()}) << std::endl;
+    while (buf.canReadBytes(4)) {
         const uint16_t id = buf.getUInt16();
-        const uint16_t pid = buf.getPID();
-        strm << margin << UString::Format(u"%s %5d (0x%<04X)  PID: %4d (0x%<04X)", {id == 0 ? u"NIT:    " : u"Program:", id, pid}) << std::endl;
+        disp << margin << UString::Format(u"%s %5d (0x%<04X)  PID: %4d (0x%<04X)", {id == 0 ? u"NIT:    " : u"Program:", id, buf.getPID()}) << std::endl;
     }
-
-    display.displayExtraData(buf, indent);
 }
 
 
@@ -193,16 +183,16 @@ bool ts::PAT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     xml::ElementVector xservice;
     bool ok =
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+        element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
-        element->getIntAttribute<uint16_t>(ts_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
+        element->getIntAttribute(ts_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
         element->getIntAttribute<PID>(nit_pid, u"network_PID", false, PID_NULL, 0x0000, 0x1FFF) &&
         element->getChildren(xservice, u"service", 0, 0x10000);
 
     for (auto it = xservice.begin(); it != xservice.end(); ++it) {
         uint16_t id = 0;
         PID pid = PID_NULL;
-        ok = (*it)->getIntAttribute<uint16_t>(id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
+        ok = (*it)->getIntAttribute(id, u"service_id", true, 0, 0x0000, 0xFFFF) &&
              (*it)->getIntAttribute<PID>(pid, u"program_map_PID", true, 0, 0x0000, 0x1FFF);
         if (ok) {
             pmts[id] = pid;

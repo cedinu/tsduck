@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -80,17 +81,15 @@ ts::ApplicationStorageDescriptor::ApplicationStorageDescriptor(DuckContext& duck
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationStorageDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ApplicationStorageDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(storage_property);
-    bbp->appendUInt8((not_launchable_from_broadcast ? 0x80 : 0x00) |
-                     (launchable_completely_from_cache ? 0x40 : 0x00) |
-                     (is_launchable_with_older_version ? 0x20 : 0x00) |
-                     0x1F);
-    bbp->appendUInt32(0x80000000 | version);
-    bbp->appendUInt8(priority);
-    serializeEnd(desc, bbp);
+    buf.putUInt8(storage_property);
+    buf.putBit(not_launchable_from_broadcast);
+    buf.putBit(launchable_completely_from_cache);
+    buf.putBit(is_launchable_with_older_version);
+    buf.putBits(0xFF, 6);
+    buf.putBits(version, 31);
+    buf.putUInt8(priority);
 }
 
 
@@ -98,21 +97,15 @@ void ts::ApplicationStorageDescriptor::serialize(DuckContext& duck, Descriptor& 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ApplicationStorageDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ApplicationStorageDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 7;
-
-    if (_is_valid) {
-        storage_property = data[0];
-        not_launchable_from_broadcast = (data[1] & 0x80) != 0;
-        launchable_completely_from_cache = (data[1] & 0x40) != 0;
-        is_launchable_with_older_version = (data[1] & 0x20) != 0;
-        version = GetUInt32(data + 2) & 0x7FFFFFFF;
-        priority = data[6];
-    }
+    storage_property = buf.getUInt8();
+    not_launchable_from_broadcast = buf.getBool();
+    launchable_completely_from_cache = buf.getBool();
+    is_launchable_with_older_version = buf.getBool();
+    buf.skipBits(6);
+    buf.getBits(version, 31);
+    priority = buf.getUInt8();
 }
 
 
@@ -120,24 +113,17 @@ void ts::ApplicationStorageDescriptor::deserialize(DuckContext& duck, const Desc
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ApplicationStorageDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ApplicationStorageDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 7) {
-        const uint32_t vers = GetUInt32(data + 2) & 0x7FFFFFFF;
-        strm << margin << UString::Format(u"Storage property: 0x%X (%d)", {data[0], data[0]}) << std::endl
-             << margin << "Not launchable from broadcast: " << UString::YesNo((data[1] & 0x80) != 0) << std::endl
-             << margin << "Launchable completely from cache: " << UString::YesNo((data[1] & 0x40) != 0) << std::endl
-             << margin << "Is launchable with older version: " << UString::YesNo((data[1] & 0x20) != 0) << std::endl
-             << margin << UString::Format(u"Version: 0x%X (%d)", {vers, vers}) << std::endl
-             << margin << UString::Format(u"Storage property: 0x%X (%d)", {data[6], data[6]}) << std::endl;
-        data += 7; size -= 7;
+    if (buf.canReadBytes(7)) {
+        disp << margin << UString::Format(u"Storage property: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        disp << margin << "Not launchable from broadcast: " << UString::YesNo(buf.getBool()) << std::endl;
+        disp << margin << "Launchable completely from cache: " << UString::YesNo(buf.getBool()) << std::endl;
+        disp << margin << "Is launchable with older version: " << UString::YesNo(buf.getBool()) << std::endl;
+        buf.skipBits(6);
+        disp << margin << UString::Format(u"Version: 0x%X (%<d)", {buf.getBits<uint32_t>(31)}) << std::endl;
+        disp << margin << UString::Format(u"Storage property: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -162,10 +148,10 @@ void ts::ApplicationStorageDescriptor::buildXML(DuckContext& duck, xml::Element*
 
 bool ts::ApplicationStorageDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(storage_property, u"storage_property", true) &&
+    return element->getIntAttribute(storage_property, u"storage_property", true) &&
            element->getBoolAttribute(not_launchable_from_broadcast, u"not_launchable_from_broadcast", true) &&
            element->getBoolAttribute(launchable_completely_from_cache, u"launchable_completely_from_cache", true) &&
            element->getBoolAttribute(is_launchable_with_older_version, u"is_launchable_with_older_version", true) &&
-           element->getIntAttribute<uint32_t>(version, u"version", true, 0, 0, 0x7FFFFFFF) &&
-           element->getIntAttribute<uint8_t>(priority, u"priority", true);
+           element->getIntAttribute(version, u"version", true, 0, 0, 0x7FFFFFFF) &&
+           element->getIntAttribute(priority, u"priority", true);
 }

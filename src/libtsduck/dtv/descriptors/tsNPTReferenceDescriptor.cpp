@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -64,6 +65,15 @@ ts::NPTReferenceDescriptor::NPTReferenceDescriptor(DuckContext& duck, const Desc
     deserialize(duck, desc);
 }
 
+void ts::NPTReferenceDescriptor::clearContent()
+{
+    post_discontinuity = false;
+    content_id = 0;
+    STC_reference = 0;
+    NPT_reference = 0;
+    scale_numerator = 0;
+    scale_denominator = 0;
+}
 
 
 //----------------------------------------------------------------------------
@@ -117,15 +127,16 @@ uint64_t ts::NPTReferenceDescriptor::nptToSTC(uint64_t npt) const
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::NPTReferenceDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::NPTReferenceDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8((post_discontinuity ? 0x80 : 0x00) | (content_id & 0x7F));
-    bbp->appendUInt40(TS_UCONST64(0x000000FE00000000) | STC_reference);
-    bbp->appendUInt64(TS_UCONST64(0xFFFFFFFE00000000) | NPT_reference);
-    bbp->appendUInt16(scale_numerator);
-    bbp->appendUInt16(scale_denominator);
-    serializeEnd(desc, bbp);
+    buf.putBit(post_discontinuity);
+    buf.putBits(content_id, 7);
+    buf.putBits(0xFF, 7);
+    buf.putBits(STC_reference, 33);
+    buf.putBits(0xFFFFFFFF, 31);
+    buf.putBits(NPT_reference, 33);
+    buf.putUInt16(scale_numerator);
+    buf.putUInt16(scale_denominator);
 }
 
 
@@ -133,29 +144,16 @@ void ts::NPTReferenceDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::NPTReferenceDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::NPTReferenceDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 18;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        post_discontinuity = (data[0] & 0x80) != 0;
-        content_id = data[0] & 0x7F;
-        STC_reference = GetUInt40(data + 1) & TS_UCONST64(0x00000001FFFFFFFF);
-        NPT_reference = GetUInt64(data + 6) & TS_UCONST64(0x00000001FFFFFFFF);
-        scale_numerator = GetUInt16(data + 14);
-        scale_denominator = GetUInt16(data + 16);
-    }
-}
-
-void ts::NPTReferenceDescriptor::clearContent()
-{
-    post_discontinuity = false;
-    content_id = 0;
-    STC_reference = 0;
-    NPT_reference = 0;
-    scale_numerator = 0;
-    scale_denominator = 0;
+    post_discontinuity = buf.getBool();
+    buf.getBits(content_id, 7);
+    buf.skipBits(7);
+    buf.getBits(STC_reference, 33);
+    buf.skipBits(31);
+    buf.getBits(NPT_reference, 33);
+    scale_numerator = buf.getUInt16();
+    scale_denominator = buf.getUInt16();
 }
 
 
@@ -163,24 +161,18 @@ void ts::NPTReferenceDescriptor::clearContent()
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::NPTReferenceDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::NPTReferenceDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 18) {
-        const uint64_t stc = GetUInt40(data + 1) & TS_UCONST64(0x00000001FFFFFFFF);
-        const uint64_t npt = GetUInt64(data + 6) & TS_UCONST64(0x00000001FFFFFFFF);
-        strm << margin << "Post discontinuity: " << UString::TrueFalse((data[0] & 0x80) != 0) << std::endl
-             << margin << UString::Format(u"Content id: 0x%X (%d)", {data[0] & 0x7F, data[0] & 0x7F}) << std::endl
-             << margin << UString::Format(u"STC reference: 0x%09X (%d)", {stc, stc}) << std::endl
-             << margin << UString::Format(u"NPT reference: 0x%09X (%d)", {npt, npt}) << std::endl
-             << margin << UString::Format(u"NPT/STC scale: %d/%d", {GetUInt16(data + 14), GetUInt16(data + 16)}) << std::endl;
-        data += 18; size -= 18;
+    if (buf.canReadBytes(18)) {
+        disp << margin << "Post discontinuity: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        disp << margin << UString::Format(u"Content id: 0x%X (%<d)", {buf.getBits<uint8_t>(7)}) << std::endl;
+        buf.skipBits(7);
+        disp << margin << UString::Format(u"STC reference: 0x%09X (%<d)", {buf.getBits<uint64_t>(33)}) << std::endl;
+        buf.skipBits(31);
+        disp << margin << UString::Format(u"NPT reference: 0x%09X (%<d)", {buf.getBits<uint64_t>(33)}) << std::endl;
+        disp << margin << UString::Format(u"NPT/STC scale: %d", {buf.getUInt16()});
+        disp << UString::Format(u"/%d", {buf.getUInt16()}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -206,9 +198,9 @@ void ts::NPTReferenceDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 bool ts::NPTReferenceDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     return element->getBoolAttribute(post_discontinuity, u"post_discontinuity", false, false) &&
-           element->getIntAttribute<uint8_t>(content_id, u"content_id", false, 0x7F, 0x00, 0x7F) &&
-           element->getIntAttribute<uint64_t>(STC_reference, u"STC_reference", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
-           element->getIntAttribute<uint64_t>(NPT_reference, u"NPT_reference", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
-           element->getIntAttribute<uint16_t>(scale_numerator, u"scale_numerator", true) &&
-           element->getIntAttribute<uint16_t>(scale_denominator, u"scale_denominator", true);
+           element->getIntAttribute(content_id, u"content_id", false, 0x7F, 0x00, 0x7F) &&
+           element->getIntAttribute(STC_reference, u"STC_reference", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
+           element->getIntAttribute(NPT_reference, u"NPT_reference", true, 0, 0, TS_UCONST64(0x00000001FFFFFFFF)) &&
+           element->getIntAttribute(scale_numerator, u"scale_numerator", true) &&
+           element->getIntAttribute(scale_denominator, u"scale_denominator", true);
 }

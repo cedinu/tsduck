@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -67,31 +68,17 @@ ts::ATSCStuffingDescriptor::ATSCStuffingDescriptor(DuckContext& duck, const Desc
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// Serialization / deserialization
 //----------------------------------------------------------------------------
 
-void ts::ATSCStuffingDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ATSCStuffingDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->append(stuffing);
-    serializeEnd(desc, bbp);
+    buf.putBytes(stuffing);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::ATSCStuffingDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ATSCStuffingDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag();
-
-    if (_is_valid) {
-        stuffing.copy(desc.payload(), desc.payloadSize());
-    }
-    else {
-        stuffing.clear();
-    }
+    buf.getBytes(stuffing);
 }
 
 
@@ -99,9 +86,9 @@ void ts::ATSCStuffingDescriptor::deserialize(DuckContext& duck, const Descriptor
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ATSCStuffingDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ATSCStuffingDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    display.displayPrivateData(u"Stuffing data", data, size, indent);
+    disp.displayPrivateData(u"Stuffing data", buf, NPOS, margin);
 }
 
 

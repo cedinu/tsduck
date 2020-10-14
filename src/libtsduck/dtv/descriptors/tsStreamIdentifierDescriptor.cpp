@@ -68,7 +68,7 @@ ts::StreamIdentifierDescriptor::StreamIdentifierDescriptor(DuckContext& duck, co
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// Serialization / deserialization.
 //----------------------------------------------------------------------------
 
 void ts::StreamIdentifierDescriptor::serializePayload(PSIBuffer& buf) const
@@ -86,22 +86,16 @@ void ts::StreamIdentifierDescriptor::deserializePayload(PSIBuffer& buf)
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::StreamIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::StreamIdentifierDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    PSIBuffer buf(duck, data, size);
-
-    if (buf.remainingReadBytes() >= 1) {
-        strm << margin << UString::Format(u"Component tag: %d (0x%<X)", {buf.getUInt8()}) << std::endl;
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Component tag: %d (0x%<X)", {buf.getUInt8()}) << std::endl;
     }
-    display.displayExtraData(buf, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML
+// XML serialization / deserialization.
 //----------------------------------------------------------------------------
 
 void ts::StreamIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -111,5 +105,5 @@ void ts::StreamIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* r
 
 bool ts::StreamIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(component_tag, u"component_tag", true);
+    return element->getIntAttribute(component_tag, u"component_tag", true);
 }

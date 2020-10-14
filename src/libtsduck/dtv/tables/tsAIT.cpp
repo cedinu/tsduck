@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -72,6 +73,13 @@ ts::AIT::AIT(const AIT& other) :
 {
 }
 
+ts::AIT::Application::Application(const AbstractTable* table) :
+    EntryWithDescriptors(table),
+    control_code(0)
+{
+}
+
+
 
 //----------------------------------------------------------------------------
 // Get the table id extension.
@@ -100,120 +108,125 @@ void ts::AIT::clearContent()
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::AIT::deserializeContent(DuckContext& duck, const BinaryTable& table)
+void ts::AIT::deserializePayload(PSIBuffer& buf, const Section& section)
 {
-    // Clear table content
-    application_type = 0;
-    test_application_flag = false;
-    descs.clear();
-    applications.clear();
+    // Get common properties (should be identical in all sections)
+    const uint16_t tid_ext = section.tableIdExtension();
+    test_application_flag = (tid_ext & 0x8000) != 0;
+    application_type = tid_ext & 0x7fff;
 
-    // Loop on all sections.
-    for (size_t si = 0; si < table.sectionCount(); ++si) {
+    // Get common descriptor list
+    buf.getDescriptorListWithLength(descs);
 
-        // Reference to current section
-        const Section& sect(*table.sectionAt(si));
+    // Application loop length.
+    buf.skipBits(4);
+    const size_t loop_length = buf.getBits<size_t>(12);
+    const size_t end_loop = buf.currentReadByteOffset() + loop_length;
 
-        // Get common properties (should be identical in all sections)
-        version = sect.version();
-        is_current = sect.isCurrent();
-        uint16_t tid_ext(sect.tableIdExtension());
-        test_application_flag = (tid_ext & 0x8000) != 0;
-        application_type = tid_ext & 0x7fff;
-
-        // Analyze the section payload:
-        const uint8_t* data(sect.payload());
-        size_t remain(sect.payloadSize());
-
-        // Get ait common descriptor list
-        if (remain < 2) {
-            return;
-        }
-        size_t descriptors_length(GetUInt16(data) & 0x0FFF);
-        data += 2;
-        remain -= 2;
-        descriptors_length = std::min(descriptors_length, remain);
-        descs.add(data, descriptors_length);
-        data += descriptors_length;
-        remain -= descriptors_length;
-
-        // Get application loop length
-        if (remain < 2) {
-            return;
-        }
-        size_t app_loop_length = (GetUInt16(data) & 0x0FFF);
-        data += 2;
-        remain -= 2;
-        remain = std::min(app_loop_length, remain);
-
-        // Get applications
-        while (remain >= 9) {
-            ApplicationIdentifier app_id(GetUInt32(data), GetUInt16(data + 4));
-            Application& app(applications[app_id]);
-            app.control_code = data[6];
-            descriptors_length = GetUInt16(data + 7) & 0x0FFF;
-            data += 9;
-            remain -= 9;
-            descriptors_length = std::min(descriptors_length, remain);
-            app.descs.add(data, descriptors_length);
-            data += descriptors_length;
-            remain -= descriptors_length;
-        }
+    // Get application descriptions.
+    while (buf.canRead()) {
+        const uint32_t org_id = buf.getUInt32();
+        const uint16_t app_id = buf.getUInt16();
+        Application& app(applications[ApplicationIdentifier(org_id, app_id)]);
+        app.control_code = buf.getUInt8();
+        buf.getDescriptorListWithLength(app.descs);
     }
 
-    _is_valid = true;
+    // Make sure we exactly reached the end of transport stream loop.
+    if (!buf.error() && buf.currentReadByteOffset() != end_loop) {
+        buf.setUserError();
+    }
 }
+
 
 //----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AIT::serializeContent(DuckContext& duck, BinaryTable& table) const
+void ts::AIT::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
-    // Current limitation: only one section is serialized.
-    // Extraneous descriptors are dropped.
+    // Minimum size of a section: empty common descriptor list and application_loop_length.
+    constexpr size_t payload_min_size = 4;
 
-    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
-    uint8_t* data = payload;
-    size_t remain = sizeof(payload);
+    // Add common descriptor list.
+    // If the descriptor list is too long to fit into one section, create new sections when necessary.
+    for (size_t start = 0;;) {
+        // Reserve and restore 2 bytes for application_loop_length.
+        buf.pushWriteSize(buf.size() - 2);
+        start = buf.putPartialDescriptorListWithLength(descs, start);
+        buf.popState();
 
-    // Insert common descriptors list (with leading length field).
-    // Provision space for 16-bit application loop length.
-    remain -= 2;
-    descs.lengthSerialize(data, remain);
-
-    // Reserve placeholder for 16-bit application loop length.
-    // Remain is unmodified here, already reserved before serializing the descriptors.
-    uint8_t* const app_length = data;
-    data += 2;
-
-    // Add description of all applications
-    for (ApplicationMap::const_iterator it = applications.begin(); it != applications.end() && remain >= 9; ++it) {
-
-        // Insert stream type and pid
-        PutUInt32(data, it->first.organization_id);
-        PutUInt16(data + 4, it->first.application_id);
-        data[6] = it->second.control_code;
-        data += 7;
-        remain -= 7;
-
-        // Insert application descriptors list (with leading length field)
-        it->second.descs.lengthSerialize(data, remain);
+        if (buf.error() || start >= descs.size()) {
+            // Common descriptor list completed.
+            break;
+        }
+        else {
+            // There are remaining top-level descriptors, flush current section.
+            // Add a zero application_loop_length.
+            buf.putUInt16(0xF000);
+            addOneSection(table, buf);
+        }
     }
 
-    // Now update the 16-bit application loop length.
-    PutUInt16(app_length, uint16_t(0xF000 | (data - app_length - 2)));
+    // Reserve application_loop_length.
+    buf.putBits(0xFF, 4);
+    buf.pushWriteSequenceWithLeadingLength(12);
 
-    // Add one single section in the table
-    table.addSection(new Section(MY_TID,              // tid
-                                 true,                // is_private_section
-                                 tableIdExtension(),  // tid_ext
-                                 version,
-                                 is_current,
-                                 0,                   // section_number,
-                                 0,                   // last_section_number
-                                 payload,
-                                 data - payload));    // payload_size,
+    // Add all transports
+    for (auto it = applications.begin(); it != applications.end(); ++it) {
+
+        // If we cannot at least add the fixed part of an application description, open a new section
+        if (buf.remainingWriteBytes() < 9) {
+            addSection(table, buf, false);
+        }
+
+        // Binary size of the application entry.
+        const size_t entry_size = 9 + it->second.descs.binarySize();
+
+        // If we are not at the beginning of the application loop, make sure that the entire
+        // application description fits in the section. If it does not fit, start a new section.
+        if (entry_size > buf.remainingWriteBytes() && buf.currentWriteByteOffset() > payload_min_size) {
+            // Create a new section
+            addSection(table, buf, false);
+        }
+
+        // Serialize the characteristics of the application.
+        // If the descriptor list is too large for an entire section, it is truncated.
+        buf.putUInt32(it->first.organization_id);
+        buf.putUInt16(it->first.application_id);
+        buf.putUInt8(it->second.control_code);
+        buf.putPartialDescriptorListWithLength(it->second.descs);
+    }
+
+    // Add partial section.
+    buf.popState(); // close application_loop_length
+    addOneSection(table, buf);
+}
+
+
+//----------------------------------------------------------------------------
+// Add a new section to a table being serialized, while in application loop.
+//----------------------------------------------------------------------------
+
+void ts::AIT::addSection(BinaryTable& table, PSIBuffer& payload, bool last_section) const
+{
+    // The read/write state was pushed just before application_loop_length.
+
+    // Update application_loop_length.
+    payload.popState();
+
+    // Add the section and reset buffer.
+    addOneSection(table, payload);
+
+    // Prepare for the next section if necessary.
+    if (!last_section) {
+        // Empty (zero-length) top-level descriptor list.
+        payload.putUInt16(0xF000);
+
+        // Reserve application_loop_length.
+        payload.putBits(0xFF, 4);
+        payload.pushWriteSequenceWithLeadingLength(12);
+    }
 }
 
 
@@ -221,62 +234,26 @@ void ts::AIT::serializeContent(DuckContext& duck, BinaryTable& table) const
 // A static method to display a AIT section.
 //----------------------------------------------------------------------------
 
-void ts::AIT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::AIT::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    const uint8_t* data = section.payload();
-    size_t size = section.payloadSize();
+    // Common information.
+    const uint16_t tidext = section.tableIdExtension();
+    disp << margin << UString::Format(u"Application type: %d (0x%<04X), Test application: %d", {tidext & 0x7FFF, tidext >> 15}) << std::endl;
+    disp.displayDescriptorListWithLength(section, buf, margin, u"Common descriptor loop:");
 
-    uint16_t application_type = section.tableIdExtension() & 0x7FFF;
-    bool test_application_flag = (section.tableIdExtension() & 0x8000) != 0;
-    strm << margin << UString::Format(u"Application type: %d (0x%X)", { application_type, application_type });
-    strm << u", Test application: " << test_application_flag << std::endl;
-
-    if (size >= 4) {
-        size_t length_field = GetUInt16(data) & 0x0FFF; // common_descriptors_length
-        data += 2;
-        size -= 2;
-        length_field = std::min(size, length_field);
-
-        // Process and display "common descriptors loop"
-        if (length_field > 0) {
-            strm << margin << "Common descriptor loop:" << std::endl;
-            display.displayDescriptorList(section, data, length_field, indent);
-        }
-        data += length_field;
-        size -= length_field;
-
-        if (size >= 2) {
-            length_field = GetUInt16(data) & 0x0FFF; // application_loop_length
-            data += 2;
-            size -= 2;
-            length_field = std::min(size, length_field);
-
-            // Process and display "application loop"
-            while (size >= 9) {
-                uint32_t org_id = GetUInt32(data);
-                uint16_t app_id = GetUInt16(data + 4);
-                uint8_t control_code = *(data + 6);
-                length_field = GetUInt16(data + 7) & 0xFFF; // application_descriptors_loop_length
-                data += 9;
-                size -= 9;
-                length_field = std::min(size, length_field);
-
-                strm << margin << "Application: Identifier: (Organization id: " << UString::Format(u"%d (0x%X)", { org_id, org_id })
-                     << ", Application id: " << UString::Format(u"%d (0x%X)", { app_id, app_id })
-                     << UString::Format(u"), Control code: %d", { control_code })
-                     << std::endl;
-                display.displayDescriptorList(section, data, length_field, indent);
-                data += length_field;
-                size -= length_field;
-            }
-        }
+    // Application loop
+    buf.skipBits(4);
+    buf.pushReadSizeFromLength(12);
+    while (buf.canReadBytes(9)) {
+        disp << margin << UString::Format(u"Application: Identifier: (Organization id: %d (0x%<X)", {buf.getUInt32()});
+        disp << UString::Format(u", Application id: %d (0x%<X))", {buf.getUInt16()});
+        disp << UString::Format(u", Control code: %d", {buf.getUInt8()}) << std::endl;
+        disp.displayDescriptorListWithLength(section, buf, margin);
     }
-
-    display.displayExtraData(data, size, indent);
+    disp.displayPrivateData(u"Extraneous application data", buf, NPOS, margin);
+    buf.popState();
 }
+
 
 //----------------------------------------------------------------------------
 // XML serialization
@@ -301,6 +278,7 @@ void ts::AIT::buildXML(DuckContext& duck, xml::Element* root) const
     }
 }
 
+
 //----------------------------------------------------------------------------
 // XML deserialization
 //----------------------------------------------------------------------------
@@ -309,10 +287,10 @@ bool ts::AIT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     xml::ElementVector children;
     bool ok =
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+        element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
         element->getBoolAttribute(test_application_flag, u"test_application_flag", false, true) &&
-        element->getIntAttribute<uint16_t>(application_type, u"application_type", true, 0, 0x0000, 0x7FFF) &&
+        element->getIntAttribute(application_type, u"application_type", true, 0, 0x0000, 0x7FFF) &&
         descs.fromXML(duck, children, element, u"application");
 
     // Iterate through applications
@@ -323,11 +301,11 @@ bool ts::AIT::analyzeXML(DuckContext& duck, const xml::Element* element)
         xml::ElementVector others;
         UStringList allowed({ u"application_identifier" });
 
-        ok = children[index]->getIntAttribute<uint8_t>(application.control_code, u"control_code", true, 0, 0x00, 0xFF) &&
+        ok = children[index]->getIntAttribute(application.control_code, u"control_code", true, 0, 0x00, 0xFF) &&
              application.descs.fromXML(duck, others, children[index], allowed) &&
              id != nullptr &&
-             id->getIntAttribute<uint32_t>(identifier.organization_id, u"organization_id", true, 0, 0, 0xFFFFFFFF) &&
-             id->getIntAttribute<uint16_t>(identifier.application_id, u"application_id", true, 0, 0, 0xFFFF);
+             id->getIntAttribute(identifier.organization_id, u"organization_id", true, 0, 0, 0xFFFFFFFF) &&
+             id->getIntAttribute(identifier.application_id, u"application_id", true, 0, 0, 0xFFFF);
 
         if (ok) {
             applications[identifier] = application;

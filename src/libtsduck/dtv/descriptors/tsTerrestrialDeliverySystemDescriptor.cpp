@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -90,24 +91,22 @@ void ts::TerrestrialDeliverySystemDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::TerrestrialDeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::TerrestrialDeliverySystemDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt32(uint32_t(centre_frequency / 10)); // coded in 10 Hz unit
-    bbp->appendUInt8(uint8_t(bandwidth << 5) |
-                     uint8_t(uint8_t(high_priority) << 4) |
-                     uint8_t(uint8_t(no_time_slicing) << 3) |
-                     uint8_t(uint8_t(no_mpe_fec) << 2) |
-                     0x03);
-    bbp->appendUInt8(uint8_t(constellation << 6) |
-                     uint8_t((hierarchy & 0x07) << 3) |
-                     (code_rate_hp & 0x07));
-    bbp->appendUInt8(uint8_t(code_rate_lp << 5) |
-                     uint8_t((guard_interval & 0x03) << 3) |
-                     uint8_t((transmission_mode & 0x03) << 1) |
-                     uint8_t(other_frequency));
-    bbp->appendUInt32(0xFFFFFFFF);
-    serializeEnd(desc, bbp);
+    buf.putUInt32(uint32_t(centre_frequency / 10)); // coded in 10 Hz unit
+    buf.putBits(bandwidth, 3);
+    buf.putBit(high_priority);
+    buf.putBit(no_time_slicing);
+    buf.putBit(no_mpe_fec);
+    buf.putBits(0xFF, 2);
+    buf.putBits(constellation, 2);
+    buf.putBits(hierarchy, 3);
+    buf.putBits(code_rate_hp, 3);
+    buf.putBits(code_rate_lp, 3);
+    buf.putBits(guard_interval, 2);
+    buf.putBits(transmission_mode, 2);
+    buf.putBit(other_frequency);
+    buf.putUInt32(0xFFFFFFFF);
 }
 
 
@@ -115,25 +114,22 @@ void ts::TerrestrialDeliverySystemDescriptor::serialize(DuckContext& duck, Descr
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::TerrestrialDeliverySystemDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::TerrestrialDeliverySystemDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 7;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        centre_frequency = uint64_t(GetUInt32(data)) * 10; // coded in 10 Hz unit
-        bandwidth = (data[4] >> 5) & 0x07;
-        high_priority = (data[4] & 0x10) != 0;
-        no_time_slicing = (data[4] & 0x08) != 0;
-        no_mpe_fec = (data[4] & 0x04) != 0;
-        constellation = (data[5] >> 6) & 0x03;
-        hierarchy = (data[5] >> 3) & 0x07;
-        code_rate_hp = data[5] & 0x07;
-        code_rate_lp = (data[6] >> 5) & 0x07;
-        guard_interval = (data[6] >> 3) & 0x03;
-        transmission_mode = (data[6] >> 1) & 0x03;
-        other_frequency = (data[6] & 0x01) != 0;
-    }
+    centre_frequency = uint64_t(buf.getUInt32()) * 10; // coded in 10 Hz unit
+    buf.getBits(bandwidth, 3);
+    high_priority = buf.getBool();
+    no_time_slicing = buf.getBool();
+    no_mpe_fec = buf.getBool();
+    buf.skipBits(2);
+    buf.getBits(constellation, 2);
+    buf.getBits(hierarchy, 3);
+    buf.getBits(code_rate_hp, 3);
+    buf.getBits(code_rate_lp, 3);
+    buf.getBits(guard_interval, 2);
+    buf.getBits(transmission_mode, 2);
+    other_frequency = buf.getBool();
+    buf.skipBits(32);
 }
 
 
@@ -141,97 +137,83 @@ void ts::TerrestrialDeliverySystemDescriptor::deserialize(DuckContext& duck, con
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::TerrestrialDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::TerrestrialDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 11) {
-        uint32_t cfreq = GetUInt32(data);
-        uint8_t bwidth = data[4] >> 5;
-        uint8_t prio = (data[4] >> 4) & 0x01;
-        uint8_t tslice = (data[4] >> 3) & 0x01;
-        uint8_t mpe_fec = (data[4] >> 2) & 0x01;
-        uint8_t constel = data[5] >> 6;
-        uint8_t hierarchy = (data[5] >> 3) & 0x07;
-        uint8_t rate_hp = data[5] & 0x07;
-        uint8_t rate_lp = data[6] >> 5;
-        uint8_t guard = (data[6] >> 3) & 0x03;
-        uint8_t transm = (data[6] >> 1) & 0x03;
-        bool other_freq = (data[6] & 0x01) != 0;
-        data += 11; size -= 11;
-
-        strm << margin << "Centre frequency: " << UString::Decimal(10 * uint64_t(cfreq)) << " Hz, Bandwidth: ";
+    if (buf.canReadBytes(11)) {
+        disp << margin << "Centre frequency: " << UString::Decimal(10 * uint64_t(buf.getUInt32())) << " Hz, Bandwidth: ";
+        const uint8_t bwidth = buf.getBits<uint8_t>(3);
         switch (bwidth) {
-            case 0:  strm << "8 MHz"; break;
-            case 1:  strm << "7 MHz"; break;
-            case 2:  strm << "6 MHz"; break;
-            case 3:  strm << "5 MHz"; break;
-            default: strm << "code " << int(bwidth) << " (reserved)"; break;
+            case 0:  disp << "8 MHz"; break;
+            case 1:  disp << "7 MHz"; break;
+            case 2:  disp << "6 MHz"; break;
+            case 3:  disp << "5 MHz"; break;
+            default: disp << "code " << int(bwidth) << " (reserved)"; break;
         }
-        strm << std::endl
-             << margin << "Priority: " << (prio ? "high" : "low")
-             << ", Time slicing: " << (tslice ? "unused" : "used")
-             << ", MPE-FEC: " << (mpe_fec ? "unused" : "used")
-             << std::endl
-             << margin << "Constellation pattern: ";
-        switch (constel) {
-            case 0:  strm << "QPSK"; break;
-            case 1:  strm << "16-QAM"; break;
-            case 2:  strm << "64-QAM"; break;
-            case 3:  strm << "reserved"; break;
+        disp << std::endl;
+        disp << margin << "Priority: " << (buf.getBool() ? "high" : "low");
+        disp << ", Time slicing: " << (buf.getBool() ? "unused" : "used");
+        disp << ", MPE-FEC: " << (buf.getBool() ? "unused" : "used") << std::endl;
+        buf.skipBits(2);
+        disp << margin << "Constellation pattern: ";
+        switch (buf.getBits<uint8_t>(2)) {
+            case 0:  disp << "QPSK"; break;
+            case 1:  disp << "16-QAM"; break;
+            case 2:  disp << "64-QAM"; break;
+            case 3:  disp << "reserved"; break;
             default: assert(false);
         }
-        strm << std::endl << margin << "Hierarchy: ";
-        assert(hierarchy < 8);
+        disp << std::endl;
+        disp << margin << "Hierarchy: ";
+        const uint8_t hierarchy = buf.getBits<uint8_t>(3);
         switch (hierarchy & 0x03) {
-            case 0:  strm << "non-hierarchical"; break;
-            case 1:  strm << "alpha = 1"; break;
-            case 2:  strm << "alpha = 2"; break;
-            case 3:  strm << "alpha = 4"; break;
+            case 0:  disp << "non-hierarchical"; break;
+            case 1:  disp << "alpha = 1"; break;
+            case 2:  disp << "alpha = 2"; break;
+            case 3:  disp << "alpha = 4"; break;
             default: assert(false);
         }
-        strm << ", " << ((hierarchy & 0x04) ? "in-depth" : "native")
-             << " interleaver" << std::endl
-             << margin << "Code rate: high prio: ";
+        disp << ", " << ((hierarchy & 0x04) ? "in-depth" : "native") << " interleaver" << std::endl;
+        const uint8_t rate_hp = buf.getBits<uint8_t>(3);
+        disp << margin << "Code rate: high prio: ";
         switch (rate_hp) {
-            case 0:  strm << "1/2"; break;
-            case 1:  strm << "2/3"; break;
-            case 2:  strm << "3/4"; break;
-            case 3:  strm << "5/6"; break;
-            case 4:  strm << "7/8"; break;
-            default: strm << "code " << int(rate_hp) << " (reserved)"; break;
+            case 0:  disp << "1/2"; break;
+            case 1:  disp << "2/3"; break;
+            case 2:  disp << "3/4"; break;
+            case 3:  disp << "5/6"; break;
+            case 4:  disp << "7/8"; break;
+            default: disp << "code " << int(rate_hp) << " (reserved)"; break;
         }
-        strm << ", low prio: ";
+        const uint8_t rate_lp = buf.getBits<uint8_t>(3);
+        disp << ", low prio: ";
         switch (rate_lp) {
-            case 0:  strm << "1/2"; break;
-            case 1:  strm << "2/3"; break;
-            case 2:  strm << "3/4"; break;
-            case 3:  strm << "5/6"; break;
-            case 4:  strm << "7/8"; break;
-            default: strm << "code " << int(rate_lp) << " (reserved)"; break;
+            case 0:  disp << "1/2"; break;
+            case 1:  disp << "2/3"; break;
+            case 2:  disp << "3/4"; break;
+            case 3:  disp << "5/6"; break;
+            case 4:  disp << "7/8"; break;
+            default: disp << "code " << int(rate_lp) << " (reserved)"; break;
         }
-        strm << std::endl << margin << "Guard interval: ";
-        switch (guard) {
-            case 0:  strm << "1/32"; break;
-            case 1:  strm << "1/16"; break;
-            case 2:  strm << "1/8"; break;
-            case 3:  strm << "1/4"; break;
+        disp << std::endl;
+        disp << margin << "Guard interval: ";
+        switch (buf.getBits<uint8_t>(2)) {
+            case 0:  disp << "1/32"; break;
+            case 1:  disp << "1/16"; break;
+            case 2:  disp << "1/8"; break;
+            case 3:  disp << "1/4"; break;
             default: assert(false);
         }
-        strm << std::endl << margin << "OFDM transmission mode: ";
-        switch (transm) {
-            case 0:  strm << "2k"; break;
-            case 1:  strm << "8k"; break;
-            case 2:  strm << "4k"; break;
-            case 3:  strm << "reserved"; break;
+        disp << std::endl;
+        disp << margin << "OFDM transmission mode: ";
+        switch (buf.getBits<uint8_t>(2)) {
+            case 0:  disp << "2k"; break;
+            case 1:  disp << "8k"; break;
+            case 2:  disp << "4k"; break;
+            case 3:  disp << "reserved"; break;
             default: assert(false);
         }
-        strm << ", other frequencies: " << UString::YesNo(other_freq) << std::endl;
+        disp << ", other frequencies: " << UString::YesNo(buf.getBool()) << std::endl;
+        buf.skipBits(32);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -303,13 +285,13 @@ void ts::TerrestrialDeliverySystemDescriptor::buildXML(DuckContext& duck, xml::E
 
 bool ts::TerrestrialDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return  element->getIntAttribute<uint64_t>(centre_frequency, u"centre_frequency", true) &&
+    return  element->getIntAttribute(centre_frequency, u"centre_frequency", true) &&
             element->getIntEnumAttribute(bandwidth, BandwidthNames, u"bandwidth", true) &&
             element->getIntEnumAttribute(high_priority, PriorityNames, u"priority", true) &&
             element->getBoolAttribute(no_time_slicing, u"no_time_slicing", true) &&
             element->getBoolAttribute(no_mpe_fec, u"no_MPE_FEC", true) &&
             element->getIntEnumAttribute(constellation, ConstellationNames, u"constellation", true) &&
-            element->getIntAttribute<uint8_t>(hierarchy, u"hierarchy_information", true) &&
+            element->getIntAttribute(hierarchy, u"hierarchy_information", true) &&
             element->getIntEnumAttribute(code_rate_hp, CodeRateNames, u"code_rate_HP_stream", true) &&
             element->getIntEnumAttribute(code_rate_lp, CodeRateNames, u"code_rate_LP_stream", true) &&
             element->getIntEnumAttribute(guard_interval, GuardIntervalNames, u"guard_interval", true) &&

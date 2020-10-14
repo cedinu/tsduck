@@ -91,9 +91,9 @@ namespace ts {
         //!
         //! Display the splice insert command.
         //! @param [in,out] display Display engine.
-        //! @param [in] indent Indentation width.
+        //! @param [in] margin Left margin content.
         //!
-        void display(TablesDisplay& display, int indent) const;
+        void display(TablesDisplay& display, const UString& margin) const;
 
         //!
         //! Deserialize a SpliceSchedule command from binary data.
@@ -113,6 +113,6 @@ namespace ts {
         // Inherited methods
         virtual void clearContent() override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

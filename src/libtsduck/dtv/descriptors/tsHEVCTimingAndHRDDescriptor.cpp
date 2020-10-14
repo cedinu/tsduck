@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -75,27 +76,36 @@ ts::HEVCTimingAndHRDDescriptor::HEVCTimingAndHRDDescriptor(DuckContext& duck, co
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::HEVCTimingAndHRDDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::HEVCTimingAndHRDDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::HEVCTimingAndHRDDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
     const bool has_90kHz = N_90khz.set() && K_90khz.set();
     const bool info_present = num_units_in_tick.set();
-    bbp->appendUInt8((hrd_management_valid ? 0x80 : 0x00) |
-                     (target_schedule_idx.set() ? uint8_t((target_schedule_idx.value() & 0x1F) << 1) : 0x7E) |
-                     (info_present ? 0x01 : 0x00));
+    buf.putBit(hrd_management_valid);
+    buf.putBit(!target_schedule_idx.set());
+    buf.putBits(target_schedule_idx.value(0xFF), 5);
+    buf.putBit(info_present);
     if (info_present) {
-        bbp->appendUInt8((has_90kHz ? 0x80 : 0x00) | 0x7F);
+        buf.putBit(has_90kHz);
+        buf.putBits(0xFF, 7);
         if (has_90kHz) {
-            bbp->appendUInt32(N_90khz.value());
-            bbp->appendUInt32(K_90khz.value());
+            buf.putUInt32(N_90khz.value());
+            buf.putUInt32(K_90khz.value());
         }
-        bbp->appendUInt32(num_units_in_tick.value());
+        buf.putUInt32(num_units_in_tick.value());
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -103,46 +113,26 @@ void ts::HEVCTimingAndHRDDescriptor::serialize(DuckContext& duck, Descriptor& de
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::HEVCTimingAndHRDDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::HEVCTimingAndHRDDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID;
-
-    target_schedule_idx.clear();
-    N_90khz.clear();
-    K_90khz.clear();
-    num_units_in_tick.clear();
-
-    if (_is_valid) {
-        hrd_management_valid = (data[1] & 0x80) != 0;
-        const bool info_present = (data[1] & 0x01) != 0;
-        if ((data[1] & 0x40) == 0) {
-            target_schedule_idx = (data[1] >> 1) & 0x1F;
-        }
-        data += 2; size -= 2;
-
-        if (info_present) {
-            _is_valid = size >= 1;
-            if (_is_valid) {
-                const bool has_90kHz = (data[0] & 0x80) != 0;
-                data++; size--;
-                _is_valid = (!has_90kHz && size >= 4) || (has_90kHz && size >= 12);
-                if (_is_valid) {
-                    if (has_90kHz) {
-                        N_90khz = GetUInt32(data);
-                        K_90khz = GetUInt32(data + 4);
-                        data += 8; size -= 8;
-                    }
-                    num_units_in_tick = GetUInt32(data);
-                    data += 4; size -= 4;
-                }
-            }
-        }
+    hrd_management_valid = buf.getBool();
+    const bool target_schedule_idx_not_present= buf.getBool();
+    if (target_schedule_idx_not_present) {
+        buf.skipBits(5);
     }
-
-    _is_valid = _is_valid && size == 0;
+    else {
+        buf.getBits(target_schedule_idx, 5);
+    }
+    const bool info_present = buf.getBool();
+    if (info_present) {
+        const bool has_90kHz = buf.getBool();
+        buf.skipBits(7);
+        if (has_90kHz) {
+            N_90khz = buf.getUInt32();
+            K_90khz = buf.getUInt32();
+        }
+        num_units_in_tick = buf.getUInt32();
+    }
 }
 
 
@@ -150,45 +140,28 @@ void ts::HEVCTimingAndHRDDescriptor::deserialize(DuckContext& duck, const Descri
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::HEVCTimingAndHRDDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::HEVCTimingAndHRDDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        strm << margin << "HRD management valid: " << UString::TrueFalse((data[0] & 0x80) != 0) << std::endl;
-        bool info_present = (data[0] & 0x01) != 0;
-        if ((data[0] & 0x40) == 0) {
-            const uint8_t idx = (data[0] >> 1) & 0x1F;
-            strm << margin << UString::Format(u"Target schedule idx: 0x%x (%d)", {idx, idx}) << std::endl;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "HRD management valid: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        if (buf.getBool()) { // target_schedule_idx_not_present
+            buf.skipBits(5);
         }
-        data++; size--;
-
-        bool ok = size >= 1;
-        if (info_present) {
-            const bool has_90kHz = (data[0] & 0x80) != 0;
-            data++; size--;
-            if (has_90kHz) {
-                ok = size >= 8;
-                if (ok) {
-                    strm << margin << UString::Format(u"90 kHz: N = %'d, K = %'d", {GetUInt32(data), GetUInt32(data + 4)}) << std::endl;
-                    data += 8; size -= 8;
-                }
+        else {
+            disp << margin << UString::Format(u"Target schedule idx: 0x%x (%<d)", {buf.getBits<uint8_t>(5)}) << std::endl;
+        }
+        if (buf.getBool()) { // info_present
+            const bool has_90kHz = buf.getBool();
+            buf.skipBits(7);
+            if (has_90kHz && buf.canReadBytes(8)) {
+                disp << margin << UString::Format(u"90 kHz: N = %'d", {buf.getUInt32()});
+                disp << UString::Format(u", K = %'d", {buf.getUInt32()}) << std::endl;
             }
-            ok = ok && size >= 4;
-            if (ok) {
-                strm << margin << UString::Format(u"Num. units in tick: %'d", {GetUInt32(data)}) << std::endl;
-                data += 4; size -= 4;
+            if (buf.canReadBytes(4)) {
+                disp << margin << UString::Format(u"Num. units in tick: %'d", {buf.getUInt32()}) << std::endl;
             }
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -213,8 +186,8 @@ void ts::HEVCTimingAndHRDDescriptor::buildXML(DuckContext& duck, xml::Element* r
 bool ts::HEVCTimingAndHRDDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     return element->getBoolAttribute(hrd_management_valid, u"hrd_management_valid", true) &&
-           element->getOptionalIntAttribute<uint8_t>(target_schedule_idx, u"target_schedule_idx", 0x00, 0x1F) &&
-           element->getOptionalIntAttribute<uint32_t>(N_90khz, u"N_90khz") &&
-           element->getOptionalIntAttribute<uint32_t>(K_90khz, u"K_90khz") &&
-           element->getOptionalIntAttribute<uint32_t>(num_units_in_tick, u"num_units_in_tick");
+           element->getOptionalIntAttribute(target_schedule_idx, u"target_schedule_idx", 0x00, 0x1F) &&
+           element->getOptionalIntAttribute(N_90khz, u"N_90khz") &&
+           element->getOptionalIntAttribute(K_90khz, u"K_90khz") &&
+           element->getOptionalIntAttribute(num_units_in_tick, u"num_units_in_tick");
 }

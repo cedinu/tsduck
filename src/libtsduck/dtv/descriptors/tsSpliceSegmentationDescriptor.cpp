@@ -33,6 +33,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -114,43 +115,42 @@ bool ts::SpliceSegmentationDescriptor::deliveryNotRestricted() const
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SpliceSegmentationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SpliceSegmentationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt32(identifier);
-    bbp->appendUInt32(segmentation_event_id);
-    bbp->appendUInt8(segmentation_event_cancel ? 0xFF : 0x7F);
+    buf.putUInt32(identifier);
+    buf.putUInt32(segmentation_event_id);
+    buf.putBit(segmentation_event_cancel);
+    buf.putBits(0xFF, 7);
     if (!segmentation_event_cancel) {
-        bbp->appendUInt8((program_segmentation ? 0x80 : 0x00) |
-                         (segmentation_duration.set() ? 0x40 : 0x00) |
-                         (deliveryNotRestricted() ? 0x20 : 0x00) |
-                         (web_delivery_allowed ? 0x10 : 0x00) |
-                         (no_regional_blackout ? 0x08 : 0x00) |
-                         (archive_allowed ? 0x04 : 0x00) |
-                         (device_restrictions & 0x03));
+        buf.putBit(program_segmentation);
+        buf.putBit(segmentation_duration.set());
+        buf.putBit(deliveryNotRestricted());
+        buf.putBit(web_delivery_allowed);
+        buf.putBit(no_regional_blackout);
+        buf.putBit(archive_allowed);
+        buf.putBits(device_restrictions, 2);
         if (!program_segmentation) {
-            bbp->appendUInt8(uint8_t(pts_offsets.size()));
+            buf.putUInt8(uint8_t(pts_offsets.size()));
             for (auto it = pts_offsets.begin(); it != pts_offsets.end(); ++it) {
-                bbp->appendUInt8(it->first);
-                bbp->appendUInt8(((it->second >> 32) & 0x01) == 0x00 ? 0xFE : 0xFF);
-                bbp->appendUInt32(uint32_t(it->second));
+                buf.putUInt8(it->first);     // component_tag
+                buf.putBits(0xFF, 7);
+                buf.putBits(it->second, 33); // pts_offset
             }
         }
         if (segmentation_duration.set()) {
-            bbp->appendUInt40(segmentation_duration.value());
+            buf.putUInt40(segmentation_duration.value());
         }
-        bbp->appendUInt8(segmentation_upid_type);
-        bbp->appendUInt8(uint8_t(segmentation_upid.size()));
-        bbp->append(segmentation_upid);
-        bbp->appendUInt8(segmentation_type_id);
-        bbp->appendUInt8(segment_num);
-        bbp->appendUInt8(segments_expected);
-        if (segmentation_type_id == 0x34 || segmentation_type_id == 0x36) {
-            bbp->appendUInt8(sub_segment_num);
-            bbp->appendUInt8(sub_segments_expected);
+        buf.putUInt8(segmentation_upid_type);
+        buf.putUInt8(uint8_t(segmentation_upid.size()));
+        buf.putBytes(segmentation_upid);
+        buf.putUInt8(segmentation_type_id);
+        buf.putUInt8(segment_num);
+        buf.putUInt8(segments_expected);
+        if (segmentation_type_id == 0x34 || segmentation_type_id == 0x36 || segmentation_type_id == 0x38 || segmentation_type_id == 0x3A) {
+            buf.putUInt8(sub_segment_num);
+            buf.putUInt8(sub_segments_expected);
         }
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -158,91 +158,51 @@ void ts::SpliceSegmentationDescriptor::serialize(DuckContext& duck, Descriptor& 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::SpliceSegmentationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SpliceSegmentationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    clear();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 9;
-
-    if (_is_valid) {
-        identifier = GetUInt32(data);
-        segmentation_event_id = GetUInt32(data + 4);
-        segmentation_event_cancel = (data[8] & 0x80) != 0;
-        data += 9; size -= 9;
-
-        if (segmentation_event_cancel) {
-            _is_valid = size == 0;
-            return; // end of descriptor
+    identifier = buf.getUInt32();
+    segmentation_event_id = buf.getUInt32();
+    segmentation_event_cancel = buf.getBool();
+    buf.skipBits(7);
+    if (!segmentation_event_cancel) {
+        program_segmentation = buf.getBool();
+        const bool has_duration = buf.getBool();
+        const bool not_restricted = buf.getBool();
+        if (not_restricted) {
+            buf.skipBits(5);
+            web_delivery_allowed = true;
+            no_regional_blackout = true;
+            archive_allowed = true;
+            device_restrictions = 3;
         }
-
-        _is_valid = size > 0;
-        bool has_duration = false;
-        if (_is_valid) {
-            program_segmentation = (data[0] & 0x80) != 0x00;
-            has_duration = (data[0] & 0x40) != 0x00;
-            const bool not_restricted = (data[0] & 0x20) != 0x00;
-            if (not_restricted) {
-                web_delivery_allowed = true;
-                no_regional_blackout = true;
-                archive_allowed = true;
-                device_restrictions = 3;
-            }
-            else {
-                web_delivery_allowed = (data[0] & 0x10) != 0x00;
-                no_regional_blackout = (data[0] & 0x08) != 0x00;
-                archive_allowed = (data[0] & 0x04) != 0x00;
-                device_restrictions = data[0] & 0x03;
-            }
-            data += 1; size -= 1;
+        else {
+            web_delivery_allowed = buf.getBool();
+            no_regional_blackout = buf.getBool();
+            archive_allowed = buf.getBool();
+            buf.getBits(device_restrictions, 2);
         }
-
-        if (_is_valid && !program_segmentation) {
-            _is_valid = size > 0 && size > size_t(1 + 6 * data[0]);
-            if (_is_valid) {
-                size_t count = data[0];
-                data += 1; size -= 1;
-                while (count > 0) {
-                    pts_offsets[data[0]] = GetUInt40(data + 1) & PTS_DTS_MASK;
-                    data += 6; size -= 6;
-                    count--;
-                }
+        if (!program_segmentation) {
+            const size_t count = buf.getUInt8();
+            for (size_t i = 0; i < count && buf.canRead(); ++i) {
+                const uint8_t component_tag = buf.getUInt8();
+                buf.skipBits(7);
+                buf.getBits(pts_offsets[component_tag], 33);
             }
         }
-
-        if (_is_valid && has_duration) {
-            _is_valid = size >= 5;
-            if (_is_valid) {
-                segmentation_duration = GetUInt40(data);
-                data += 5; size -= 5;
-            }
+        if (has_duration) {
+            segmentation_duration = buf.getUInt40();
         }
-
-        _is_valid = _is_valid && size >= 2 && size >= size_t(5 + data[1]);
-        if (_is_valid) {
-            segmentation_upid_type = data[0];
-            const size_t upid_size = data[1];
-            segmentation_upid.copy(data + 2, upid_size);
-            data += 2 + upid_size; size -= 2 + upid_size;
-
-            segmentation_type_id = data[0];
-            segment_num = data[1];
-            segments_expected = data[2];
-            data += 3; size -= 3;
-        }
-
-        if (_is_valid && (segmentation_type_id == 0x34 || segmentation_type_id == 0x36)) {
-            _is_valid = size >= 2;
-            if (_is_valid) {
-                sub_segment_num = data[0];
-                sub_segments_expected = data[1];
-                data += 2; size -= 2;
-            }
+        segmentation_upid_type = buf.getUInt8();
+        const size_t upid_size = buf.getUInt8();
+        buf.getBytes(segmentation_upid, upid_size);
+        segmentation_type_id = buf.getUInt8();
+        segment_num = buf.getUInt8();
+        segments_expected = buf.getUInt8();
+        if (segmentation_type_id == 0x34 || segmentation_type_id == 0x36 || segmentation_type_id == 0x38 || segmentation_type_id == 0x3A) {
+            sub_segment_num = buf.getUInt8();
+            sub_segments_expected = buf.getUInt8();
         }
     }
-
-    _is_valid = size == 0;
 }
 
 
@@ -250,90 +210,102 @@ void ts::SpliceSegmentationDescriptor::deserialize(DuckContext& duck, const Desc
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SpliceSegmentationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SpliceSegmentationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    bool ok = size >= 9;
-    const uint8_t cancel = ok ? ((data[8] >> 7) & 0x01) : 0;
+    bool cancel = false;
     bool program_segmentation = false;
     bool has_duration = false;
+    bool not_restricted = false;
     uint8_t type_id = 0;
 
-    if (ok) {
-        strm << margin << UString::Format(u"Identifier: 0x%X", {GetUInt32(data)});
-        duck.displayIfASCII(data, 4, u" (\"", u"\")");
-        strm << std::endl
-             << margin << UString::Format(u"Segmentation event id: 0x%X, cancel: %d", {GetUInt32(data + 4), cancel})
-             << std::endl;
-        data += 9; size -= 9;
-        ok = !cancel || size > 0;
+    if (!buf.canReadBytes(9)) {
+        buf.setUserError();
+    }
+    else {
+        // Sometimes, the identifier is made of ASCII characters. Try to display them.
+        disp.displayIntAndASCII(u"Identifier: 0x%08X", buf, 4, margin);
+        disp << margin << UString::Format(u"Segmentation event id: 0x%X", {buf.getUInt32()});
+        cancel = buf.getBool();
+        buf.skipBits(7);
+        disp << UString::Format(u", cancel: %d", {cancel}) << std::endl;
     }
 
-    if (ok && !cancel) {
-        program_segmentation = (data[0] & 0x80) != 0x00;
-        has_duration = (data[0] & 0x40) != 0x00;
-        const bool not_restricted = (data[0] & 0x20) != 0x00;
-        strm << margin << UString::Format(u"Program segmentation: %d, has duration: %d, not restricted: %d", {program_segmentation, has_duration, not_restricted}) << std::endl;
-        if (!not_restricted) {
-            const bool web_delivery_allowed = (data[0] & 0x10) != 0x00;
-            const bool no_regional_blackout = (data[0] & 0x08) != 0x00;
-            const bool archive_allowed = (data[0] & 0x04) != 0x00;
-            const uint8_t device_restrictions = data[0] & 0x03;
-            strm << margin << UString::Format(u"Web delivery allowed: %d, no regional blackout: %d", {web_delivery_allowed, no_regional_blackout}) << std::endl
-                 << margin << UString::Format(u"Archive allowed: %d, device restrictions: %d", {archive_allowed, device_restrictions}) << std::endl;
+    if (buf.canReadBytes(1) && !cancel) {
+        program_segmentation = buf.getBool();
+        has_duration = buf.getBool();
+        not_restricted = buf.getBool();
+        disp << margin << UString::Format(u"Program segmentation: %d, has duration: %d, not restricted: %d", {program_segmentation, has_duration, not_restricted}) << std::endl;
+        if (not_restricted) {
+            buf.skipBits(5);
         }
-        data += 1; size -= 1;
+        else {
+            disp << margin << UString::Format(u"Web delivery allowed: %d", {buf.getBit()});
+            disp << UString::Format(u", no regional blackout: %d", {buf.getBit()}) << std::endl;
+            disp << margin << UString::Format(u"Archive allowed: %d", {buf.getBit()});
+            disp << UString::Format(u", device restrictions: %d", {buf.getBits<uint8_t>(2)}) << std::endl;
+        }
     }
 
-    if (ok && !cancel && !program_segmentation) {
-        ok = size > 0 && size > size_t(1 + 6 * data[0]);
-        if (ok) {
-            size_t count = data[0];
-            data += 1; size -= 1;
-            strm << margin << UString::Format(u"Component count: %d", {count}) << std::endl;
-            while (count > 0) {
-                strm << margin << UString::Format(u"Component tag: %d, PTS offset: %d", {data[0], GetUInt40(data + 1) & PTS_DTS_MASK}) << std::endl;
-                data += 6; size -= 6;
+    if (!buf.error() && !cancel && !program_segmentation) {
+        if (!buf.canReadBytes(1)) {
+            buf.setUserError();
+        }
+        else {
+            size_t count = buf.getUInt8();
+            disp << margin << UString::Format(u"Component count: %d", {count}) << std::endl;
+            while (buf.canReadBytes(6) && count > 0) {
                 count--;
+                disp << margin << UString::Format(u"Component tag: %d", {buf.getUInt8()});
+                buf.skipBits(7);
+                disp << UString::Format(u", PTS offset: %d", {buf.getBits<uint64_t>(33)}) << std::endl;
+            }
+            if (count != 0) {
+                buf.setUserError();
             }
         }
     }
 
-    if (ok && !cancel && has_duration) {
-        ok = size >= 5;
-        if (ok) {
-            strm << margin << UString::Format(u"Segment duration: %d", {GetUInt40(data)}) << std::endl;
-            data += 5; size -= 5;
+    if (!buf.error() && !cancel && has_duration) {
+        if (!buf.canReadBytes(5)) {
+            buf.setUserError();
+        }
+        else {
+            disp << margin << UString::Format(u"Segment duration: %d", {buf.getUInt40()}) << std::endl;
         }
     }
 
-    if (ok && !cancel) {
-        ok = size >= 2 && size >= size_t(5 + data[1]);
-        if (ok) {
-            const size_t upid_size = data[1];
-            strm << margin << UString::Format(u"Segmentation upid type: %s, %d bytes", {NameFromSection(u"SpliceSegmentationUpIdType", data[0], names::HEXA_FIRST), upid_size}) << std::endl;
-            if (upid_size > 0) {
-                strm << UString::Dump(data + 2, upid_size, UString::BPL, indent + 2, 16);
-            }
-            data += 2 + upid_size; size -= 2 + upid_size;
-
-            type_id = data[0];
-            strm << margin << UString::Format(u"Segmentation type id: %s", {NameFromSection(u"SpliceSegmentationTypeId", type_id, names::HEXA_FIRST)}) << std::endl
-                 << margin << UString::Format(u"Segment number: %d, expected segments: %d", {data[1], data[2]}) << std::endl;
-            data += 3; size -= 3;
+    if (!buf.error() && !cancel) {
+        if (!buf.canReadBytes(2)) {
+            buf.setUserError();
+        }
+        else {
+            disp << margin << UString::Format(u"Segmentation upid type: %s", {NameFromSection(u"SpliceSegmentationUpIdType", buf.getUInt8(), names::HEXA_FIRST)}) << std::endl;
+            const size_t upid_size = buf.getUInt8();
+            disp.displayPrivateData(u"Upid data", buf, upid_size, margin);
         }
     }
 
-    if (ok && !cancel && (type_id == 0x34 || type_id == 0x36)) {
-        ok = size >= 2;
-        strm << margin << UString::Format(u"Sub-segment number: %d, expected sub-segments: %d", {data[0], data[1]}) << std::endl;
-        data += 2; size -= 2;
+    if (!buf.error() && !cancel) {
+        if (!buf.canReadBytes(3)) {
+            buf.setUserError();
+        }
+        else {
+            type_id = buf.getUInt8();
+            disp << margin << UString::Format(u"Segmentation type id: %s", {NameFromSection(u"SpliceSegmentationTypeId", type_id, names::HEXA_FIRST)}) << std::endl;
+            disp << margin << UString::Format(u"Segment number: %d", {buf.getUInt8()});
+            disp << UString::Format(u", expected segments: %d", {buf.getUInt8()}) << std::endl;
+        }
     }
 
-    display.displayExtraData(data, size, indent);
+    if (!buf.error() && !cancel && (type_id == 0x34 || type_id == 0x36 || type_id == 0x38 || type_id == 0x3A)) {
+        if (!buf.canReadBytes(2)) {
+            buf.setUserError();
+        }
+        else {
+            disp << margin << UString::Format(u"Sub-segment number: %d", {buf.getUInt8()});
+            disp << UString::Format(u", expected sub-segments: %d", {buf.getUInt8()}) << std::endl;
+        }
+    }
 }
 
 
@@ -384,8 +356,8 @@ void ts::SpliceSegmentationDescriptor::buildXML(DuckContext& duck, xml::Element*
 bool ts::SpliceSegmentationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     bool ok =
-        element->getIntAttribute<uint32_t>(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
-        element->getIntAttribute<uint32_t>(segmentation_event_id, u"segmentation_event_id", true) &&
+        element->getIntAttribute(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
+        element->getIntAttribute(segmentation_event_id, u"segmentation_event_id", true) &&
         element->getBoolAttribute(segmentation_event_cancel, u"segmentation_event_cancel", false, false);
 
     if (ok && !segmentation_event_cancel) {
@@ -394,26 +366,26 @@ bool ts::SpliceSegmentationDescriptor::analyzeXML(DuckContext& duck, const xml::
         ok = element->getBoolAttribute(web_delivery_allowed, u"web_delivery_allowed", false, true) &&
              element->getBoolAttribute(no_regional_blackout, u"no_regional_blackout", false, true) &&
              element->getBoolAttribute(archive_allowed, u"archive_allowed", false, true) &&
-             element->getIntAttribute<uint8_t>(device_restrictions, u"device_restrictions", false, 3, 0, 3) &&
-             element->getOptionalIntAttribute<uint64_t>(segmentation_duration, u"segmentation_duration", 0, TS_UCONST64(0x000000FFFFFFFFFF)) &&
-             element->getIntAttribute<uint8_t>(segmentation_type_id, u"segmentation_type_id", true) &&
-             element->getIntAttribute<uint8_t>(segment_num, u"segment_num", true) &&
-             element->getIntAttribute<uint8_t>(segments_expected, u"segments_expected", true) &&
+             element->getIntAttribute(device_restrictions, u"device_restrictions", false, 3, 0, 3) &&
+             element->getOptionalIntAttribute(segmentation_duration, u"segmentation_duration", 0, TS_UCONST64(0x000000FFFFFFFFFF)) &&
+             element->getIntAttribute(segmentation_type_id, u"segmentation_type_id", true) &&
+             element->getIntAttribute(segment_num, u"segment_num", true) &&
+             element->getIntAttribute(segments_expected, u"segments_expected", true) &&
              element->getChildren(upid, u"segmentation_upid", 1, 1) &&
-             upid[0]->getIntAttribute<uint8_t>(segmentation_upid_type, u"type", true) &&
+             upid[0]->getIntAttribute(segmentation_upid_type, u"type", true) &&
              upid[0]->getHexaText(segmentation_upid, 0, 255) &&
              element->getChildren(comp, u"component", 0, 255);
 
         if (ok && (segmentation_type_id == 0x34 || segmentation_type_id == 0x36)) {
-            ok = element->getIntAttribute<uint8_t>(sub_segment_num, u"sub_segment_num", true) &&
-                 element->getIntAttribute<uint8_t>(sub_segments_expected, u"sub_segments_expected", true);
+            ok = element->getIntAttribute(sub_segment_num, u"sub_segment_num", true) &&
+                 element->getIntAttribute(sub_segments_expected, u"sub_segments_expected", true);
         }
 
         for (size_t i = 0; ok && i < comp.size(); ++i) {
             uint8_t tag = 0;
             uint64_t pts = 0;
-            ok = comp[i]->getIntAttribute<uint8_t>(tag, u"component_tag", true) &&
-                 comp[i]->getIntAttribute<uint64_t>(pts, u"pts_offset", true, 0, 0, PTS_DTS_MASK);
+            ok = comp[i]->getIntAttribute(tag, u"component_tag", true) &&
+                 comp[i]->getIntAttribute(pts, u"pts_offset", true, 0, 0, PTS_DTS_MASK);
             pts_offsets[tag] = pts;
         }
         program_segmentation = pts_offsets.empty();

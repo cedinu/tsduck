@@ -39,7 +39,7 @@ namespace ts {
     //!
     //! Representation of an S2X_satellite_delivery_system_descriptor.
     //!
-    //! @see ETSI 300 468, 6.4.6.5.
+    //! @see ETSI EN 300 468, 6.4.6.5.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL S2XSatelliteDeliverySystemDescriptor : public AbstractDeliverySystemDescriptor
@@ -91,25 +91,26 @@ namespace ts {
         S2XSatelliteDeliverySystemDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual DID extendedTag() const override;
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
 
     private:
         // Enumerations for XML.
         static const Enumeration RollOffNames;
 
         // Serialization / deserialization of a channel description.
-        void serializeChannel(const Channel&, ByteBlock&) const;
-        bool deserializeChannel(Channel&, const uint8_t*& data, size_t& size);
+        void serializeChannel(const Channel&, PSIBuffer&) const;
+        void deserializeChannel(Channel&, PSIBuffer&);
         void buildChannelXML(const Channel&, xml::Element* parent, const UString& name) const;
         bool getChannelXML(Channel&, DuckContext&, const xml::Element*);
-        static bool DisplayChannel(TablesDisplay&, const UString& title, const uint8_t*& data, size_t& size, int indent);
+        static void DisplayChannel(TablesDisplay&, const UString& title, PSIBuffer&, const UString& margin);
     };
 }

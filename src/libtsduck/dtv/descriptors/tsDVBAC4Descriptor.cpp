@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -59,11 +60,6 @@ ts::DVBAC4Descriptor::DVBAC4Descriptor() :
 {
 }
 
-
-//----------------------------------------------------------------------------
-// Constructor from a binary descriptor
-//----------------------------------------------------------------------------
-
 void ts::DVBAC4Descriptor::clearContent()
 {
     ac4_dialog_enhancement_enabled.clear();
@@ -80,23 +76,34 @@ ts::DVBAC4Descriptor::DVBAC4Descriptor(DuckContext& duck, const Descriptor& desc
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::DVBAC4Descriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DVBAC4Descriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DVBAC4Descriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
-    bbp->appendUInt8((ac4_dialog_enhancement_enabled.set() && ac4_channel_mode.set() ? 0x80 : 0x00) | (!ac4_dsi_toc.empty() ? 0x40 : 0x00));
+    buf.putBit(ac4_dialog_enhancement_enabled.set() && ac4_channel_mode.set());
+    buf.putBit(!ac4_dsi_toc.empty());
+    buf.putBits(0, 6); // reserved bits are zero here
     if (ac4_dialog_enhancement_enabled.set() && ac4_channel_mode.set()) {
-        bbp->appendUInt8((ac4_dialog_enhancement_enabled.value() ? 0x80 : 0x00) | uint8_t((ac4_channel_mode.value() & 0x03) << 5));
+        buf.putBit(ac4_dialog_enhancement_enabled.value());
+        buf.putBits(ac4_channel_mode.value(), 2);
+        buf.putBits(0, 5); // reserved bits are zero here
     }
     if (!ac4_dsi_toc.empty()) {
-        bbp->appendUInt8(uint8_t(ac4_dsi_toc.size()));
-        bbp->append(ac4_dsi_toc);
+        buf.putUInt8(uint8_t(ac4_dsi_toc.size()));
+        buf.putBytes(ac4_dsi_toc);
     }
-    bbp->append(additional_info);
-    serializeEnd(desc, bbp);
+    buf.putBytes(additional_info);
 }
 
 
@@ -104,49 +111,21 @@ void ts::DVBAC4Descriptor::serialize(DuckContext& duck, Descriptor& desc) const
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DVBAC4Descriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DVBAC4Descriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 2 && data[0] == MY_EDID;
-
-    ac4_dialog_enhancement_enabled.clear();
-    ac4_channel_mode.clear();
-    ac4_dsi_toc.clear();
-    additional_info.clear();
-
-    uint8_t flags = 0;
-
-    if (_is_valid) {
-        flags = data[1];
-        data += 2; size -= 2;
+    const bool ac4_config_flag = buf.getBool();
+    const bool ac4_toc_flag = buf.getBool();
+    buf.skipBits(6);
+    if (ac4_config_flag) {
+        ac4_dialog_enhancement_enabled = buf.getBool();
+        buf.getBits(ac4_channel_mode, 2);
+        buf.skipBits(5);
     }
-
-    if (_is_valid && (flags & 0x80) != 0) {
-        _is_valid = size >= 1;
-        if (_is_valid) {
-            ac4_dialog_enhancement_enabled = (data[0] & 0x80) != 0;
-            ac4_channel_mode = (data[0] >> 5) & 0x03;
-            data++; size--;
-        }
+    if (ac4_toc_flag) {
+        const size_t len = buf.getUInt8();
+        buf.getBytes(ac4_dsi_toc, len);
     }
-
-    if (_is_valid && (flags & 0x40) != 0) {
-        _is_valid = size >= 1;
-        if (_is_valid) {
-            const size_t toc_size = data[0];
-            _is_valid = size >= 1 + toc_size;
-            if (_is_valid) {
-                ac4_dsi_toc.copy(data + 1, data[0]);
-                data += 1 + toc_size; size -= 1 + toc_size;
-            }
-        }
-    }
-
-    if (_is_valid) {
-        additional_info.copy(data, size);
-    }
+    buf.getBytes(additional_info);
 }
 
 
@@ -154,36 +133,21 @@ void ts::DVBAC4Descriptor::deserialize(DuckContext& duck, const Descriptor& desc
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DVBAC4Descriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DVBAC4Descriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        const uint8_t flags = data[0];
-        data++; size--;
-        if ((flags & 0x80) != 0 && size >= 1) {
-            uint8_t type = data[0];
-            data++; size--;
-            strm << margin
-                 << UString::Format(u"Dialog enhancement enabled: %d, channel mode: %s",
-                                    {(type >> 7) & 0x01, NameFromSection(u"AC4ChannelMode", (type >> 5) & 0x03, names::FIRST)})
-                 << std::endl;
+    if (buf.canReadBytes(1)) {
+        const bool ac4_config_flag = buf.getBool();
+        const bool ac4_toc_flag = buf.getBool();
+        buf.skipBits(6);
+        if (ac4_config_flag && buf.canReadBytes(1)) {
+            disp << margin << UString::Format(u"Dialog enhancement enabled: %d", {buf.getBool()});
+            disp << ", channel mode: " << NameFromSection(u"AC4ChannelMode", buf.getBits<uint8_t>(2), names::FIRST) << std::endl;
+            buf.skipBits(5);
         }
-        if ((flags & 0x40) != 0 && size >= 1) {
-            const size_t toc_size = std::min<size_t>(data[0], size - 1);
-            display.displayPrivateData(u"AC-4 TOC (in DSI)", data + 1, toc_size, indent);
-            data += 1 + toc_size; size -= 1 + toc_size;
+        if (ac4_toc_flag && buf.canReadBytes(1)) {
+            disp.displayPrivateData(u"AC-4 TOC (in DSI)", buf, buf.getUInt8(), margin);
         }
-        display.displayPrivateData(u"Additional information", data, size, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+        disp.displayPrivateData(u"Additional information", buf, NPOS, margin);
     }
 }
 
@@ -212,7 +176,7 @@ void ts::DVBAC4Descriptor::buildXML(DuckContext& duck, xml::Element* root) const
 bool ts::DVBAC4Descriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     return element->getOptionalBoolAttribute(ac4_dialog_enhancement_enabled, u"ac4_dialog_enhancement_enabled") &&
-           element->getOptionalIntAttribute<uint8_t>(ac4_channel_mode, u"ac4_channel_mode", 0, 3) &&
+           element->getOptionalIntAttribute(ac4_channel_mode, u"ac4_channel_mode", 0, 3) &&
            element->getHexaTextChild(ac4_dsi_toc, u"ac4_dsi_toc", false, 0, MAX_DESCRIPTOR_SIZE - 6) &&
            element->getHexaTextChild(additional_info, u"additional_info", false, 0, MAX_DESCRIPTOR_SIZE - 6 - ac4_dsi_toc.size());
 }

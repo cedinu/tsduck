@@ -257,9 +257,14 @@ ts::PSIRepository::RegisterDescriptor::RegisterDescriptor(DescriptorFactory fact
                                                           DisplayDescriptorFunction displayFunction,
                                                           const UString& xmlNameLegacy)
 {
+    registerXML(factory, edid, xmlName, xmlNameLegacy);
+    PSIRepository::Instance()->_descriptors.insert(std::make_pair(edid, DescriptorDescription(factory, displayFunction)));
+}
+
+void ts::PSIRepository::RegisterDescriptor::registerXML(DescriptorFactory factory, const EDID& edid, const UString& xmlName, const UString& xmlNameLegacy)
+{
     PSIRepository* const repo = PSIRepository::Instance();
 
-    // XML names are recorded independently.
     if (!xmlName.empty()) {
         repo->_descriptorNames.insert(std::make_pair(xmlName, factory));
         if (edid.isTableSpecific()) {
@@ -272,10 +277,6 @@ ts::PSIRepository::RegisterDescriptor::RegisterDescriptor(DescriptorFactory fact
             repo->_descriptorTablesIds.insert(std::make_pair(xmlNameLegacy, edid.tableId()));
         }
     }
-
-    // Store the descriptor description.
-    // This is a simple map, only one definition per extended descriptor id.
-    repo->_descriptors.insert(std::make_pair(edid, DescriptorDescription(factory, displayFunction)));
 }
 
 ts::PSIRepository::RegisterDescriptor::RegisterDescriptor(DisplayCADescriptorFunction displayFunction, uint16_t minCAS, uint16_t maxCAS)

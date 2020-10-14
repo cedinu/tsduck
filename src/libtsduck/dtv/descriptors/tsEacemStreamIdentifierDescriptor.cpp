@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -74,26 +75,14 @@ ts::EacemStreamIdentifierDescriptor::EacemStreamIdentifierDescriptor(DuckContext
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::EacemStreamIdentifierDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::EacemStreamIdentifierDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(version);
-    serializeEnd(desc, bbp);
+    buf.putUInt8(version);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::EacemStreamIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::EacemStreamIdentifierDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 1;
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        version = data[0];
-    }
+    version = buf.getUInt8();
 }
 
 
@@ -101,24 +90,16 @@ void ts::EacemStreamIdentifierDescriptor::deserialize(DuckContext& duck, const D
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::EacemStreamIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::EacemStreamIdentifierDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        uint8_t version = data[0];
-        data += 1; size -= 1;
-        strm << margin << "Version: " << int(version) << std::endl;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Version: " << int(buf.getUInt8()) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML
+// XML serialization
 //----------------------------------------------------------------------------
 
 void ts::EacemStreamIdentifierDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -128,5 +109,5 @@ void ts::EacemStreamIdentifierDescriptor::buildXML(DuckContext& duck, xml::Eleme
 
 bool ts::EacemStreamIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(version, u"version_byte", true, 0, 0x00, 0xFF);
+    return element->getIntAttribute(version, u"version_byte", true, 0, 0x00, 0xFF);
 }

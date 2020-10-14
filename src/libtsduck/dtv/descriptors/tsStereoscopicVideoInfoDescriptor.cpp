@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
@@ -78,18 +79,20 @@ ts::StereoscopicVideoInfoDescriptor::StereoscopicVideoInfoDescriptor(DuckContext
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::StereoscopicVideoInfoDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::StereoscopicVideoInfoDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(base_video ? 0xFF : 0xFE);
+    buf.putBits(0xFF, 7);
+    buf.putBit(base_video);
     if (base_video) {
-        bbp->appendUInt8(leftview ? 0xFF : 0xFE);
+        buf.putBits(0xFF, 7);
+        buf.putBit(leftview);
     }
     else {
-        bbp->appendUInt8(usable_as_2D ? 0xFF : 0xFE);
-        bbp->appendUInt8(uint8_t(horizontal_upsampling_factor << 4) | (vertical_upsampling_factor & 0x0F));
+        buf.putBits(0xFF, 7);
+        buf.putBit(usable_as_2D);
+        buf.putBits(horizontal_upsampling_factor, 4);
+        buf.putBits(vertical_upsampling_factor, 4);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -97,26 +100,19 @@ void ts::StereoscopicVideoInfoDescriptor::serialize(DuckContext& duck, Descripto
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::StereoscopicVideoInfoDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::StereoscopicVideoInfoDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size > 1;
-
-    if (_is_valid) {
-        base_video = (data[0] & 0x01) != 0;
-        if (base_video && size == 2) {
-            leftview = (data[1] & 0x01) != 0;
-        }
-        else if (!base_video && size == 3) {
-            usable_as_2D = (data[1] & 0x01) != 0;
-            horizontal_upsampling_factor = (data[2] >> 4) & 0x0F;
-            vertical_upsampling_factor = data[2] & 0x0F;
-        }
-        else {
-            _is_valid = false;
-        }
+    buf.skipBits(7);
+    base_video = buf.getBool();
+    if (base_video) {
+        buf.skipBits(7);
+        leftview = buf.getBool();
+    }
+    else {
+        buf.skipBits(7);
+        usable_as_2D = buf.getBool();
+        buf.getBits(horizontal_upsampling_factor, 4);
+        buf.getBits(vertical_upsampling_factor, 4);
     }
 }
 
@@ -125,29 +121,23 @@ void ts::StereoscopicVideoInfoDescriptor::deserialize(DuckContext& duck, const D
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::StereoscopicVideoInfoDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::StereoscopicVideoInfoDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        const bool base = (data[0] & 0x01) != 0;
-        strm << margin << UString::Format(u"Base video: %s", {base}) << std::endl;
-        data += 1; size -= 1;
-        if (base && size >= 1) {
-            strm << margin << UString::Format(u"Left view: %s", {(data[0] & 0x01) != 0}) << std::endl;
-            data += 1; size -= 1;
+    if (buf.canReadBytes(1)) {
+        buf.skipBits(7);
+        const bool base = buf.getBool();
+        disp << margin << UString::Format(u"Base video: %s", {base}) << std::endl;
+        if (base && buf.canReadBytes(1)) {
+            buf.skipBits(7);
+            disp << margin << UString::Format(u"Left view: %s", {buf.getBool()}) << std::endl;
         }
-        else if (!base && size >= 2) {
-            strm << margin << UString::Format(u"Usable as 2D: %s", {(data[0] & 0x01) != 0}) << std::endl
-                 << margin << "Horizontal upsampling factor: " << NameFromSection(u"StereoscopicUpsamplingFactor", (data[1] >> 4) & 0x0F, names::DECIMAL_FIRST) << std::endl
-                 << margin << "Vertical upsampling factor: " << NameFromSection(u"StereoscopicUpsamplingFactor", data[1] & 0x0F, names::DECIMAL_FIRST) << std::endl;
-            data += 2; size -= 2;
+        else if (!base && buf.canReadBytes(2)) {
+            buf.skipBits(7);
+            disp << margin << UString::Format(u"Usable as 2D: %s", {buf.getBool()}) << std::endl;
+            disp << margin << "Horizontal upsampling factor: " << NameFromSection(u"StereoscopicUpsamplingFactor", buf.getBits<uint8_t>(4), names::DECIMAL_FIRST) << std::endl;
+            disp << margin << "Vertical upsampling factor: " << NameFromSection(u"StereoscopicUpsamplingFactor", buf.getBits<uint8_t>(4), names::DECIMAL_FIRST) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -178,6 +168,6 @@ bool ts::StereoscopicVideoInfoDescriptor::analyzeXML(DuckContext& duck, const xm
     return element->getBoolAttribute(base_video, u"base_video", true) &&
            element->getBoolAttribute(leftview, u"leftview", base_video) &&
            element->getBoolAttribute(usable_as_2D, u"usable_as_2D", !base_video) &&
-           element->getIntAttribute<uint8_t>(horizontal_upsampling_factor, u"horizontal_upsampling_factor", !base_video, 0, 0, 15) &&
-           element->getIntAttribute<uint8_t>(vertical_upsampling_factor, u"vertical_upsampling_factor", !base_video, 0, 0, 15);
+           element->getIntAttribute(horizontal_upsampling_factor, u"horizontal_upsampling_factor", !base_video, 0, 0, 15) &&
+           element->getIntAttribute(vertical_upsampling_factor, u"vertical_upsampling_factor", !base_video, 0, 0, 15);
 }

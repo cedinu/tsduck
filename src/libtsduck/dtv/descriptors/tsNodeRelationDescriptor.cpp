@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -78,18 +79,18 @@ ts::NodeRelationDescriptor::NodeRelationDescriptor(DuckContext& duck, const Desc
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::NodeRelationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::NodeRelationDescriptor::serializePayload(PSIBuffer& buf) const
 {
     const bool has_external = information_provider_id.set() && event_relation_id.set();
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(reference_type << 4) | (has_external ? 0x0F : 0x07));
+    buf.putBits(reference_type, 4);
+    buf.putBit(has_external);
+    buf.putBits(0xFF, 3);
     if (has_external) {
-        bbp->appendUInt16(information_provider_id.value());
-        bbp->appendUInt16(event_relation_id.value());
+        buf.putUInt16(information_provider_id.value());
+        buf.putUInt16(event_relation_id.value());
     }
-    bbp->appendUInt16(reference_node_id);
-    bbp->appendUInt8(reference_number);
-    serializeEnd(desc, bbp);
+    buf.putUInt16(reference_node_id);
+    buf.putUInt8(reference_number);
 }
 
 
@@ -97,30 +98,17 @@ void ts::NodeRelationDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::NodeRelationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::NodeRelationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4;
-
-    information_provider_id.clear();
-    event_relation_id.clear();
-
-    if (_is_valid) {
-        reference_type = (data[0] >> 4) & 0x0F;
-        const bool has_external = (data[0] & 0x08) != 0;
-        data++; size--;
-        _is_valid = size == size_t(has_external ? 7 : 3);
-        if (_is_valid) {
-            if (has_external) {
-                information_provider_id = GetUInt16(data);
-                event_relation_id = GetUInt16(data + 2);
-                data += 4; size -= 4;
-            }
-            reference_node_id = GetUInt16(data);
-            reference_number = data[2];
-        }
+    buf.getBits(reference_type, 4);
+    const bool has_external = buf.getBool();
+    buf.skipBits(3);
+    if (has_external) {
+        information_provider_id = buf.getUInt16();
+        event_relation_id = buf.getUInt16();
     }
+    reference_node_id = buf.getUInt16();
+    reference_number = buf.getUInt8();
 }
 
 
@@ -128,30 +116,21 @@ void ts::NodeRelationDescriptor::deserialize(DuckContext& duck, const Descriptor
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::NodeRelationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::NodeRelationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        strm << margin << UString::Format(u"Reference type: %d", {(data[0] >> 4) & 0x0F}) << std::endl;
-        const bool has_external = (data[0] & 0x08) != 0;
-        data++; size--;
-
-        if (size >= size_t(has_external ? 7 : 3)) {
-            if (has_external) {
-                strm << margin << UString::Format(u"Information provider id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                     << margin << UString::Format(u"Event relation id: 0x%X (%d)", {GetUInt16(data + 2), GetUInt16(data + 2)}) << std::endl;
-                data += 4; size -= 4;
-            }
-            strm << margin << UString::Format(u"Reference node id: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                 << margin << UString::Format(u"Reference number: 0x%X (%d)", {data[2], data[2]}) << std::endl;
-            data += 3; size -= 3;
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Reference type: %d", {buf.getBits<uint8_t>(4)}) << std::endl;
+        const bool has_external = buf.getBool();
+        buf.skipBits(3);
+        if (has_external && buf.canReadBytes(4)) {
+            disp << margin << UString::Format(u"Information provider id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+            disp << margin << UString::Format(u"Event relation id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        }
+        if (buf.canReadBytes(3)) {
+            disp << margin << UString::Format(u"Reference node id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+            disp << margin << UString::Format(u"Reference number: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -184,11 +163,11 @@ void ts::NodeRelationDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 bool ts::NodeRelationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     bool ok =
-        element->getIntAttribute<uint8_t>(reference_type, u"reference_type", false, 0, 0, 15) &&
-        element->getOptionalIntAttribute<uint16_t>(information_provider_id, u"information_provider_id", true) &&
-        element->getOptionalIntAttribute<uint16_t>(event_relation_id, u"event_relation_id", true) &&
-        element->getIntAttribute<uint16_t>(reference_node_id, u"reference_node_id", true) &&
-        element->getIntAttribute<uint8_t>(reference_number, u"reference_number", true);
+        element->getIntAttribute(reference_type, u"reference_type", false, 0, 0, 15) &&
+        element->getOptionalIntAttribute(information_provider_id, u"information_provider_id", true) &&
+        element->getOptionalIntAttribute(event_relation_id, u"event_relation_id", true) &&
+        element->getIntAttribute(reference_node_id, u"reference_node_id", true) &&
+        element->getIntAttribute(reference_number, u"reference_number", true);
 
     if (ok && (information_provider_id.set() + event_relation_id.set()) == 1) {
         element->report().error(u"in <%s> line %d, attributes 'information_provider_id' and 'event_relation_id' must be both present or both absent", {element->name(), element->lineNumber()});

@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -89,20 +90,20 @@ ts::J2KVideoDescriptor::J2KVideoDescriptor(DuckContext& duck, const Descriptor& 
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::J2KVideoDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::J2KVideoDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(profile_and_level);
-    bbp->appendUInt32(horizontal_size);
-    bbp->appendUInt32(vertical_size);
-    bbp->appendUInt32(max_bit_rate);
-    bbp->appendUInt32(max_buffer_size);
-    bbp->appendUInt16(DEN_frame_rate);
-    bbp->appendUInt16(NUM_frame_rate);
-    bbp->appendUInt8(color_specification);
-    bbp->appendUInt8((still_mode ? 0x80 : 0x00) | (interlaced_video ? 0x40 : 0x00) | 0x3F);
-    bbp->append(private_data);
-    serializeEnd(desc, bbp);
+    buf.putUInt16(profile_and_level);
+    buf.putUInt32(horizontal_size);
+    buf.putUInt32(vertical_size);
+    buf.putUInt32(max_bit_rate);
+    buf.putUInt32(max_buffer_size);
+    buf.putUInt16(DEN_frame_rate);
+    buf.putUInt16(NUM_frame_rate);
+    buf.putUInt8(color_specification);
+    buf.putBit(still_mode);
+    buf.putBit(interlaced_video);
+    buf.putBits(0xFF, 6);
+    buf.putBytes(private_data);
 }
 
 
@@ -110,27 +111,20 @@ void ts::J2KVideoDescriptor::serialize(DuckContext& duck, Descriptor& desc) cons
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::J2KVideoDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::J2KVideoDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 24;
-    private_data.clear();
-
-    if (_is_valid) {
-        profile_and_level = GetUInt16(data);
-        horizontal_size = GetUInt32(data + 2);
-        vertical_size = GetUInt32(data + 6);
-        max_bit_rate = GetUInt32(data + 10);
-        max_buffer_size = GetUInt32(data + 14);
-        DEN_frame_rate = GetUInt16(data + 18);
-        NUM_frame_rate = GetUInt16(data + 20);
-        color_specification = GetUInt8(data + 22);
-        still_mode = (data[23] & 0x80) != 0;
-        interlaced_video = (data[23] & 0x40) != 0;
-        private_data.copy(data + 24, size - 24);
-    }
+    profile_and_level = buf.getUInt16();
+    horizontal_size = buf.getUInt32();
+    vertical_size = buf.getUInt32();
+    max_bit_rate = buf.getUInt32();
+    max_buffer_size = buf.getUInt32();
+    DEN_frame_rate = buf.getUInt16();
+    NUM_frame_rate = buf.getUInt16();
+    color_specification = buf.getUInt8();
+    still_mode = buf.getBool();
+    interlaced_video = buf.getBool();
+    buf.skipBits(6);
+    buf.getBytes(private_data);
 }
 
 
@@ -138,38 +132,21 @@ void ts::J2KVideoDescriptor::deserialize(DuckContext& duck, const Descriptor& de
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::J2KVideoDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::J2KVideoDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 24) {
-        const uint16_t profile_and_level = GetUInt16(data);
-        const uint32_t horizontal_size = GetUInt32(data + 2);
-        const uint32_t vertical_size = GetUInt32(data + 6);
-        const uint32_t max_bit_rate = GetUInt32(data + 10);
-        const uint32_t max_buffer_size = GetUInt32(data + 14);
-        const uint16_t DEN_frame_rate = GetUInt16(data + 18);
-        const uint16_t NUM_frame_rate = GetUInt16(data + 20);
-        const uint8_t color_specification = GetUInt8(data + 22);
-        const bool still_mode = (data[23] & 0x80) != 0;
-        const bool interlaced_video = (data[23] & 0x40) != 0;
-
-        strm << margin << UString::Format(u"Profile and level: 0x%X (%d)", {profile_and_level, profile_and_level}) << std::endl
-             << margin << UString::Format(u"Horizontal size: 0x%X (%d)", {horizontal_size, horizontal_size}) << std::endl
-             << margin << UString::Format(u"Vertical size: 0x%X (%d)", {vertical_size, vertical_size}) << std::endl
-             << margin << UString::Format(u"Max bit rate: 0x%X (%d)", {max_bit_rate, max_bit_rate}) << std::endl
-             << margin << UString::Format(u"Max buffer size: 0x%X (%d)", {max_buffer_size, max_buffer_size}) << std::endl
-             << margin << UString::Format(u"Frame rate: %d/%d", {NUM_frame_rate, DEN_frame_rate}) << std::endl
-             << margin << UString::Format(u"Color specification: 0x%X (%d)", {color_specification, color_specification}) << std::endl
-             << margin << UString::Format(u"Still mode: %s", {still_mode}) << std::endl
-             << margin << UString::Format(u"Interlaced video: %s", {interlaced_video}) << std::endl;
-
-        display.displayPrivateData(u"Private data", data + 24, size - 24, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+    if (buf.canReadBytes(24)) {
+        disp << margin << UString::Format(u"Profile and level: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"Horizontal size: 0x%X (%<d)", {buf.getUInt32()}) << std::endl;
+        disp << margin << UString::Format(u"Vertical size: 0x%X (%<d)", {buf.getUInt32()}) << std::endl;
+        disp << margin << UString::Format(u"Max bit rate: 0x%X (%<d)", {buf.getUInt32()}) << std::endl;
+        disp << margin << UString::Format(u"Max buffer size: 0x%X (%<d)", {buf.getUInt32()}) << std::endl;
+        const uint16_t DEN_frame_rate = buf.getUInt16();
+        disp << margin << UString::Format(u"Frame rate: %d/%d", {buf.getUInt16(), DEN_frame_rate}) << std::endl;
+        disp << margin << UString::Format(u"Color specification: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        disp << margin << UString::Format(u"Still mode: %s", {buf.getBool()}) << std::endl;
+        disp << margin << UString::Format(u"Interlaced video: %s", {buf.getBool()}) << std::endl;
+        buf.skipBits(6);
+        disp.displayPrivateData(u"Private data", buf, NPOS, margin);
     }
 }
 
@@ -200,14 +177,14 @@ void ts::J2KVideoDescriptor::buildXML(DuckContext& duck, xml::Element* root) con
 
 bool ts::J2KVideoDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return  element->getIntAttribute<uint16_t>(profile_and_level, u"profile_and_level", true) &&
-            element->getIntAttribute<uint32_t>(horizontal_size, u"horizontal_size", true) &&
-            element->getIntAttribute<uint32_t>(vertical_size, u"vertical_size", true) &&
-            element->getIntAttribute<uint32_t>(max_bit_rate, u"max_bit_rate", true) &&
-            element->getIntAttribute<uint32_t>(max_buffer_size, u"max_buffer_size", true) &&
-            element->getIntAttribute<uint16_t>(DEN_frame_rate, u"DEN_frame_rate", true) &&
-            element->getIntAttribute<uint16_t>(NUM_frame_rate, u"NUM_frame_rate", true) &&
-            element->getIntAttribute<uint8_t>(color_specification, u"color_specification", true) &&
+    return  element->getIntAttribute(profile_and_level, u"profile_and_level", true) &&
+            element->getIntAttribute(horizontal_size, u"horizontal_size", true) &&
+            element->getIntAttribute(vertical_size, u"vertical_size", true) &&
+            element->getIntAttribute(max_bit_rate, u"max_bit_rate", true) &&
+            element->getIntAttribute(max_buffer_size, u"max_buffer_size", true) &&
+            element->getIntAttribute(DEN_frame_rate, u"DEN_frame_rate", true) &&
+            element->getIntAttribute(NUM_frame_rate, u"NUM_frame_rate", true) &&
+            element->getIntAttribute(color_specification, u"color_specification", true) &&
             element->getBoolAttribute(still_mode, u"still_mode", true) &&
             element->getBoolAttribute(interlaced_video, u"interlaced_video", true) &&
             element->getHexaTextChild(private_data, u"private_data", false, 0, MAX_DESCRIPTOR_SIZE - 26);

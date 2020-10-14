@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -88,37 +89,51 @@ void ts::ImageIconDescriptor::clearContent()
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::ImageIconDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ImageIconDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ImageIconDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
-    bbp->appendUInt8(uint8_t(descriptor_number << 4) | (last_descriptor_number & 0x0F));
-    bbp->appendUInt8(0xF8 | icon_id);
+    buf.putBits(descriptor_number, 4);
+    buf.putBits(last_descriptor_number, 4);
+    buf.putBits(0xFF, 5);
+    buf.putBits(icon_id, 3);
+
     if (descriptor_number == 0) {
+        buf.putBits(icon_transport_mode, 2);
+        buf.putBit(has_position);
         if (has_position) {
-            bbp->appendUInt8(uint8_t(icon_transport_mode << 6) | 0x23 | uint8_t((coordinate_system & 0x07) << 2));
-            bbp->appendUInt24(uint32_t((icon_horizontal_origin & 0x0FFF) << 12) | (icon_vertical_origin & 0x0FFF));
+            buf.putBits(coordinate_system, 3);
+            buf.putBits(0xFF, 2);
+            buf.putBits(icon_horizontal_origin, 12);
+            buf.putBits(icon_vertical_origin, 12);
         }
         else {
-            bbp->appendUInt8(uint8_t(icon_transport_mode << 6) | 0x1F);
+            buf.putBits(0xFF, 5);
         }
-        bbp->append(duck.encodedWithByteLength(icon_type));
+        buf.putStringWithByteLength(icon_type);
         if (icon_transport_mode == 0) {
-            bbp->appendUInt8(uint8_t(icon_data.size()));
-            bbp->append(icon_data);
+            buf.putUInt8(uint8_t(icon_data.size()));
+            buf.putBytes(icon_data);
         }
         else if (icon_transport_mode == 1) {
-            bbp->append(duck.encodedWithByteLength(url));
+            buf.putStringWithByteLength(url);
         }
     }
     else {
-        bbp->appendUInt8(uint8_t(icon_data.size()));
-        bbp->append(icon_data);
+        buf.putUInt8(uint8_t(icon_data.size()));
+        buf.putBytes(icon_data);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -126,63 +141,38 @@ void ts::ImageIconDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ImageIconDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ImageIconDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 4 && data[0] == MY_EDID;
+    buf.getBits(descriptor_number, 4);
+    buf.getBits(last_descriptor_number, 4);
+    buf.skipBits(5);
+    buf.getBits(icon_id, 3);
 
-    icon_type.clear();
-    url.clear();
-    icon_data.clear();
-
-    if (_is_valid) {
-        descriptor_number = (data[1] >> 4) & 0x0F;
-        last_descriptor_number = data[1] & 0x0F;
-        icon_id = data[2] & 0x07;
-        data += 3; size -= 3;
-
-        if (descriptor_number == 0) {
-            icon_transport_mode = (data[0] >> 6) & 0x03;
-            has_position = (data[0] & 0x20) != 0;
-            coordinate_system = (data[0] >> 2) & 0x07;
-            data++; size--;
-
-            if (has_position) {
-                _is_valid = size >= 3;
-                if (_is_valid) {
-                    icon_horizontal_origin = (GetUInt16(data) >> 4) & 0x0FFF;
-                    icon_vertical_origin = GetUInt16(data + 1) & 0x0FFF;
-                    data += 3; size -= 3;
-                }
-            }
-            if (_is_valid) {
-                duck.decodeWithByteLength(icon_type, data, size);
-                if (icon_transport_mode == 0x00 ) {
-                    const size_t len = data[0];
-                    _is_valid = size > len;
-                    if (_is_valid) {
-                        icon_data.copy(data + 1, len);
-                        data += len + 1; size -= len + 1;
-                    }
-                }
-                else if (icon_transport_mode == 0x01) {
-                    duck.decodeWithByteLength(url, data, size);
-                }
-            }
+    if (descriptor_number == 0) {
+        buf.getBits(icon_transport_mode, 2);
+        has_position = buf.getBool();
+        if (has_position) {
+            buf.getBits(coordinate_system, 3);
+            buf.skipBits(2);
+            buf.getBits(icon_horizontal_origin, 12);
+            buf.getBits(icon_vertical_origin, 12);
         }
         else {
-            const size_t len = data[0];
-            _is_valid = size > len;
-            if (_is_valid) {
-                icon_data.copy(data + 1, len);
-                data += len + 1; size -= len + 1;
-            }
+            buf.skipBits(5);
+        }
+        buf.getStringWithByteLength(icon_type);
+        if (icon_transport_mode == 0x00 ) {
+            const size_t len = buf.getUInt8();
+            buf.getBytes(icon_data, len);
+        }
+        else if (icon_transport_mode == 0x01) {
+            buf.getStringWithByteLength(url);
         }
     }
-
-    // Make sure there is no truncated trailing data.
-    _is_valid = _is_valid && size == 0;
+    else {
+        const size_t len = buf.getUInt8();
+        buf.getBytes(icon_data, len);
+    }
 }
 
 
@@ -190,66 +180,42 @@ void ts::ImageIconDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ImageIconDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ImageIconDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    bool ok = size >= 3;
-
-    if (ok) {
-        const uint8_t desc = (data[0] >> 4) & 0x0F;
-        strm << margin << UString::Format(u"Descriptor number: %d, last: %d", {desc, data[0] & 0x0F}) << std::endl
-             << margin << UString::Format(u"Icon id: %d", {data[1] & 0x07}) << std::endl;
-        data += 2; size -= 2;
+    if (buf.canReadBytes(3)) {
+        const uint8_t desc = buf.getBits<uint8_t>(4);
+        disp << margin << UString::Format(u"Descriptor number: %d, last: %d", {desc, buf.getBits<uint8_t>(4)}) << std::endl;
+        buf.skipBits(5);
+        disp << margin << UString::Format(u"Icon id: %d", {buf.getBits<uint8_t>(3)}) << std::endl;
 
         if (desc == 0) {
-            const uint8_t transport = (data[0] >> 6) & 0x03;
-            const bool pos = (data[0] & 0x20) != 0;
-            const uint8_t coord = (data[0] >> 2) & 0x07;
-            data++; size--;
-
-            strm << margin << "Transport mode: " << NameFromSection(u"IconTransportMode", transport, names::DECIMAL_FIRST) << std::endl
-                 << margin << "Position specified: " << UString::YesNo(pos) << std::endl;
-
-            if (pos) {
-                strm << margin << "Coordinate system: " << NameFromSection(u"IconCoordinateSystem", coord, names::DECIMAL_FIRST) << std::endl;
-                ok = size >= 3;
-                if (ok) {
-                    strm << margin << UString::Format(u"Horizontal origin: %d, vertical: %d", {(GetUInt16(data) >> 4) & 0x0FFF, GetUInt16(data + 1) & 0x0FFF}) << std::endl;
-                    data += 3; size -= 3;
+            const uint8_t transport = buf.getBits<uint8_t>(2);
+            disp << margin << "Transport mode: " << NameFromSection(u"IconTransportMode", transport, names::DECIMAL_FIRST) << std::endl;
+            const bool has_position = buf.getBool();
+            disp << margin << "Position specified: " << UString::YesNo(has_position) << std::endl;
+            if (has_position) {
+                disp << margin << "Coordinate system: " << NameFromSection(u"IconCoordinateSystem", buf.getBits<uint8_t>(3), names::DECIMAL_FIRST) << std::endl;
+                buf.skipBits(2);
+                if (buf.canReadBytes(3)) {
+                    disp << margin << UString::Format(u"Horizontal origin: %d", {buf.getBits<uint16_t>(12)});
+                    disp << UString::Format(u", vertical: %d", {buf.getBits<uint16_t>(12)}) << std::endl;
                 }
             }
-            if (ok) {
-                strm << margin << "Icon type: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
-                if (transport == 0x00 ) {
-                    const size_t len = data[0];
-                    ok = size > len;
-                    if (ok) {
-                        display.displayPrivateData(u"Icon data", data + 1, len, indent);
-                        data += len + 1; size -= len + 1;
-                    }
-                }
-                else if (transport == 0x01) {
-                    strm << margin << "URL: \"" << duck.decodedWithByteLength(data, size) << "\"" << std::endl;
-                }
+            else {
+                buf.skipBits(5);
+            }
+            disp << margin << "Icon type: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
+            if (transport == 0x00 && buf.canReadBytes(1)) {
+                disp.displayPrivateData(u"Icon data", buf, buf.getUInt8(), margin);
+            }
+            else if (transport == 0x01 && buf.canReadBytes(1)) {
+                disp << margin << "URL: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
             }
         }
-        else {
-            const size_t len = data[0];
-            ok = size > len;
-            if (ok) {
-                display.displayPrivateData(u"Icon data", data + 1, len, indent);
-                data += len + 1; size -= len + 1;
-            }
+        else if (buf.canReadBytes(1)) {
+            disp.displayPrivateData(u"Icon data", buf, buf.getUInt8(), margin);
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -295,13 +261,13 @@ bool ts::ImageIconDescriptor::analyzeXML(DuckContext& duck, const xml::Element* 
         element->hasAttribute(u"icon_horizontal_origin") ||
         element->hasAttribute(u"icon_vertical_origin");
 
-    return  element->getIntAttribute<uint8_t>(descriptor_number, u"descriptor_number", true, 0, 0x00, 0x0F) &&
-            element->getIntAttribute<uint8_t>(last_descriptor_number, u"last_descriptor_number", true, 0, 0x00, 0x0F) &&
-            element->getIntAttribute<uint8_t>(icon_id, u"icon_id", true, 0, 0x00, 0x07) &&
-            element->getIntAttribute<uint8_t>(icon_transport_mode, u"icon_transport_mode", descriptor_number == 0, 0, 0x00, 0x03) &&
-            element->getIntAttribute<uint8_t>(coordinate_system, u"coordinate_system", descriptor_number == 0 && has_position, 0, 0x00, 0x07) &&
-            element->getIntAttribute<uint16_t>(icon_horizontal_origin, u"icon_horizontal_origin", descriptor_number == 0 && has_position, 0, 0x0000, 0x0FFF) &&
-            element->getIntAttribute<uint16_t>(icon_vertical_origin, u"icon_vertical_origin", descriptor_number == 0 && has_position, 0, 0x0000, 0x0FFF) &&
+    return  element->getIntAttribute(descriptor_number, u"descriptor_number", true, 0, 0x00, 0x0F) &&
+            element->getIntAttribute(last_descriptor_number, u"last_descriptor_number", true, 0, 0x00, 0x0F) &&
+            element->getIntAttribute(icon_id, u"icon_id", true, 0, 0x00, 0x07) &&
+            element->getIntAttribute(icon_transport_mode, u"icon_transport_mode", descriptor_number == 0, 0, 0x00, 0x03) &&
+            element->getIntAttribute(coordinate_system, u"coordinate_system", descriptor_number == 0 && has_position, 0, 0x00, 0x07) &&
+            element->getIntAttribute(icon_horizontal_origin, u"icon_horizontal_origin", descriptor_number == 0 && has_position, 0, 0x0000, 0x0FFF) &&
+            element->getIntAttribute(icon_vertical_origin, u"icon_vertical_origin", descriptor_number == 0 && has_position, 0, 0x0000, 0x0FFF) &&
             element->getAttribute(icon_type, u"icon_type", descriptor_number == 0) &&
             element->getAttribute(url, u"url", descriptor_number == 0 && icon_transport_mode == 1) &&
             element->getHexaTextChild(icon_data, u"icon_data", false);

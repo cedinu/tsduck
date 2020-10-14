@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -83,35 +84,30 @@ ts::EASAudioFileDescriptor::Entry::Entry() :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::EASAudioFileDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::EASAudioFileDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(entries.size()));
+    buf.putUInt8(uint8_t(entries.size()));
     for (auto it = entries.begin(); it != entries.end(); ++it) {
-        const size_t loop_length_index = bbp->size();
-        bbp->appendUInt8(0); // place-holder for loop_length
-        bbp->appendUInt8((it->file_name.empty() ? 0x00 : 0x80) | (it->audio_format & 0x7F));
+        buf.pushWriteSequenceWithLeadingLength(8); // loop_length
+        buf.putBit(!it->file_name.empty());
+        buf.putBits(it->audio_format, 7);
         if (!it->file_name.empty()) {
-            const std::string utf8(it->file_name.toUTF8());
-            bbp->appendUInt8(uint8_t(utf8.size()));
-            bbp->append(utf8);
+            buf.putUTF8WithLength(it->file_name);
         }
-        bbp->appendUInt8(it->audio_source);
+        buf.putUInt8(it->audio_source);
         if (it->audio_source == 0x01) {
-            bbp->appendUInt16(it->program_number);
-            bbp->appendUInt32(it->carousel_id);
-            bbp->appendUInt16(it->application_id);
+            buf.putUInt16(it->program_number);
+            buf.putUInt32(it->carousel_id);
+            buf.putUInt16(it->application_id);
         }
         else if (it->audio_source == 0x02) {
-            bbp->appendUInt16(it->program_number);
-            bbp->appendUInt32(it->download_id);
-            bbp->appendUInt32(it->module_id);
-            bbp->appendUInt16(it->application_id);
+            buf.putUInt16(it->program_number);
+            buf.putUInt32(it->download_id);
+            buf.putUInt32(it->module_id);
+            buf.putUInt16(it->application_id);
         }
-        // Update loop_length;
-        (*bbp)[loop_length_index] = uint8_t(bbp->size() - loop_length_index - 1);
+        buf.popState(); // update loop_length;
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -119,74 +115,32 @@ void ts::EASAudioFileDescriptor::serialize(DuckContext& duck, Descriptor& desc) 
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::EASAudioFileDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::EASAudioFileDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    entries.clear();
-    _is_valid = false;
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    if (!desc.isValid() || desc.tag() != tag() || size == 0) {
-        return;
-    }
-
-    // Number of audio sources.
-    size_t count = data[0];
-    data++; size--;
-
-    while (count-- > 0) {
+    const size_t number_of_audio_sources = buf.getUInt8();
+    for (size_t i = 0; i < number_of_audio_sources && buf.canRead(); ++i) {
         Entry entry;
-        size_t loop_length = size == 0 ? 0 : data[0];
-        if (loop_length < 2 || size < 1 + loop_length) {
-            return; // loop instance does not fit here
-        }
-        const bool file_name_present = (data[1] & 0x80) != 0;
-        entry.audio_format = data[1] & 0x7F;
-        data += 2; size -= 2;
-        loop_length--;
+        buf.pushReadSizeFromLength(8); // loop_length
+        const bool file_name_present = buf.getBool();
+        buf.getBits(entry.audio_format, 7);
         if (file_name_present) {
-            if (loop_length == 0 || 1 + size_t(data[0]) > loop_length) {
-                return;
-            }
-            const size_t file_name_length = data[0];
-            entry.file_name.assignFromUTF8(reinterpret_cast<const char*>(data + 1), file_name_length);
-            data += 1 + file_name_length; size -= 1 + file_name_length;
-            loop_length -= 1 + file_name_length;
+            buf.getUTF8WithLength(entry.file_name);
         }
-        if (loop_length < 1) {
-            return;
-        }
-        entry.audio_source = data[0];
-        data++; size--;
-        loop_length--;
+        entry.audio_source = buf.getUInt8();
         if (entry.audio_source == 0x01) {
-            if (loop_length < 8) {
-                return;
-            }
-            entry.program_number = GetUInt16(data);
-            entry.carousel_id = GetUInt32(data + 2);
-            entry.application_id = GetUInt16(data + 6);
-            data += 8; size -= 8;
-            loop_length -= 8;
+            entry.program_number = buf.getUInt16();
+            entry.carousel_id = buf.getUInt32();
+            entry.application_id = buf.getUInt16();
         }
         else if (entry.audio_source == 0x02) {
-            if (loop_length < 12) {
-                return;
-            }
-            entry.program_number = GetUInt16(data);
-            entry.download_id = GetUInt32(data + 2);
-            entry.module_id = GetUInt32(data + 6);
-            entry.application_id = GetUInt16(data + 10);
-            data += 12; size -= 12;
-            loop_length -= 12;
+            entry.program_number = buf.getUInt16();
+            entry.download_id = buf.getUInt32();
+            entry.module_id = buf.getUInt32();
+            entry.application_id = buf.getUInt16();
         }
-        // Skip unused part of loop instance, if any.
-        data += loop_length; size -= loop_length;
+        buf.popState(); // end of loop_length;
         entries.push_back(entry);
     }
-
-    _is_valid = true;
 }
 
 
@@ -194,78 +148,40 @@ void ts::EASAudioFileDescriptor::deserialize(DuckContext& duck, const Descriptor
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::EASAudioFileDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::EASAudioFileDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    if (size > 0) {
-        DuckContext& duck(display.duck());
-        std::ostream& strm(duck.out());
-        const std::string margin(indent, ' ');
-
-        // Number of audio sources.
-        size_t count = data[0];
-        data++; size--;
-        strm << margin << UString::Format(u"Number of audio sources: %d", {count}) << std::endl;
-
-        while (count-- > 0) {
-            size_t loop_length = size == 0 ? 0 : data[0];
-            if (loop_length < 2 || size < 1 + loop_length) {
-                break; // loop instance does not fit here
-            }
-            const bool file_name_present = (data[1] & 0x80) != 0;
-            const uint8_t audio_format = data[1] & 0x7F;
-            data += 2; size -= 2;
-            loop_length--;
-
-            strm << margin << "- Audio format: " << NameFromSection(u"EASAudioFormat", audio_format, names::VALUE) << std::endl;
-
-            if (file_name_present) {
-                if (loop_length == 0 || 1 + size_t(data[0]) > loop_length) {
-                    break;
+    if (buf.canReadBytes(1)) {
+        const size_t number_of_audio_sources = buf.getUInt8();
+        disp << margin << UString::Format(u"Number of audio sources: %d", {number_of_audio_sources}) << std::endl;
+        for (size_t i = 0; i < number_of_audio_sources && buf.canReadBytes(1); ++i) {
+            buf.pushReadSizeFromLength(8); // loop_length
+            if (buf.canReadBytes(1)) {
+                const bool file_name_present = buf.getBool();
+                disp << margin << "- Audio format: " << NameFromSection(u"EASAudioFormat", buf.getBits<uint8_t>(7), names::VALUE) << std::endl;
+                if (file_name_present && buf.canReadBytes(1)) {
+                    disp << margin << "  File name: \"" << buf.getUTF8WithLength() << "\"" << std::endl;
                 }
-                const size_t file_name_length = data[0];
-                strm << margin << "  File name: \"" << std::string(reinterpret_cast<const char*>(data + 1), file_name_length) << "\"" << std::endl;
-                data += 1 + file_name_length; size -= 1 + file_name_length;
-                loop_length -= 1 + file_name_length;
-            }
-            if (loop_length < 1) {
-                break;
-            }
-
-            const uint8_t audio_source = data[0];
-            data++; size--;
-            loop_length--;
-
-            strm << margin << "  Audio source: " << NameFromSection(u"EASAudioSource", audio_source, names::VALUE) << std::endl;
-
-            if (audio_source == 0x01) {
-                if (loop_length < 8) {
-                    break;
+                if (buf.canReadBytes(1)) {
+                    const uint8_t audio_source = buf.getUInt8();
+                    disp << margin << "  Audio source: " << NameFromSection(u"EASAudioSource", audio_source, names::VALUE) << std::endl;
+                    if (audio_source == 0x01 && buf.canReadBytes(8)) {
+                        disp << margin << UString::Format(u"  Program number: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+                        disp << margin << UString::Format(u"  Carousel id: 0x%X (%<d)", {buf.getUInt32()}) << std::endl;
+                        disp << margin << UString::Format(u"  Application id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+                    }
+                    else if (audio_source == 0x02 && buf.canReadBytes(12)) {
+                        disp << margin << UString::Format(u"  Program number: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+                        disp << margin << UString::Format(u"  Download id: 0x%X (%<d)", {buf.getUInt32()}) << std::endl;
+                        disp << margin << UString::Format(u"  Module id: 0x%X (%<d)", {buf.getUInt32()}) << std::endl;
+                        disp << margin << UString::Format(u"  Application id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+                    }
                 }
-                strm << margin << UString::Format(u"  Program number: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                     << margin << UString::Format(u"  Carousel id: 0x%X (%d)", {GetUInt32(data + 2), GetUInt32(data + 2)}) << std::endl
-                     << margin << UString::Format(u"  Application id: 0x%X (%d)", {GetUInt16(data + 6), GetUInt16(data + 6)}) << std::endl;
-                data += 8; size -= 8;
-                loop_length -= 8;
             }
-            else if (audio_source == 0x02) {
-                if (loop_length < 12) {
-                    break;
-                }
-                strm << margin << UString::Format(u"  Program number: 0x%X (%d)", {GetUInt16(data), GetUInt16(data)}) << std::endl
-                     << margin << UString::Format(u"  Download id: 0x%X (%d)", {GetUInt32(data + 2), GetUInt32(data + 2)}) << std::endl
-                     << margin << UString::Format(u"  Module id: 0x%X (%d)", {GetUInt32(data + 6), GetUInt32(data + 6)}) << std::endl
-                     << margin << UString::Format(u"  Application id: 0x%X (%d)", {GetUInt16(data + 10), GetUInt16(data + 10)}) << std::endl;
-                data += 12; size -= 12;
-                loop_length -= 12;
-            }
-
             // Unused part of loop instance, if any.
-            display.displayExtraData(data, loop_length, indent + 2);
-            data += loop_length; size -= loop_length;
+            disp.displayPrivateData(u"Extraneous data", buf, NPOS, margin + u"  ");
+            buf.popState(); // end of loop_length;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -308,20 +224,20 @@ bool ts::EASAudioFileDescriptor::analyzeXML(DuckContext& duck, const xml::Elemen
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        ok = children[i]->getIntAttribute<uint8_t>(entry.audio_format, u"audio_format", true, 0, 0, 127) &&
+        ok = children[i]->getIntAttribute(entry.audio_format, u"audio_format", true, 0, 0, 127) &&
              children[i]->getAttribute(entry.file_name, u"file_name", false) &&
-             children[i]->getIntAttribute<uint8_t>(entry.audio_source, u"audio_source", true);
+             children[i]->getIntAttribute(entry.audio_source, u"audio_source", true);
         if (ok) {
             if (entry.audio_source == 0x01) {
-                ok = children[i]->getIntAttribute<uint16_t>(entry.program_number, u"program_number", true) &&
-                     children[i]->getIntAttribute<uint32_t>(entry.carousel_id, u"carousel_id", true) &&
-                     children[i]->getIntAttribute<uint16_t>(entry.application_id, u"application_id", true);
+                ok = children[i]->getIntAttribute(entry.program_number, u"program_number", true) &&
+                     children[i]->getIntAttribute(entry.carousel_id, u"carousel_id", true) &&
+                     children[i]->getIntAttribute(entry.application_id, u"application_id", true);
             }
             else if (entry.audio_source == 0x02) {
-                ok = children[i]->getIntAttribute<uint16_t>(entry.program_number, u"program_number", true) &&
-                     children[i]->getIntAttribute<uint32_t>(entry.download_id, u"download_id", true) &&
-                     children[i]->getIntAttribute<uint32_t>(entry.module_id, u"module_id", true) &&
-                     children[i]->getIntAttribute<uint16_t>(entry.application_id, u"application_id", true);
+                ok = children[i]->getIntAttribute(entry.program_number, u"program_number", true) &&
+                     children[i]->getIntAttribute(entry.download_id, u"download_id", true) &&
+                     children[i]->getIntAttribute(entry.module_id, u"module_id", true) &&
+                     children[i]->getIntAttribute(entry.application_id, u"application_id", true);
             }
         }
         entries.push_back(entry);

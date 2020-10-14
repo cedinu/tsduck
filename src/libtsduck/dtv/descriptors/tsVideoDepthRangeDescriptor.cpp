@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsIntegerUtils.h"
@@ -77,30 +78,37 @@ void ts::VideoDepthRangeDescriptor::clearContent()
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::VideoDepthRangeDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::VideoDepthRangeDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::VideoDepthRangeDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
     for (auto it = ranges.begin(); it != ranges.end(); ++it) {
-        bbp->appendUInt8(it->range_type);
+        buf.putUInt8(it->range_type);
+        buf.pushWriteSequenceWithLeadingLength(8); // range_length
         switch (it->range_type) {
             case 0:
-                bbp->appendUInt8(3);  // size
-                bbp->appendUInt24(uint32_t(uint32_t(it->video_max_disparity_hint & 0x0FFF) << 12) | (it->video_min_disparity_hint & 0x0FFF));
+                buf.putBits(it->video_max_disparity_hint, 12);
+                buf.putBits(it->video_min_disparity_hint, 12);
                 break;
             case 1:
-                bbp->appendUInt8(0);  // size
                 break;
             default:
-                bbp->appendUInt8(uint8_t(it->range_selector.size()));
-                bbp->append(it->range_selector);
+                buf.putBytes(it->range_selector);
                 break;
         }
+        buf.popState(); // update range_length
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -108,49 +116,26 @@ void ts::VideoDepthRangeDescriptor::serialize(DuckContext& duck, Descriptor& des
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::VideoDepthRangeDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::VideoDepthRangeDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1 && data[0] == MY_EDID;
-    data++; size--;
-    ranges.clear();
-
-    while (_is_valid && size >= 2) {
+    while (buf.canRead()) {
         Range range;
-        range.range_type = data[0];
-        size_t len = data[1];
-        data += 2; size -= 2;
-
+        range.range_type = buf.getUInt8();
+        buf.pushReadSizeFromLength(8); // range_length
         switch (range.range_type) {
             case 0:
-                _is_valid = len == 3;
-                if (_is_valid) {
-                    const int32_t hint = GetInt24(data);
-                    data += 3; size -= 3;
-                    range.video_max_disparity_hint = SignExtend(int16_t(hint >> 12), 12);
-                    range.video_min_disparity_hint = SignExtend(int16_t(hint), 12);
-                }
+                buf.getBits(range.video_max_disparity_hint, 12);
+                buf.getBits(range.video_min_disparity_hint, 12);
                 break;
             case 1:
-                _is_valid = len == 0;
                 break;
             default:
-                _is_valid = size >= len;
-                if (_is_valid) {
-                    range.range_selector.copy(data, len);
-                    data += len; size -= len;
-                }
+                buf.getBytes(range.range_selector);
                 break;
         }
-
-        if (_is_valid) {
-            ranges.push_back(range);
-        }
+        buf.popState(); // from range_length
+        ranges.push_back(range);
     }
-
-    // Make sure there is no truncated trailing data.
-    _is_valid = _is_valid && size == 0;
 }
 
 
@@ -158,48 +143,23 @@ void ts::VideoDepthRangeDescriptor::deserialize(DuckContext& duck, const Descrip
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::VideoDepthRangeDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::VideoDepthRangeDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
+    while (buf.canReadBytes(2)) {
+        const uint8_t type = buf.getUInt8();
+        disp << margin << UString::Format(u"- Range type: 0x%X (%<d)", {type}) << std::endl;
 
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-    bool ok = true;
-
-    while (ok && size >= 2) {
-        const uint8_t type = data[0];
-        size_t len = data[1];
-        data += 2; size -= 2;
-        strm << margin << UString::Format(u"- Range type: 0x%X (%d)", {type, type}) << std::endl;
-
-        switch (type) {
-            case 0:
-                ok = len == 3;
-                if (ok) {
-                    const int32_t hint = GetInt24(data);
-                    const int16_t max = SignExtend(int16_t(hint >> 12), 12);
-                    const int16_t min = SignExtend(int16_t(hint), 12);
-                    data += 3; size -= 3;
-                    strm << margin << UString::Format(u"  Video max disparity hint: %d, min: %d", {max, min}) << std::endl;
-                }
-                break;
-            case 1:
-                ok = len == 0;
-                break;
-            default:
-                ok = size >= len;
-                if (ok) {
-                    display.displayPrivateData(u"Range selector bytes", data, len, indent + 2);
-                    data += len; size -= len;
-                }
-                break;
+        buf.pushReadSizeFromLength(8); // range_length
+        if (type == 0 && buf.canReadBytes(3)) {
+            disp << margin << UString::Format(u"  Video max disparity hint: %d", {buf.getBits<int16_t>(12)});
+            disp << UString::Format(u", min: %d", {buf.getBits<int16_t>(12)}) << std::endl;
         }
+        else if (type > 1) {
+            disp.displayPrivateData(u"Range selector bytes", buf, NPOS, margin + u"  ");
+        }
+        disp.displayPrivateData(u"Extraneous range selector bytes", buf, NPOS, margin + u"  ");
+        buf.popState(); // from range_length
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -234,9 +194,9 @@ bool ts::VideoDepthRangeDescriptor::analyzeXML(DuckContext& duck, const xml::Ele
 
     for (size_t i = 0; ok && i < xranges.size(); ++i) {
         Range range;
-        ok = xranges[i]->getIntAttribute<uint8_t>(range.range_type, u"range_type", true) &&
-             xranges[i]->getIntAttribute<int16_t>(range.video_max_disparity_hint, u"video_max_disparity_hint", range.range_type == 0) &&
-             xranges[i]->getIntAttribute<int16_t>(range.video_min_disparity_hint, u"video_min_disparity_hint", range.range_type == 0) &&
+        ok = xranges[i]->getIntAttribute(range.range_type, u"range_type", true) &&
+             xranges[i]->getIntAttribute(range.video_max_disparity_hint, u"video_max_disparity_hint", range.range_type == 0) &&
+             xranges[i]->getIntAttribute(range.video_min_disparity_hint, u"video_min_disparity_hint", range.range_type == 0) &&
              xranges[i]->getHexaTextChild(range.range_selector, u"range_selector", false, 0, range.range_type < 2 ? 0 : MAX_DESCRIPTOR_SIZE);
         ranges.push_back(range);
     }

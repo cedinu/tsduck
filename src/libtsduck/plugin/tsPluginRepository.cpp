@@ -30,6 +30,7 @@
 #include "tsPluginRepository.h"
 #include "tsApplicationSharedLibrary.h"
 #include "tsAlgorithm.h"
+#include "tsCerrReport.h"
 #include "tsSysUtils.h"
 TSDUCK_SOURCE;
 
@@ -63,6 +64,7 @@ ts::PluginRepository::PluginRepository() :
 
 void ts::PluginRepository::registerInput(const UString& name, InputPluginFactory allocator)
 {
+    CERR.debug(u"registering input plugin \"%s\", status: %s", {name, allocator != nullptr ? u"ok" : u"error, no allocator"});
     if (allocator != nullptr) {
         _inputPlugins[name] = allocator;
     }
@@ -70,6 +72,7 @@ void ts::PluginRepository::registerInput(const UString& name, InputPluginFactory
 
 void ts::PluginRepository::registerProcessor(const UString& name, ProcessorPluginFactory allocator)
 {
+    CERR.debug(u"registering processor plugin \"%s\", status: %s", {name, allocator != nullptr ? u"ok" : u"error, no allocator"});
     if (allocator != nullptr) {
         _processorPlugins[name] = allocator;
     }
@@ -77,6 +80,7 @@ void ts::PluginRepository::registerProcessor(const UString& name, ProcessorPlugi
 
 void ts::PluginRepository::registerOutput(const UString& name, OutputPluginFactory allocator)
 {
+    CERR.debug(u"registering output plugin \"%s\", status: %s", {name, allocator != nullptr ? u"ok" : u"error, no allocator"});
     if (allocator != nullptr) {
         _outputPlugins[name] = allocator;
     }
@@ -111,8 +115,10 @@ FACTORY ts::PluginRepository::getFactory(const UString& plugin_name, const UStri
     // Load a shared library if not found and allowed.
     if (it == plugin_map.end() && _sharedLibraryAllowed) {
         // Load shareable library. Use name resolution. Use permanent mapping to keep
-        // the shareable image in memory after returning from this function.
-        ApplicationSharedLibrary shlib(plugin_name, u"tsplugin_", TS_PLUGINS_PATH, true, report);
+        // the shareable image in memory after returning from this function. Also make
+        // sure to include the plugin's directory in the shared library search path:
+        // an extension may install a library in the same directory as the plugin.
+        ApplicationSharedLibrary shlib(plugin_name, u"tsplugin_", TS_PLUGINS_PATH, SharedLibraryFlags::PERMANENT, report);
         if (shlib.isLoaded()) {
             // Search again if the shareable library was loaded.
             // The shareable library is supposed to register its plugins on initialization.
@@ -120,6 +126,10 @@ FACTORY ts::PluginRepository::getFactory(const UString& plugin_name, const UStri
         }
         else {
             report.error(shlib.errorMessage());
+            // If a shared library was loaded but registered its plugin with the wrong name,
+            // then plugin_map was modified but the previous 'plugin_map.end()' in invalidated.
+            // So, just to make sure  we don't fail on invalid plugins, reassign it.
+            it = plugin_map.end();
         }
     }
 
@@ -188,7 +198,8 @@ void ts::PluginRepository::loadAllPlugins(Report& report)
     // Load all plugins, let them register their plugins.
     for (size_t i = 0; i < files.size(); ++i) {
         // Permanent load.
-        SharedLibrary shlib(files[i], true, report);
+        SharedLibrary shlib(files[i], SharedLibraryFlags::PERMANENT, report);
+        CERR.debug(u"loaded plugin file \"%s\", status: %s", {files[i], shlib.isLoaded()});
     }
 }
 

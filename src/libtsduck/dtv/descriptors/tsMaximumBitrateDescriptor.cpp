@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -69,25 +70,16 @@ void ts::MaximumBitrateDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::MaximumBitrateDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::MaximumBitrateDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt24(0x00C00000 | (maximum_bitrate & 0x003FFFFF));
-    serializeEnd(desc, bbp);
+    buf.putBits(0xFF, 2);
+    buf.putBits(maximum_bitrate, 22);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::MaximumBitrateDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::MaximumBitrateDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() == 3;
-
-    if (_is_valid) {
-        maximum_bitrate = GetUInt24(desc.payload()) & 0x003FFFFF;
-    }
+    buf.skipBits(2);
+    buf.getBits(maximum_bitrate, 22);
 }
 
 
@@ -95,19 +87,13 @@ void ts::MaximumBitrateDescriptor::deserialize(DuckContext& duck, const Descript
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::MaximumBitrateDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::MaximumBitrateDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 3) {
-        const uint32_t mbr = GetUInt24(data) & 0x003FFFFF;
-        data += 3; size -= 3;
-        strm << margin << UString::Format(u"Maximum bitrate: 0x%X (%d), %'d bits/second", {mbr, mbr, mbr * BITRATE_UNIT}) << std::endl;
+    if (buf.canReadBytes(3)) {
+        buf.skipBits(2);
+        const uint32_t mbr = buf.getBits<uint32_t>(22);
+        disp << margin << UString::Format(u"Maximum bitrate: 0x%X (%<d), %'d bits/second", {mbr, mbr * BITRATE_UNIT}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -120,15 +106,10 @@ void ts::MaximumBitrateDescriptor::buildXML(DuckContext& duck, xml::Element* roo
     root->setIntAttribute(u"maximum_bitrate", maximum_bitrate * BITRATE_UNIT, false);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::MaximumBitrateDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     uint32_t mbr = 0;
-    bool ok = element->getIntAttribute<uint32_t>(mbr, u"maximum_bitrate", true, 0, 0, 0x003FFFFF * BITRATE_UNIT);
+    bool ok = element->getIntAttribute(mbr, u"maximum_bitrate", true, 0, 0, 0x003FFFFF * BITRATE_UNIT);
     maximum_bitrate = mbr / BITRATE_UNIT;
     return ok;
 }

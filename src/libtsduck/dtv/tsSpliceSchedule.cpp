@@ -79,17 +79,13 @@ void ts::SpliceSchedule::clearContent()
 // Display a SpliceSchedule command.
 //----------------------------------------------------------------------------
 
-void ts::SpliceSchedule::display(TablesDisplay& display, int indent) const
+void ts::SpliceSchedule::display(TablesDisplay& disp, const UString& margin) const
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
     for (EventList::const_iterator ev = events.begin(); ev != events.end(); ++ev) {
-        strm << margin << UString::Format(u"- Splice event id: 0x%X, cancel: %d", {ev->event_id, ev->canceled}) << std::endl;
+        disp << margin << UString::Format(u"- Splice event id: 0x%X, cancel: %d", {ev->event_id, ev->canceled}) << std::endl;
 
         if (!ev->canceled) {
-            strm << margin
+            disp << margin
                  << "  Out of network: " << UString::YesNo(ev->splice_out)
                  << ", program splice: " << UString::YesNo(ev->program_splice)
                  << ", duration set: " << UString::YesNo(ev->use_duration)
@@ -97,24 +93,24 @@ void ts::SpliceSchedule::display(TablesDisplay& display, int indent) const
 
             if (ev->program_splice) {
                 // The complete program switches at a given time.
-                strm << margin << UString::Format(u"  UTC: %s", {Time::UnixTimeToUTC(ev->program_utc).format(Time::DATE | Time::TIME)}) << std::endl;
+                disp << margin << UString::Format(u"  UTC: %s", {Time::UnixTimeToUTC(ev->program_utc).format(Time::DATE | Time::TIME)}) << std::endl;
             }
             if (!ev->program_splice) {
                 // Program components switch individually.
-                strm << margin << "  Number of components: " << ev->components_utc.size() << std::endl;
+                disp << margin << "  Number of components: " << ev->components_utc.size() << std::endl;
                 for (UTCByComponent::const_iterator it = ev->components_utc.begin(); it != ev->components_utc.end(); ++it) {
-                    strm << margin
+                    disp << margin
                          << UString::Format(u"    Component tag: 0x%X (%d)", {it->first, it->first})
                          << UString::Format(u", UTC: %s", {Time::UnixTimeToUTC(it->second).format(Time::DATE | Time::TIME)})
                          << std::endl;
                 }
             }
             if (ev->use_duration) {
-                strm << margin
+                disp << margin
                      << UString::Format(u"  Duration PTS: 0x%09X (%d), auto return: %s", {ev->duration_pts, ev->duration_pts, UString::YesNo(ev->auto_return)})
                      << std::endl;
             }
-            strm << margin
+            disp << margin
                  << UString::Format(u"  Unique program id: 0x%X (%d), avail: 0x%X (%d), avails expected: %d", {ev->program_id, ev->program_id, ev->avail_num, ev->avail_num, ev->avails_expected})
                  << std::endl;
         }
@@ -128,10 +124,12 @@ void ts::SpliceSchedule::display(TablesDisplay& display, int indent) const
 
 int ts::SpliceSchedule::deserialize(const uint8_t* data, size_t size)
 {
-    const uint8_t* const start = data;
+    // Clear object content, make it a valid empty object.
     clear();
 
+    const uint8_t* const start = data;
     if (size < 1) {
+        invalidate();
         return -1; // too short
     }
 
@@ -149,6 +147,7 @@ int ts::SpliceSchedule::deserialize(const uint8_t* data, size_t size)
 
         if (!ev.canceled) {
             if (size < 1) {
+                invalidate();
                 return -1; // too short
             }
 
@@ -160,6 +159,7 @@ int ts::SpliceSchedule::deserialize(const uint8_t* data, size_t size)
             if (ev.program_splice) {
                 // The complete program switches at a given time.
                 if (size < 4) {
+                    invalidate();
                     return -1; // too short
                 }
                 ev.program_utc = GetUInt32(data);
@@ -168,12 +168,14 @@ int ts::SpliceSchedule::deserialize(const uint8_t* data, size_t size)
             else {
                 // Program components switch individually.
                 if (size < 1) {
+                    invalidate();
                     return -1; // too short
                 }
                 size_t count = data[0];
                 data++; size--;
                 while (count-- > 0) {
                     if (size < 5) {
+                        invalidate();
                         return -1; // too short
                     }
                     ev.components_utc.insert(std::make_pair(GetUInt8(data), GetUInt32(data + 1)));
@@ -182,6 +184,7 @@ int ts::SpliceSchedule::deserialize(const uint8_t* data, size_t size)
             }
             if (ev.use_duration) {
                 if (size < 5) {
+                    invalidate();
                     return -1; // too short
                 }
                 ev.auto_return = (data[0] & 0x80) != 0;
@@ -189,6 +192,7 @@ int ts::SpliceSchedule::deserialize(const uint8_t* data, size_t size)
                 data += 5; size -= 5;
             }
             if (size < 4) {
+                invalidate();
                 return -1; // too short
             }
             ev.program_id = GetUInt16(data);
@@ -202,7 +206,6 @@ int ts::SpliceSchedule::deserialize(const uint8_t* data, size_t size)
         spliceCount--;
     }
 
-    _is_valid = true;
     return int(data - start);
 }
 

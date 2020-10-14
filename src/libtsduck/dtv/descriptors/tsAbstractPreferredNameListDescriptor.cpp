@@ -30,9 +30,11 @@
 #include "tsAbstractPreferredNameListDescriptor.h"
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
+
 
 //----------------------------------------------------------------------------
 // Constructors
@@ -71,21 +73,16 @@ ts::AbstractPreferredNameListDescriptor::AbstractPreferredNameListDescriptor(Duc
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AbstractPreferredNameListDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::AbstractPreferredNameListDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    for (LanguageMap::const_iterator it1 = entries.begin(); it1 != entries.end(); ++it1) {
-        if (!SerializeLanguageCode(*bbp, it1->first)) {
-            desc.invalidate();
-            return;
-        }
-        bbp->appendUInt8(uint8_t(it1->second.size()));  // name_count
-        for (NameByIdMap::const_iterator it2 = it1->second.begin(); it2 != it1->second.end(); ++it2) {
-            bbp->appendUInt8(it2->first);  // name_id
-            bbp->append(duck.encodedWithByteLength(it2->second));
+    for (auto it1 = entries.begin(); it1 != entries.end(); ++it1) {
+        buf.putLanguageCode(it1->first); // language
+        buf.putUInt8(uint8_t(it1->second.size())); // name_count
+        for (auto it2 = it1->second.begin(); it2 != it1->second.end(); ++it2) {
+            buf.putUInt8(it2->first);  // name_id
+            buf.putStringWithByteLength(it2->second);
         }
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -93,36 +90,17 @@ void ts::AbstractPreferredNameListDescriptor::serialize(DuckContext& duck, Descr
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::AbstractPreferredNameListDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::AbstractPreferredNameListDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag();
-    entries.clear();
+    while (buf.canRead()) {
+        // Force the creation of a language entry.
+        NameByIdMap& names(entries[buf.getLanguageCode()]);
 
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-
-        // Loop on languages.
-        while (size >= 4) {
-            // Get language and name count.
-            const UString lang(DeserializeLanguageCode(data));
-            uint8_t count = data[3];
-            data += 4; size -= 4;
-
-            // Force the creation of a language entry.
-            NameByIdMap& names(entries[lang]);
-
-            // Get all names for the lanuage.
-            while (count-- > 0 && size >= 2) {
-                uint8_t id = data[0];
-                size_t length = data[1];
-                data += 2; size -= 2;
-                if (length > size) {
-                    length = size;
-                }
-                duck.decode(names[id], data, length);
-                data += length; size -= length;
-            }
+        // Get all names for the language.
+        uint8_t count = buf.getUInt8();
+        while (count-- > 0 && !buf.error()) {
+            const uint8_t id = buf.getUInt8();
+            buf.getStringWithByteLength(names[id]);
         }
     }
 }
@@ -132,31 +110,17 @@ void ts::AbstractPreferredNameListDescriptor::deserialize(DuckContext& duck, con
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::AbstractPreferredNameListDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::AbstractPreferredNameListDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 4) {
-        const UString lang(DeserializeLanguageCode(data));
-        uint8_t count = data[3];
-        data += 4; size -= 4;
-
-        strm << margin << "Language: " << lang << ", name count: " << int(count) << std::endl;
-        while (count-- > 0 && size >= 2) {
-            uint8_t id = data[0];
-            size_t length = data[1];
-            data += 2; size -= 2;
-            if (length > size) {
-                length = size;
-            }
-            strm << margin << "Id: " << int(id) << ", Name: \"" << duck.decoded(data, length) << "\"" << std::endl;
-            data += length; size -= length;
+    while (buf.canReadBytes(4)) {
+        disp << margin << "Language: " << buf.getLanguageCode();
+        uint8_t count = buf.getUInt8();
+        disp << ", name count: " << int(count) << std::endl;
+        while (count-- > 0 && buf.canReadBytes(2)) {
+            disp << margin << "Id: " << int(buf.getUInt8());
+            disp << ", Name: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -194,7 +158,7 @@ bool ts::AbstractPreferredNameListDescriptor::analyzeXML(DuckContext& duck, cons
         if (ok) {
             // Force the creation of a language entry.
             NameByIdMap& names(entries[lang]);
-            for (size_t i2 = 0; _is_valid && i2 < children2.size(); ++i2) {
+            for (size_t i2 = 0; ok && i2 < children2.size(); ++i2) {
                 uint8_t id = 0;
                 ok = children2[i2]->getIntAttribute(id, u"name_id", true) && children2[i2]->getAttribute(names[id], u"name");
             }

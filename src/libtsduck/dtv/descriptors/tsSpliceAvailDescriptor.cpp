@@ -32,6 +32,7 @@
 #include "tsSCTE35.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -70,33 +71,19 @@ ts::SpliceAvailDescriptor::SpliceAvailDescriptor(DuckContext& duck, const Descri
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// Serialization / deserialization.
 //----------------------------------------------------------------------------
 
-void ts::SpliceAvailDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SpliceAvailDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt32(identifier);
-    bbp->appendUInt32(provider_avail_id);
-    serializeEnd(desc, bbp);
+    buf.putUInt32(identifier);
+    buf.putUInt32(provider_avail_id);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::SpliceAvailDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SpliceAvailDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 8;
-
-    if (_is_valid) {
-        identifier = GetUInt32(data);
-        provider_avail_id = GetUInt32(data + 4);
-    }
+    identifier = buf.getUInt32();
+    provider_avail_id = buf.getUInt32();
 }
 
 
@@ -104,25 +91,18 @@ void ts::SpliceAvailDescriptor::deserialize(DuckContext& duck, const Descriptor&
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SpliceAvailDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SpliceAvailDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 8) {
-        strm << margin << UString::Format(u"Identifier: 0x%X", {GetUInt32(data)});
-        duck.displayIfASCII(data, 4, u" (\"", u"\")");
-        strm << std::endl << margin << UString::Format(u"Provider id: 0x%X", {GetUInt32(data + 4)}) << std::endl;
-        data += 8; size -= 8;
+    if (buf.canReadBytes(8)) {
+        // Sometimes, the identifiers are made of ASCII characters. Try to display them.
+        disp.displayIntAndASCII(u"Identifier: 0x%08X", buf, 4, margin);
+        disp.displayIntAndASCII(u"Provider id: 0x%08X", buf, 4, margin);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
 //----------------------------------------------------------------------------
-// XML serialization
+// XML serialization / deserialization.
 //----------------------------------------------------------------------------
 
 void ts::SpliceAvailDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -131,13 +111,8 @@ void ts::SpliceAvailDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
     root->setIntAttribute(u"provider_avail_id", provider_avail_id, true);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::SpliceAvailDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint32_t>(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
-           element->getIntAttribute<uint32_t>(provider_avail_id, u"provider_avail_id", true);
+    return element->getIntAttribute(identifier, u"identifier", false, SPLICE_ID_CUEI) &&
+           element->getIntAttribute(provider_avail_id, u"provider_avail_id", true);
 }

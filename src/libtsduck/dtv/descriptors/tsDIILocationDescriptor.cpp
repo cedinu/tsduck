@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsNames.h"
 #include "tsxmlElement.h"
@@ -68,20 +69,25 @@ void ts::DIILocationDescriptor::clearContent()
     entries.clear();
 }
 
+ts::DIILocationDescriptor::Entry::Entry(uint16_t id, uint16_t tag) :
+    DII_identification(id),
+    association_tag(tag)
+{
+}
+
 
 //----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DIILocationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DIILocationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(transport_protocol_label);
+    buf.putUInt8(transport_protocol_label);
     for (auto it = entries.begin(); it != entries.end(); ++it) {
-        bbp->appendUInt16(0x8000 | it->DII_identification);
-        bbp->appendUInt16(it->association_tag);
+        buf.putBit(1);
+        buf.putBits(it->DII_identification, 15);
+        buf.putUInt16(it->association_tag);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -89,24 +95,15 @@ void ts::DIILocationDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DIILocationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DIILocationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    entries.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size % 4 == 1;
-
-    if (_is_valid) {
-        transport_protocol_label = data[0];
-        data++; size--;
-        while (size >= 4) {
-            const uint16_t id = GetUInt16(data) & 0x7FFF;
-            const uint16_t tag = GetUInt16(data + 2);
-            data += 4; size -= 4;
-            entries.push_back(Entry(id, tag));
-        }
+    transport_protocol_label = buf.getUInt8();
+    while (buf.canRead()) {
+        Entry e;
+        buf.skipBits(1);
+        buf.getBits(e.DII_identification, 15);
+        e.association_tag = buf.getUInt16();
+        entries.push_back(e);
     }
 }
 
@@ -115,24 +112,16 @@ void ts::DIILocationDescriptor::deserialize(DuckContext& duck, const Descriptor&
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DIILocationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DIILocationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        strm << margin << UString::Format(u"Transport protocol label: 0x%X (%d)", {data[0], data[0]}) << std::endl;
-        data++; size--;
-        while (size >= 4) {
-            const uint16_t id = GetUInt16(data) & 0x7FFF;
-            const uint16_t tag = GetUInt16(data + 2);
-            data += 4; size -= 4;
-            strm << margin << UString::Format(u"DII id: 0x%X (%d), tag: 0x%X (%d)", {id, id, tag, tag}) << std::endl;
+    if (buf.canReadBytes(1)) {
+        disp << margin << UString::Format(u"Transport protocol label: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        while (buf.canReadBytes(4)) {
+            buf.skipBits(1);
+            disp << margin << UString::Format(u"DII id: 0x%X (%<d)", {buf.getBits<uint16_t>(15)});
+            disp << UString::Format(u", tag: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -159,13 +148,13 @@ bool ts::DIILocationDescriptor::analyzeXML(DuckContext& duck, const xml::Element
 {
     xml::ElementVector children;
     bool ok =
-        element->getIntAttribute<uint8_t>(transport_protocol_label, u"transport_protocol_label", true) &&
+        element->getIntAttribute(transport_protocol_label, u"transport_protocol_label", true) &&
         element->getChildren(children, u"module", 0, MAX_ENTRIES);
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        ok = children[i]->getIntAttribute<uint16_t>(entry.DII_identification, u"DII_identification", true, 0, 0x0000, 0x7FFF) &&
-             children[i]->getIntAttribute<uint16_t>(entry.association_tag, u"association_tag", true);
+        ok = children[i]->getIntAttribute(entry.DII_identification, u"DII_identification", true, 0, 0x0000, 0x7FFF) &&
+             children[i]->getIntAttribute(entry.association_tag, u"association_tag", true);
         entries.push_back(entry);
     }
     return ok;

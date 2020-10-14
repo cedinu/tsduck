@@ -32,6 +32,7 @@
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -199,130 +200,54 @@ ts::VCT::ChannelList::const_iterator ts::VCT::findServiceInternal(Service& servi
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::VCT::deserializeContent(DuckContext& duck, const BinaryTable& table)
+void ts::VCT::deserializePayload(PSIBuffer& buf, const Section& section)
 {
-    // Clear table content
-    protocol_version = 0;
-    transport_stream_id = 0;
-    descs.clear();
-    channels.clear();
+    // Get common properties (should be identical in all sections)
+    transport_stream_id = section.tableIdExtension();
+    protocol_version = buf.getUInt8();
 
-    // Loop on all sections.
-    for (size_t si = 0; si < table.sectionCount(); ++si) {
+    // Loop on all channel definitions.
+    uint8_t num_channels = buf.getUInt8();
+    while (!buf.error() && num_channels-- > 0) {
 
-        // Reference to current section
-        const Section& sect(*table.sectionAt(si));
+        // Add a new Channel at the end of the list.
+        // We do not need to search for a similar channel to extend
+        // because A/65 specifies that a channel shall fit in one section.
+        Channel& ch(channels.newEntry());
 
-        // Get common properties (should be identical in all sections)
-        version = sect.version();
-        is_current = sect.isCurrent();
-        transport_stream_id = sect.tableIdExtension();
-
-        // Analyze the section payload:
-        const uint8_t* data = sect.payload();
-        size_t remain = sect.payloadSize();
-        if (remain < 2) {
-            return; // invalid table, too short
+        buf.getUTF16(ch.short_name, 14);
+        buf.skipBits(4);
+        buf.getBits(ch.major_channel_number, 10);
+        buf.getBits(ch.minor_channel_number, 10);
+        ch.modulation_mode = buf.getUInt8();
+        ch.carrier_frequency = buf.getUInt32();
+        ch.channel_TSID = buf.getUInt16();
+        ch.program_number = buf.getUInt16();
+        buf.getBits(ch.ETM_location, 2);
+        ch.access_controlled = buf.getBool();
+        ch.hidden = buf.getBool();
+        if (_table_id == TID_CVCT) {
+            // The following two bits are used in CVCT only.
+            ch.path_select = buf.getBit();
+            ch.out_of_band = buf.getBool();
         }
-
-        // Get fixed fields.
-        protocol_version = data[0];
-        uint8_t num_channels = data[1];
-        data += 2; remain -= 2;
-
-        // Loop on all channel definitions.
-        while (num_channels > 0 && remain >= 32) {
-            // Add a new Channel at the end of the list.
-            // We do not need to search for a similar channel to extend
-            // because A/65 specifies that a channel shall fit in one section.
-            Channel& ch(channels.newEntry());
-
-            // The short name is at most 7 UTF-16 characters.
-            for (size_t i = 0; i < 7; i++) {
-                const uint16_t c = GetUInt16(data + 2*i);
-                if (c == 0) {
-                    break; // padding zeroes
-                }
-                else {
-                    ch.short_name.push_back(UChar(c));
-                }
-            }
-
-            // Other channel attributes.
-            const uint32_t num = GetUInt24(data + 14);
-            ch.major_channel_number = (num >> 10) & 0x03FF;
-            ch.minor_channel_number = num & 0x03FF;
-            ch.modulation_mode = data[17];
-            ch.carrier_frequency = GetUInt32(data + 18);
-            ch.channel_TSID = GetUInt16(data + 22);
-            ch.program_number = GetUInt16(data + 24);
-            const uint8_t flags = data[26];
-            ch.ETM_location = (flags >> 6) & 0x03;
-            ch.access_controlled = (flags & 0x20) != 0;
-            ch.hidden = (flags & 0x10) != 0;
-            if (_table_id == TID_CVCT) {
-                // The following two bits are used in CVCT only.
-                ch.path_select = (flags >> 3) & 0x01;
-                ch.out_of_band = (flags & 0x04) != 0;
-            }
-            else {
-                // Unused field in other forms of VCT.
-                ch.path_select = 0;
-                ch.out_of_band = false;
-            }
-            ch.hide_guide = (flags & 0x02) != 0;
-            ch.service_type = data[27] & 0x3F;
-            ch.source_id = GetUInt16(data + 28);
-
-            // Descriptors for this channel.
-            size_t info_length = GetUInt16(data + 30) & 0x03FF; // 10 bits only
-            data += 32; remain -= 32;
-            info_length = std::min(info_length, remain);
-            ch.descs.add(data, info_length);
-            data += info_length; remain -= info_length;
-            num_channels--;
+        else {
+            // Unused field in other forms of VCT.
+            buf.skipBits(2);
+            ch.path_select = 0;
+            ch.out_of_band = false;
         }
-        if (num_channels > 0 || remain < 2) {
-            return; // truncated table.
-        }
+        ch.hide_guide = buf.getBool();
+        buf.skipBits(3);
+        buf.getBits(ch.service_type, 6);
+        ch.source_id = buf.getUInt16();
 
-        // Get global descriptor list
-        size_t info_length = GetUInt16(data) & 0x03FF; // 10 bits only
-        data += 2; remain -= 2;
-        info_length = std::min(info_length, remain);
-        descs.add(data, info_length);
-        data += info_length; remain -= info_length;
+        // Descriptors for this channel (with 10-bit length field).
+        buf.getDescriptorListWithLength(ch.descs, 10);
     }
 
-    _is_valid = true;
-}
-
-
-//----------------------------------------------------------------------------
-// Private method: Add a new section to a table being serialized.
-// Section number is incremented. Data and remain are reinitialized.
-//----------------------------------------------------------------------------
-
-void ts::VCT::addSection(BinaryTable& table,
-                                 int& section_number,
-                                 uint8_t* payload,
-                                 uint8_t*& data,
-                                 size_t& remain) const
-{
-    table.addSection(new Section(_table_id,
-                                 true,                 // is_private_section
-                                 transport_stream_id,  // tid_ext
-                                 version,
-                                 is_current,
-                                 uint8_t(section_number),
-                                 uint8_t(section_number),   //last_section_number
-                                 payload,
-                                 data - payload)); // payload_size,
-
-    // Reinitialize pointers.
-    remain += data - payload;
-    data = payload;
-    section_number++;
+    // Get global descriptor list (with 10-bit length field).
+    buf.getDescriptorListWithLength(descs, 10);
 }
 
 
@@ -330,91 +255,87 @@ void ts::VCT::addSection(BinaryTable& table,
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::VCT::serializeContent(DuckContext& duck, BinaryTable& table) const
+void ts::VCT::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
-    // Build the sections one by one.
-    uint8_t payload[MAX_PRIVATE_LONG_SECTION_PAYLOAD_SIZE];
-    int section_number = 0;
-    uint8_t* data = payload;
-    size_t remain = sizeof(payload);
-    size_t channel_index = 0;  // index in list of channels in the VCT
-    size_t next_desc = 0;  // next global descriptor to serialize.
+    // Add fixed fields.
+    buf.putUInt8(protocol_version);
 
-    // Loop on the creation of sections until at least one secrion is created and
-    // all channels are serialized and all global descriptors are serialized.
-    while (section_number == 0 || channel_index < channels.size() || next_desc < descs.count()) {
+    // Save position before num_channels_in_section. Will be updated at each channel.
+    uint8_t num_channels_in_section = 0;
+    buf.pushState();
+    buf.putUInt8(num_channels_in_section);
+    const size_t payload_min_size = buf.currentWriteByteOffset();
 
-        // Add fixed fields.
-        data[0] = protocol_version;
+    // Loop on channel definitions.
+    for (size_t i = 0; !buf.error() && i < channels.size(); ++i) {
+        const Channel& ch(channels[i]);
 
-        // Placeholder for num_channels_in_section
-        uint8_t num_channels = 0;
-        data += 2; remain -= 2;
+        // Binary size of the channel definition.
+        const size_t entry_size = 32 + ch.descs.binarySize();
 
-        // Loop on channel definitions.
-        while (channel_index < channels.size() && remain >= 34) {
-
-            // Save current position in payload.
-            uint8_t* const saved_data = data;
-            const size_t saved_remain = remain;
-
-            // Fixed fields for this channel.
-            const Channel& ch(channels[channel_index]);
-
-            // The short name is at most 7 UTF-16 characters, padded with zeroes.
-            for (size_t i = 0; i < 7; i++) {
-                PutUInt16(data + 2*i, i < ch.short_name.size() ? uint16_t(ch.short_name[i]) : 0);
-            }
-
-            // Other channel attributes.
-            PutUInt24(data + 14, 0xF000 | ((ch.major_channel_number & 0x03FF) << 10) | (ch.minor_channel_number & 0x03FF));
-            PutUInt8(data + 17, ch.modulation_mode);
-            PutUInt32(data + 18, ch.carrier_frequency);
-            PutUInt16(data + 22, ch.channel_TSID);
-            PutUInt16(data + 24, ch.program_number);
-            PutUInt8(data + 26, uint8_t(ch.ETM_location << 6) |
-                                (ch.access_controlled ? 0x20 : 0x00) |
-                                (ch.hidden ? 0x10 : 0x00) |
-                                (_table_id != TID_CVCT ? 0x08 : uint8_t((ch.path_select & 0x01) << 3)) |
-                                (_table_id != TID_CVCT || ch.out_of_band ? 0x04 : 0x00) |
-                                (ch.hide_guide ? 0x02 : 0x00) |
-                                0x01);
-            PutUInt8(data + 27, 0xC0 | ch.service_type);
-            PutUInt16(data + 28, ch.source_id);
-
-            // Now try to serialize all descriptors from the channel.
-            // Reserve 2 extra bytes at end, for the rest of the section.
-            // Warning: the VCT has an unusual 10-bit size for the descriptor list length.
-            data += 30;
-            remain -= 32; // including 2 extra bytes at end
-            const size_t next_index = ch.descs.lengthSerialize(data, remain, 0, 0x003F, 10);
-            remain += 2; // restore space for the 2 extra bytes at end
-
-            if (num_channels == 0 || next_index >= ch.descs.count()) {
-                // This is the first channel in section or all descriptors for the channel were serialized.
-                // Fine, keep this channel in the section.
-                num_channels++;  // number of channels in this section
-                channel_index++; // index in list of channels in VCT
-            }
-            else {
-                // This is not the first channel in the section and all descriptors could not fit.
-                // Drop this channel for this section, will be stored in next section.
-                // Stop the current section here.
-                data = saved_data;
-                remain = saved_remain;
-                break;
-            }
+        // If we are not at the beginning of the channel loop, make sure that the entire
+        // channel fits in the section. If it does not fit, start a new section.
+        // Take into account at least 2 bytes for the trailing descriptor list.
+        if (entry_size + 2 > buf.remainingWriteBytes() && buf.currentWriteByteOffset() > payload_min_size) {
+            // Create an empty trailing descriptor list.
+            buf.putUInt16(0xFC00);
+            // Create a new section.
+            addOneSection(table, buf);
+            // We are at the position of num_channels_in_section in the new section.
+            buf.putUInt8(num_channels_in_section = 0);
         }
 
-        // Now store the number of channels in this section.
-        payload[1] = num_channels;
+        // Serialize the channel definition.
+        buf.putFixedUTF16(ch.short_name, 14);
+        buf.putBits(0xFF, 4);
+        buf.putBits(ch.major_channel_number, 10);
+        buf.putBits(ch.minor_channel_number, 10);
+        buf.putUInt8(ch.modulation_mode);
+        buf.putUInt32(ch.carrier_frequency);
+        buf.putUInt16(ch.channel_TSID);
+        buf.putUInt16(ch.program_number);
+        buf.putBits(ch.ETM_location, 2);
+        buf.putBit(ch.access_controlled);
+        buf.putBit(ch.hidden);
+        buf.putBit(_table_id != TID_CVCT ? 1 : ch.path_select);
+        buf.putBit(_table_id != TID_CVCT || ch.out_of_band);
+        buf.putBit(ch.hide_guide);
+        buf.putBits(0xFF, 3);
+        buf.putBits(ch.service_type, 6);
+        buf.putUInt16(ch.source_id);
 
-        // Store all or some global descriptors.
-        // Warning: the VCT has an unusual 10-bit size for the descriptor list length.
-        next_desc = descs.lengthSerialize(data, remain, next_desc, 0x003F, 10);
+        // Descriptors for this channel (with 10-bit length field).
+        // Temporarily remove 2 trailing bytes for minimal additional_descriptor loop.
+        buf.pushWriteSize(buf.size() - 2);
+        buf.putPartialDescriptorListWithLength(ch.descs, 0, NPOS, 10);
+        buf.popState();
 
-        // Add a new section in the table
-        addSection(table, section_number, payload, data, remain);
+        // Now increment the field num_channels_in_section at saved position.
+        buf.swapState();
+        buf.pushState();
+        buf.putUInt8(++num_channels_in_section);
+        buf.popState();
+        buf.swapState();
+    }
+
+    // There should be at least two remaining bytes if there was no error.
+    assert(buf.error() || buf.remainingWriteBytes() >= 2);
+
+    // Serialize additional_descriptor loop. May overflow on additional sections.
+    size_t start = 0;
+    while (!buf.error()) {
+        start = buf.putPartialDescriptorListWithLength(descs, start, NPOS, 10);
+        if (start < descs.size()) {
+            // Too many descriptors to fit in this section, flush current section.
+            addOneSection(table, buf);
+            // We are at the position of num_channels_in_section in the new section.
+            // There is no channel entry in this section.
+            buf.putUInt8(0);
+        }
+        else {
+            // Descriptor list completed.
+            break;
+        }
     }
 }
 
@@ -423,70 +344,58 @@ void ts::VCT::serializeContent(DuckContext& duck, BinaryTable& table) const
 // A static method to display a VCT section.
 //----------------------------------------------------------------------------
 
-void ts::VCT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::VCT::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
+    disp << margin << UString::Format(u"Transport stream id: 0x%X (%<d)", {section.tableIdExtension()}) << std::endl;
 
-    const uint8_t* data = section.payload();
-    size_t size = section.payloadSize();
+    uint16_t num_channels = 0;
 
-    if (size >= 2) {
-        // Fixed part.
-        uint16_t num_channels = data[1];
-        strm << margin << UString::Format(u"Transport stream id: 0x%X (%d)", {section.tableIdExtension(), section.tableIdExtension()}) << std::endl
-             << margin << UString::Format(u"Protocol version: %d, number of channels: %d", {data[0], num_channels}) << std::endl;
-        data += 2; size -= 2;
-
-        // Loop on all channel definitions.
-        while (num_channels > 0 && size >= 32) {
-            // The short name is at most 7 UTF-16 characters.
-            UString name;
-            for (size_t i = 0; i < 7; i++) {
-                const uint16_t c = GetUInt16(data + 2*i);
-                if (c == 0) {
-                    break; // padding zeroes
-                }
-                else {
-                    name.push_back(UChar(c));
-                }
-            }
-            const uint32_t num = GetUInt24(data + 14);
-            const uint8_t flags = data[26];
-            strm << margin << UString::Format(u"- Channel %d.%d, short name: \"%s\"", {(num >> 10) & 0x03FF, num & 0x03FF, name}) << std::endl
-                 << margin << UString::Format(u"  Modulation: %s, frequency: %'d", {NameFromSection(u"ATSCModulationModes", data[17]), GetUInt32(data + 18)}) << std::endl
-                 << margin << UString::Format(u"  TS id: 0x%X (%d), program number: 0x%X (%d)", {GetUInt16(data + 22), GetUInt16(data + 22), GetUInt16(data + 24), GetUInt16(data + 24)}) << std::endl
-                 << margin << UString::Format(u"  ETM location: %d, access controlled: %s", {(flags >> 6) & 0x03, UString::YesNo((flags & 0x20) != 0)}) << std::endl;
-            if (section.tableId() == TID_CVCT) {
-                // The following two bits are used in CVCT only.
-                strm << margin << UString::Format(u"  Path select: %d, out of band: %s", {(flags >> 3) & 0x01, UString::YesNo((flags & 0x04) != 0)}) << std::endl;
-            }
-            strm << margin << UString::Format(u"  Hidden: %s, hide guide: %s", {UString::YesNo((flags & 0x10) != 0), UString::YesNo((flags & 0x02) != 0)}) << std::endl
-                 << margin << UString::Format(u"  Service type: %s, source id: 0x%X (%d)", {NameFromSection(u"ATSCServiceType", data[27] & 0x3F), GetUInt16(data + 28), GetUInt16(data + 28)}) << std::endl;
-
-            // Descriptors for this channel. Use fake PDS for ATSC.
-            size_t info_length = GetUInt16(data + 30) & 0x03FF; // 10 bits only
-            data += 32; size -= 32;
-            info_length = std::min(info_length, size);
-            display.displayDescriptorList(section, data, info_length, indent + 2);
-            data += info_length; size -= info_length;
-            num_channels--;
-        }
-        if (num_channels == 0 && size >= 2) {
-            // Common descriptors. Use fake PDS for ATSC.
-            size_t info_length = GetUInt16(data) & 0x03FF; // 10 bits only
-            data += 2; size -= 2;
-            info_length = std::min(info_length, size);
-            if (info_length > 0) {
-                strm << margin << "- Global descriptors:" << std::endl;
-                display.displayDescriptorList(section, data, info_length, indent + 2);
-                data += info_length; size -= info_length;
-            }
-        }
+    if (!buf.canReadBytes(2)) {
+        buf.setUserError();
+    }
+    else {
+        disp << margin << UString::Format(u"Protocol version: %d", {buf.getUInt8()});
+        disp << UString::Format(u", number of channels: %d", {num_channels = buf.getUInt8()}) << std::endl;
     }
 
-    display.displayExtraData(data, size, indent);
+    // Loop on all channel definitions.
+    while (!buf.error() && num_channels-- > 0) {
+
+        if (!buf.canReadBytes(32)) {
+            buf.setUserError();
+            break;
+        }
+
+        const UString name(buf.getUTF16(14));
+        buf.skipBits(4);
+        disp << margin << "- Channel " << buf.getBits<uint16_t>(10);
+        disp << "." << buf.getBits<uint16_t>(10);
+        disp << ", short name: \"" << name << "\"" << std::endl;
+        disp << margin << "  Modulation: " << NameFromSection(u"ATSCModulationModes", buf.getUInt8());
+        disp << UString::Format(u", frequency: %'d", {buf.getUInt32()}) << std::endl;
+        disp << margin << UString::Format(u"  TS id: 0x%X (%<d)", {buf.getUInt16()});
+        disp << UString::Format(u", program number: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"  ETM location: %d", {buf.getBits<uint8_t>(2)});
+        disp << ", access controlled: " << UString::YesNo(buf.getBool()) << std::endl;
+        const bool hidden = buf.getBool();
+        if (section.tableId() == TID_CVCT) {
+            // The following two bits are used in CVCT only.
+            disp << margin << UString::Format(u"  Path select: %d", {buf.getBit()});
+            disp << ", out of band: " << UString::YesNo(buf.getBool()) << std::endl;
+        }
+        else {
+            buf.skipBits(2);
+        }
+        disp << margin << "  Hidden: " << UString::YesNo(hidden) << ", hide guide: " << UString::YesNo(buf.getBool()) << std::endl;
+        buf.skipBits(3);
+        disp << margin << "  Service type: " << NameFromSection(u"ATSCServiceType", buf.getBits<uint8_t>(6));
+        disp << UString::Format(u", source id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+
+        disp.displayDescriptorListWithLength(section, buf, margin + u"  ", UString(), UString(), 10);
+    }
+
+    // Common descriptors.
+    disp.displayDescriptorListWithLength(section, buf, margin, u"Additional descriptors:", UString(), 10);
 }
 
 
@@ -556,33 +465,33 @@ bool ts::VCT::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     xml::ElementVector children;
     bool ok =
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+        element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
-        element->getIntAttribute<uint8_t>(protocol_version, u"protocol_version", false, 0) &&
-        element->getIntAttribute<uint16_t>(transport_stream_id, u"transport_stream_id", true) &&
+        element->getIntAttribute(protocol_version, u"protocol_version", false, 0) &&
+        element->getIntAttribute(transport_stream_id, u"transport_stream_id", true) &&
         descs.fromXML(duck, children, element, u"channel");
 
     for (size_t index = 0; ok && index < children.size(); ++index) {
         // Add a new Channel at the end of the list.
         Channel& ch(channels.newEntry());
         ok = children[index]->getAttribute(ch.short_name, u"short_name", true, UString(), 0, 7) &&
-             children[index]->getIntAttribute<uint16_t>(ch.major_channel_number, u"major_channel_number", true, 0, 0, 0x03FF) &&
-             children[index]->getIntAttribute<uint16_t>(ch.minor_channel_number, u"minor_channel_number", true, 0, 0, 0x03FF) &&
+             children[index]->getIntAttribute(ch.major_channel_number, u"major_channel_number", true, 0, 0, 0x03FF) &&
+             children[index]->getIntAttribute(ch.minor_channel_number, u"minor_channel_number", true, 0, 0, 0x03FF) &&
              children[index]->getIntEnumAttribute(ch.modulation_mode, ModulationModeEnum, u"modulation_mode", true) &&
-             children[index]->getIntAttribute<uint32_t>(ch.carrier_frequency, u"carrier_frequency", false, 0) &&
-             children[index]->getIntAttribute<uint16_t>(ch.channel_TSID, u"channel_TSID", true) &&
-             children[index]->getIntAttribute<uint16_t>(ch.program_number, u"program_number", true) &&
-             children[index]->getIntAttribute<uint8_t>(ch.ETM_location, u"ETM_location", false, 0, 0x00, 0x03) &&
+             children[index]->getIntAttribute(ch.carrier_frequency, u"carrier_frequency", false, 0) &&
+             children[index]->getIntAttribute(ch.channel_TSID, u"channel_TSID", true) &&
+             children[index]->getIntAttribute(ch.program_number, u"program_number", true) &&
+             children[index]->getIntAttribute(ch.ETM_location, u"ETM_location", false, 0, 0x00, 0x03) &&
              children[index]->getBoolAttribute(ch.access_controlled, u"access_controlled", false, false) &&
              children[index]->getBoolAttribute(ch.hidden, u"hidden", false, false) &&
              children[index]->getBoolAttribute(ch.hide_guide, u"hide_guide", false, false) &&
-             children[index]->getIntEnumAttribute<uint8_t>(ch.service_type, ServiceTypeEnum, u"service_type", false, ATSC_STYPE_DTV) &&
-             children[index]->getIntAttribute<uint16_t>(ch.source_id, u"source_id", true) &&
+             children[index]->getIntEnumAttribute(ch.service_type, ServiceTypeEnum, u"service_type", false, ATSC_STYPE_DTV) &&
+             children[index]->getIntAttribute(ch.source_id, u"source_id", true) &&
              ch.descs.fromXML(duck, children[index]);
 
         if (ok && _table_id == TID_CVCT) {
             // CVCT-specific fields.
-            ok = children[index]->getIntAttribute<uint8_t>(ch.path_select, u"path_select", false, 0, 0, 1) &&
+            ok = children[index]->getIntAttribute(ch.path_select, u"path_select", false, 0, 0, 1) &&
                  children[index]->getBoolAttribute(ch.out_of_band, u"out_of_band", false, false);
         }
     }

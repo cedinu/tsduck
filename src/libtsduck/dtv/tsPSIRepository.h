@@ -306,6 +306,9 @@ namespace ts {
             //! @see TS_REGISTER_CA_DESCRIPTOR
             //!
             RegisterDescriptor(DisplayCADescriptorFunction displayFunction, uint16_t minCAS, uint16_t maxCAS = CASID_NULL);
+
+        private:
+            void registerXML(DescriptorFactory factory, const EDID& edid, const UString& xmlName, const UString& xmlNameLegacy);
         };
 
         //!
@@ -388,14 +391,14 @@ namespace ts {
         };
 
         // PSIRepository instance private members.
-        std::multimap<TID, TableDescription>             _tables;                   // Description of all table ids, potential multiple entries per table idx
-        std::map<EDID, DescriptorDescription>            _descriptors;              // Description of all descriptors, by extended id.
-        std::map<UString, TableFactory>                  _tableNames;               // XML table name to table factory
-        std::map<UString, DescriptorFactory>             _descriptorNames;          // XML descriptor name to descriptor factory
-        std::multimap<UString, TID>                      _descriptorTablesIds;      // XML descriptor name to table id for table-specific descriptors
-        std::map<uint16_t, DisplayCADescriptorFunction>  _casIdDescriptorDisplays;  // CA_system_id to display function for CA_descriptor.
-        UStringList                                      _xmlModelFiles;            // Additional XML model files for tables.
-        UStringList                                      _namesFiles;               // Additional names files.
+        std::multimap<TID, TableDescription>            _tables;                   // Description of all table ids, potential multiple entries per table idx
+        std::map<EDID, DescriptorDescription>           _descriptors;              // Description of all descriptors, by extended id.
+        std::map<UString, TableFactory>                 _tableNames;               // XML table name to table factory
+        std::map<UString, DescriptorFactory>            _descriptorNames;          // XML descriptor name to descriptor factory
+        std::multimap<UString, TID>                     _descriptorTablesIds;      // XML descriptor name to table id for table-specific descriptors
+        std::map<uint16_t, DisplayCADescriptorFunction> _casIdDescriptorDisplays;  // CA_system_id to display function for CA_descriptor.
+        UStringList                                     _xmlModelFiles;            // Additional XML model files for tables.
+        UStringList                                     _namesFiles;               // Additional names files.
 
         // Common code to lookup a table function.
         template <typename FUNCTION, typename std::enable_if<std::is_pointer<FUNCTION>::value>::type* = nullptr>

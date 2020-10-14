@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -103,35 +104,24 @@ bool ts::VBIDataDescriptor::EntryHasReservedBytes(uint8_t data_service_id)
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::VBIDataDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::VBIDataDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 2) {
-        const uint8_t data_id = data[0];
-        size_t length = data[1];
-        data += 2; size -= 2;
-        if (length > size) {
-            length = size;
-        }
-        strm << margin << "Data service id: " << NameFromSection(u"VBIDataServiceId", data_id, names::HEXA_FIRST) << std::endl;
+    while (buf.canReadBytes(2)) {
+        const uint8_t data_id = buf.getUInt8();
+        disp << margin << "Data service id: " << NameFromSection(u"VBIDataServiceId", data_id, names::HEXA_FIRST) << std::endl;
+        buf.pushReadSizeFromLength(8); // data_service_descriptor_length
         if (!EntryHasReservedBytes(data_id)) {
-            while (length > 0) {
-                const uint8_t field_parity = (data[0] >> 5) & 0x01;
-                const uint8_t line_offset = data[0] & 0x1F;
-                data++; size--; length--;
-                strm << margin << "Field parity: " << int(field_parity) << ", line offset: " << int(line_offset) << std::endl;
+            while (buf.canReadBytes(1)) {
+                buf.skipBits(2);
+                disp << margin << "Field parity: " << int(buf.getBool());
+                disp << ", line offset: " << buf.getBits<uint16_t>(5) << std::endl;
             }
         }
         else {
-            display.displayPrivateData(u"Associated data", data, length, indent);
-            data += length; size -= length;
+            disp.displayPrivateData(u"Associated data", buf, NPOS, margin);
         }
+        buf.popState(); // data_service_descriptor_length
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -139,25 +129,23 @@ void ts::VBIDataDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, c
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::VBIDataDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::VBIDataDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    for (ServiceList::const_iterator it1 = services.begin(); it1 != services.end(); ++it1) {
-        bbp->appendUInt8(it1->data_service_id);
+    for (auto it1 = services.begin(); it1 != services.end(); ++it1) {
+        buf.putUInt8(it1->data_service_id);
+        buf.pushWriteSequenceWithLeadingLength(8); // data_service_descriptor_length
         if (it1->hasReservedBytes()) {
-            bbp->appendUInt8(uint8_t(it1->reserved.size()));
-            bbp->append(it1->reserved);
+            buf.putBytes(it1->reserved);
         }
         else {
-            bbp->appendUInt8(uint8_t(it1->fields.size())); // one byte per field entry
             for (auto it2 = it1->fields.begin(); it2 != it1->fields.end(); ++it2) {
-                bbp->appendUInt8(0xC0 | (it2->field_parity ? 0x20 : 0x00) | (it2->line_offset & 0x1F));
+                buf.putBits(0xFF, 2);
+                buf.putBit(it2->field_parity);
+                buf.putBits(it2->line_offset, 5);
             }
         }
+        buf.popState(); // update data_service_descriptor_length
     }
-
-    serializeEnd(desc, bbp);
 }
 
 
@@ -165,38 +153,26 @@ void ts::VBIDataDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::VBIDataDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::VBIDataDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    services.clear();
-
-    if (!(_is_valid = desc.isValid() && desc.tag() == tag())) {
-        return;
-    }
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    while (size >= 2) {
-        Service service(data[0]);
-        size_t length = data[1];
-        data += 2; size -= 2;
-        if (length > size) {
-            length = size;
+    while (buf.canRead()) {
+        Service service(buf.getUInt8());
+        buf.pushReadSizeFromLength(8); // data_service_descriptor_length
+        if (service.hasReservedBytes()) {
+            buf.getBytes(service.reserved);
         }
-        if (!service.hasReservedBytes()) {
-            while (length > 0) {
-                service.fields.push_back(Field((data[0] & 0x20) != 0, data[0] & 0x1F));
-                data++; size--; length--;
+        else {
+            while (buf.canRead()) {
+                Field fd;
+                buf.skipBits(2);
+                fd.field_parity = buf.getBool();
+                buf.getBits(fd.line_offset, 5);
+                service.fields.push_back(fd);
             }
         }
-        else if (length > 0) {
-            service.reserved.copy(data, length);
-            data += length; size -= length;
-        }
         services.push_back(service);
+        buf.popState(); // data_service_descriptor_length
     }
-
-    _is_valid = size == 0;
 }
 
 
@@ -206,7 +182,7 @@ void ts::VBIDataDescriptor::deserialize(DuckContext& duck, const Descriptor& des
 
 void ts::VBIDataDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
 {
-    for (ServiceList::const_iterator it1 = services.begin(); it1 != services.end(); ++it1) {
+    for (auto it1 = services.begin(); it1 != services.end(); ++it1) {
         xml::Element* e = root->addElement(u"service");
         e->setIntAttribute(u"data_service_id", it1->data_service_id);
         if (it1->hasReservedBytes()) {
@@ -235,7 +211,7 @@ bool ts::VBIDataDescriptor::analyzeXML(DuckContext& duck, const xml::Element* el
     for (size_t srvIndex = 0; ok && srvIndex < srv.size(); ++srvIndex) {
         Service service;
         xml::ElementVector fld;
-        ok = srv[srvIndex]->getIntAttribute<uint8_t>(service.data_service_id, u"data_service_id", true) &&
+        ok = srv[srvIndex]->getIntAttribute(service.data_service_id, u"data_service_id", true) &&
              srv[srvIndex]->getChildren(fld, u"field") &&
              srv[srvIndex]->getHexaTextChild(service.reserved, u"reserved", false);
 
@@ -257,7 +233,7 @@ bool ts::VBIDataDescriptor::analyzeXML(DuckContext& duck, const xml::Element* el
         for (size_t fldIndex = 0; ok && fldIndex < fld.size(); ++fldIndex) {
             Field field;
             ok = fld[fldIndex]->getBoolAttribute(field.field_parity, u"field_parity", false, false) &&
-                 fld[fldIndex]->getIntAttribute<uint8_t>(field.line_offset, u"line_offset", false, 0x00, 0x00, 0x1F);
+                 fld[fldIndex]->getIntAttribute(field.line_offset, u"line_offset", false, 0x00, 0x00, 0x1F);
             service.fields.push_back(field);
         }
         services.push_back(service);

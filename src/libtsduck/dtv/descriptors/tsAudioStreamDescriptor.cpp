@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -76,35 +77,22 @@ void ts::AudioStreamDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AudioStreamDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::AudioStreamDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8((free_format ? 0x80 : 0x00) |
-                     uint8_t((ID & 0x01) << 6) |
-                     uint8_t((layer & 0x03) << 4) |
-                     (variable_rate_audio ? 0x08 : 0x00) |
-                     0x07);
-    serializeEnd(desc, bbp);
+    buf.putBit(free_format);
+    buf.putBit(ID);
+    buf.putBits(layer, 2);
+    buf.putBit(variable_rate_audio);
+    buf.putBits(0xFF, 3);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::AudioStreamDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::AudioStreamDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 1;
-
-    if (_is_valid) {
-        free_format = (data[0] & 0x80) != 0;
-        ID = (data[0] >> 6) & 0x01;
-        layer = (data[0] >> 4) & 0x03;
-        variable_rate_audio = (data[0] & 0x08) != 0;
-    }
+    free_format = buf.getBool();
+    ID = buf.getBit();
+    buf.getBits(layer, 2);
+    variable_rate_audio = buf.getBool();
+    buf.skipBits(3);
 }
 
 
@@ -112,19 +100,16 @@ void ts::AudioStreamDescriptor::deserialize(DuckContext& duck, const Descriptor&
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::AudioStreamDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::AudioStreamDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        strm << margin << UString::Format(u"Free format: %s, variable rate: %s", {UString::TrueFalse((data[0] & 0x80) != 0), UString::TrueFalse((data[0] & 0x08) != 0)}) << std::endl
-             << margin << UString::Format(u"ID: %d, layer: %d", {(data[0] >> 6) & 0x01, (data[0] >> 4) & 0x03}) << std::endl;
-        data++; size--;
+    if (buf.canReadBytes(1)) {
+        disp << margin << "Free format: " << UString::TrueFalse(buf.getBool());
+        const uint8_t id = buf.getBit();
+        const uint8_t layer = buf.getBits<uint8_t>(2);
+        disp << ", variable rate: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        disp << margin << UString::Format(u"ID: %d, layer: %d", {id, layer}) << std::endl;
+        buf.skipBits(3);
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -140,15 +125,10 @@ void ts::AudioStreamDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
     root->setBoolAttribute(u"variable_rate_audio", variable_rate_audio);
 }
 
-
-//----------------------------------------------------------------------------
-// XML deserialization
-//----------------------------------------------------------------------------
-
 bool ts::AudioStreamDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     return element->getBoolAttribute(free_format, u"free_format", true) &&
-           element->getIntAttribute<uint8_t>(ID, u"ID", true, 0, 0, 1) &&
-           element->getIntAttribute<uint8_t>(layer, u"layer", true, 0, 0, 3) &&
+           element->getIntAttribute(ID, u"ID", true, 0, 0, 1) &&
+           element->getIntAttribute(layer, u"layer", true, 0, 0, 3) &&
            element->getBoolAttribute(variable_rate_audio, u"variable_rate_audio", true);
 }

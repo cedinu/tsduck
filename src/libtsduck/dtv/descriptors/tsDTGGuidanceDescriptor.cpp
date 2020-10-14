@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -78,26 +79,21 @@ ts::DTGGuidanceDescriptor::DTGGuidanceDescriptor(DuckContext& duck, const Descri
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::DTGGuidanceDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::DTGGuidanceDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(0xFC | guidance_type);
-    switch (guidance_type) {
-        case 0x01:
-            bbp->appendUInt8(guidance_mode ? 0xFF : 0xFE);
-            TS_FALLTHROUGH
-        case 0x00:
-            if (!SerializeLanguageCode(*bbp, ISO_639_language_code)) {
-                desc.invalidate();
-                return;
-            }
-            bbp->append(duck.encoded(text));
-            break;
-        default:
-            bbp->append(reserved_future_use);
-            break;
+    buf.putBits(0xFF, 6);
+    buf.putBits(guidance_type, 2);
+    if (guidance_type == 0x01) {
+        buf.putBits(0xFF, 7);
+        buf.putBit(guidance_mode);
     }
-    serializeEnd(desc, bbp);
+    if (guidance_type <= 0x01) {
+        buf.putLanguageCode(ISO_639_language_code);
+        buf.putString(text);
+    }
+    else {
+        buf.putBytes(reserved_future_use);
+    }
 }
 
 
@@ -105,38 +101,20 @@ void ts::DTGGuidanceDescriptor::serialize(DuckContext& duck, Descriptor& desc) c
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::DTGGuidanceDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::DTGGuidanceDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    ISO_639_language_code.clear();
-    text.clear();
-    reserved_future_use.clear();
-
-    if (_is_valid) {
-        guidance_type = data[0] & 0x03;
-        data++; size--;
-        if (guidance_type == 0x00) {
-            _is_valid = size >= 3;
-        }
-        else if (guidance_type == 0x01) {
-            _is_valid = size >= 4;
-        }
-        if (_is_valid) {
-            if (guidance_type == 0x01) {
-                guidance_mode = (data[0] & 0x01) != 0;
-                data++; size--;
-            }
-            if (guidance_type <= 0x01) {
-                deserializeLanguageCode(ISO_639_language_code, data, size);
-                duck.decode(text, data, size);
-            }
-            else {
-                reserved_future_use.copy(data, size);
-            }
-        }
+    buf.skipBits(6);
+    buf.getBits(guidance_type, 2);
+    if (guidance_type == 0x01) {
+        buf.skipBits(7);
+        guidance_mode = buf.getBool();
+    }
+    if (guidance_type <= 0x01) {
+        buf.getLanguageCode(ISO_639_language_code);
+        buf.getString(text);
+    }
+    else {
+        buf.getBytes(reserved_future_use);
     }
 }
 
@@ -145,35 +123,24 @@ void ts::DTGGuidanceDescriptor::deserialize(DuckContext& duck, const Descriptor&
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::DTGGuidanceDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::DTGGuidanceDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        const uint8_t type = data[0] & 0x03;
-        data++; size--;
-        strm << margin << UString::Format(u"Guidance type: %d", {type}) << std::endl;
-
-        if (type == 0 && size >= 3) {
-            strm << margin << "Language: \"" << DeserializeLanguageCode(data) << "\"" << std::endl
-                 << margin << "Text: \"" << duck.decoded(data + 3, size - 3) << "\"" << std::endl;
-            size = 0;
+    if (buf.canReadBytes(1)) {
+        buf.skipBits(6);
+        const uint8_t type = buf.getBits<uint8_t>(2);
+        disp << margin << UString::Format(u"Guidance type: %d", {type}) << std::endl;
+        if (type == 0x01 && buf.canReadBytes(1)) {
+            buf.skipBits(7);
+            disp << margin << "Guidance mode: " << UString::TrueFalse(buf.getBool()) << std::endl;
         }
-        else if (type == 1 && size >= 4) {
-            strm << margin << "Guidance mode: " << UString::TrueFalse(data[0] & 0x01) << std::endl
-                 << margin << "Language: \"" << DeserializeLanguageCode(data + 1) << "\"" << std::endl
-                 << margin << "Text: \"" << duck.decoded(data + 4, size - 4) << "\"" << std::endl;
-            size = 0;
+        if (type > 0x01) {
+            disp.displayPrivateData(u"Reserved", buf, NPOS, margin);
         }
-        else if (type >= 2) {
-            display.displayPrivateData(u"Reserved", data, size, indent);
-            size = 0;
+        else if (buf.canReadBytes(3)) {
+            disp << margin << "Language: \"" << buf.getLanguageCode() << "\"" << std::endl;
+            disp << margin << "Text: \"" << buf.getString() << "\"" << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -205,7 +172,7 @@ void ts::DTGGuidanceDescriptor::buildXML(DuckContext& duck, xml::Element* root) 
 
 bool ts::DTGGuidanceDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(guidance_type, u"guidance_type", true, 0, 0, 3) &&
+    return element->getIntAttribute(guidance_type, u"guidance_type", true, 0, 0, 3) &&
            element->getBoolAttribute(guidance_mode, u"guidance_mode", guidance_type == 1) &&
            element->getAttribute(ISO_639_language_code, u"ISO_639_language_code", guidance_type < 2, UString(), 3, 3) &&
            element->getAttribute(text, u"text", guidance_type < 2, UString(), 0, 250) &&

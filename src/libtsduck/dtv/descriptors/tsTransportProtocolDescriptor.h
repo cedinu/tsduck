@@ -111,20 +111,22 @@ namespace ts {
         //!
         TransportProtocolDescriptor(DuckContext& duck, const Descriptor& bin);
 
+        //!
+        //! When the protocol id is a known one, try to transfer the selector bytes into the appropriate structure.
+        //! @param [in,out] duck TSDuck execution context.
+        //! @return True on success, false on invalid selector bytes.
+        //!
+        bool transferSelectorBytes(DuckContext& duck);
+
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
-
-    private:
-        // When the protocol id is a known one, try to transfer the selector bytes
-        // into the appropriate structure. Return false on invalid selector bytes.
-        bool transferSelectorBytes(DuckContext& duck);
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

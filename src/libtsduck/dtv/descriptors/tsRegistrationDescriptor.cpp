@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -69,33 +70,19 @@ ts::RegistrationDescriptor::RegistrationDescriptor(DuckContext& duck, const Desc
 
 
 //----------------------------------------------------------------------------
-// Serialization
+// Serialization / deserialization.
 //----------------------------------------------------------------------------
 
-void ts::RegistrationDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::RegistrationDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt32(format_identifier);
-    bbp->append(additional_identification_info);
-    serializeEnd(desc, bbp);
+    buf.putUInt32(format_identifier);
+    buf.putBytes(additional_identification_info);
 }
 
-
-//----------------------------------------------------------------------------
-// Deserialization
-//----------------------------------------------------------------------------
-
-void ts::RegistrationDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::RegistrationDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    _is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 4;
-    additional_identification_info.clear();
-
-    if (_is_valid) {
-        const uint8_t* data = desc.payload();
-        size_t size = desc.payloadSize();
-        format_identifier = GetUInt32(data);
-        additional_identification_info.copy(data + 4, size - 4);
-    }
+    format_identifier = buf.getUInt32();
+    buf.getBytes(additional_identification_info);
 }
 
 
@@ -103,26 +90,18 @@ void ts::RegistrationDescriptor::deserialize(DuckContext& duck, const Descriptor
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::RegistrationDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::RegistrationDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 4) {
-        // Sometimes, the format identifier is made of ASCII characters. Try to display them.
-        strm << margin << UString::Format(u"Format identifier: 0x%X", {GetUInt32(data)});
-        duck.displayIfASCII(data, 4, u" (\"", u"\")") << std::endl;
-        display.displayPrivateData(u"Additional identification info", data + 4, size - 4, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+    if (buf.canReadBytes(4)) {
+        // Sometimes, the registration format identifier is made of ASCII characters. Try to display them.
+        disp.displayIntAndASCII(u"Format identifier: 0x%08X", buf, 4, margin);
+        disp.displayPrivateData(u"Additional identification info", buf, NPOS, margin);
     }
 }
 
 
 //----------------------------------------------------------------------------
-// XML
+// XML serialization / deserialization.
 //----------------------------------------------------------------------------
 
 void ts::RegistrationDescriptor::buildXML(DuckContext& duck, xml::Element* root) const
@@ -133,6 +112,6 @@ void ts::RegistrationDescriptor::buildXML(DuckContext& duck, xml::Element* root)
 
 bool ts::RegistrationDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint32_t>(format_identifier, u"format_identifier", true) &&
+    return element->getIntAttribute(format_identifier, u"format_identifier", true) &&
            element->getHexaTextChild(additional_identification_info, u"additional_identification_info", false, 0, MAX_DESCRIPTOR_SIZE - 6);
 }

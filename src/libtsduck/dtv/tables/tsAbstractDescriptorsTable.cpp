@@ -100,12 +100,12 @@ void ts::AbstractDescriptorsTable::deserializePayload(PSIBuffer& buf, const Sect
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AbstractDescriptorsTable::serializePayload(BinaryTable& table, PSIBuffer& payload) const
+void ts::AbstractDescriptorsTable::serializePayload(BinaryTable& table, PSIBuffer& buf) const
 {
     size_t start = 0;
-    while (!payload.error() && start < descs.size()) {
-        start = payload.putPartialDescriptorList(descs, start);
-        addOneSection(table, payload);
+    while (!buf.error() && start < descs.size()) {
+        start = buf.putPartialDescriptorList(descs, start);
+        addOneSection(table, buf);
     }
 }
 
@@ -114,9 +114,9 @@ void ts::AbstractDescriptorsTable::serializePayload(BinaryTable& table, PSIBuffe
 // A static method to display a section.
 //----------------------------------------------------------------------------
 
-void ts::AbstractDescriptorsTable::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::AbstractDescriptorsTable::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    display.displayDescriptorList(section, section.payload(), section.payloadSize(), indent);
+    disp.displayDescriptorList(section, buf, margin);
 }
 
 
@@ -138,7 +138,7 @@ void ts::AbstractDescriptorsTable::buildXML(DuckContext& duck, xml::Element* roo
 
 bool ts::AbstractDescriptorsTable::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+    return element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
            element->getBoolAttribute(is_current, u"current", false, true) &&
            descs.fromXML(duck, element);
 }

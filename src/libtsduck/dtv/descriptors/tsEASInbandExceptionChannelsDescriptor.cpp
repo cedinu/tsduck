@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -64,6 +65,12 @@ ts::EASInbandExceptionChannelsDescriptor::EASInbandExceptionChannelsDescriptor(D
     deserialize(duck, desc);
 }
 
+ts::EASInbandExceptionChannelsDescriptor::Entry::Entry(uint8_t chan, uint16_t prog) :
+    RF_channel(chan),
+    program_number(prog)
+{
+}
+
 void ts::EASInbandExceptionChannelsDescriptor::clearContent()
 {
     entries.clear();
@@ -74,16 +81,13 @@ void ts::EASInbandExceptionChannelsDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::EASInbandExceptionChannelsDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::EASInbandExceptionChannelsDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    size_t count = std::min(entries.size(), MAX_ENTRIES);
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(uint8_t(count));
-    for (auto it = entries.begin(); count > 0 && it != entries.end(); ++it, --count) {
-        bbp->appendUInt8(it->RF_channel);
-        bbp->appendUInt16(it->program_number);
+    buf.putUInt8(uint8_t(entries.size()));
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        buf.putUInt8(it->RF_channel);
+        buf.putUInt16(it->program_number);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -91,20 +95,14 @@ void ts::EASInbandExceptionChannelsDescriptor::serialize(DuckContext& duck, Desc
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::EASInbandExceptionChannelsDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::EASInbandExceptionChannelsDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size > 0 && (size - 1) % 3 == 0;
-    entries.clear();
-
-    if (_is_valid) {
-        uint8_t count = data[0];
-        data++; size--;
-        while (size >= 3 && count-- > 0) {
-            entries.push_back(Entry(data[0], GetUInt16(data + 1)));
-            data += 3; size -= 3;
-        }
+    const uint8_t count = buf.getUInt8();
+    for (size_t i = 0; i < count && buf.canRead(); ++i) {
+        Entry e;
+        e.RF_channel = buf.getUInt8();
+        e.program_number = buf.getUInt16();
+        entries.push_back(e);
     }
 }
 
@@ -113,23 +111,16 @@ void ts::EASInbandExceptionChannelsDescriptor::deserialize(DuckContext& duck, co
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::EASInbandExceptionChannelsDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::EASInbandExceptionChannelsDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size > 0) {
-        uint8_t count = data[0];
-        data++; size--;
-        strm << margin << UString::Format(u"Exception channel count: %d", {count}) << std::endl;
-        while (size >= 3 && count-- > 0) {
-            strm << margin << UString::Format(u"  RF channel: %d, program number 0x%X (%d)", {data[0], GetUInt16(data + 1), GetUInt16(data + 1)}) << std::endl;
-            data += 3; size -= 3;
+    if (buf.canReadBytes(1)) {
+        uint8_t count = buf.getUInt8();
+        disp << margin << UString::Format(u"Exception channel count: %d", {count}) << std::endl;
+        while (buf.canReadBytes(3) && count-- > 0) {
+            disp << margin << UString::Format(u"  RF channel: %d", {buf.getUInt8()});
+            disp << UString::Format(u", program number 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -158,8 +149,8 @@ bool ts::EASInbandExceptionChannelsDescriptor::analyzeXML(DuckContext& duck, con
 
     for (size_t i = 0; ok && i < children.size(); ++i) {
         Entry entry;
-        ok = children[i]->getIntAttribute<uint8_t>(entry.RF_channel, u"RF_channel", true) &&
-             children[i]->getIntAttribute<uint16_t>(entry.program_number, u"program_number", true);
+        ok = children[i]->getIntAttribute(entry.RF_channel, u"RF_channel", true) &&
+             children[i]->getIntAttribute(entry.program_number, u"program_number", true);
         entries.push_back(entry);
     }
     return ok;

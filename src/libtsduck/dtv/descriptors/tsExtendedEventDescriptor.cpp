@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -79,7 +80,7 @@ void ts::ExtendedEventDescriptor::clearContent()
 // Update all descriptor_number and last_descriptor_number.
 //----------------------------------------------------------------------------
 
-void ts::ExtendedEventDescriptor::NormalizeNumbering(DuckContext& duck,uint8_t* desc_base, size_t desc_size)
+void ts::ExtendedEventDescriptor::NormalizeNumbering(DuckContext& duck, uint8_t* desc_base, size_t desc_size)
 {
     typedef std::map<UString, size_t> SizeMap; // key=language_code
     SizeMap desc_last;
@@ -96,7 +97,8 @@ void ts::ExtendedEventDescriptor::NormalizeNumbering(DuckContext& duck,uint8_t* 
             len = uint8_t(size);
         }
         if (tag == MY_DID && len >= 4) {
-            const UString lang(DeserializeLanguageCode(data + 1));
+            UString lang;
+            lang.assignFromUTF8(reinterpret_cast<const char*>(data + 1), 3);
             SizeMap::iterator it(desc_last.find(lang));
             if (it == desc_last.end()) {
                 desc_last[lang] = 0;
@@ -120,7 +122,8 @@ void ts::ExtendedEventDescriptor::NormalizeNumbering(DuckContext& duck,uint8_t* 
             len = uint8_t(size);
         }
         if (tag == MY_DID && len >= 4) {
-            const UString lang(DeserializeLanguageCode(data + 1));
+            UString lang;
+            lang.assignFromUTF8(reinterpret_cast<const char*>(data + 1), 3);
             data[0] = uint8_t((desc_index[lang] & 0x0F) << 4) | (desc_last[lang] & 0x0F);
             desc_index[lang]++;
         }
@@ -215,32 +218,18 @@ void ts::ExtendedEventDescriptor::splitAndAdd(DuckContext& duck, DescriptorList&
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ExtendedEventDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ExtendedEventDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-
-    bbp->appendUInt8(uint8_t(descriptor_number << 4) | (last_descriptor_number & 0x0F));
-    if (!SerializeLanguageCode(*bbp, language_code)) {
-        desc.invalidate();
-        return;
+    buf.putBits(descriptor_number, 4);
+    buf.putBits(last_descriptor_number, 4);
+    buf.putLanguageCode(language_code);
+    buf.pushWriteSequenceWithLeadingLength(8); // start length_of_items
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        buf.putStringWithByteLength(it->item_description);
+        buf.putStringWithByteLength(it->item);
     }
-
-    // Placeholder for length_of_items
-    const size_t length_index = bbp->size();
-    bbp->appendUInt8(0);
-
-    // Serialize all entries.
-    for (EntryList::const_iterator it = entries.begin(); it != entries.end(); ++it) {
-        bbp->append(duck.encodedWithByteLength(it->item_description));
-        bbp->append(duck.encodedWithByteLength(it->item));
-    }
-
-    // Update length_of_items
-    (*bbp)[length_index] = uint8_t(bbp->size() - length_index - 1);
-
-    // Final text
-    bbp->append(duck.encodedWithByteLength(text));
-    serializeEnd(desc, bbp);
+    buf.popState(); // update length_of_items
+    buf.putStringWithByteLength(text);
 }
 
 
@@ -248,41 +237,20 @@ void ts::ExtendedEventDescriptor::serialize(DuckContext& duck, Descriptor& desc)
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ExtendedEventDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ExtendedEventDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    if (!(_is_valid = desc.isValid() && desc.tag() == tag() && desc.payloadSize() >= 5)) {
-        return;
-    }
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    descriptor_number = data[0] >> 4;
-    last_descriptor_number = data[0] & 0x0F;
-    language_code = DeserializeLanguageCode(data + 1);
-    size_t items_length = data[4];
-    data += 5; size -= 5;
-    _is_valid = items_length < size;
-
-    if (!_is_valid) {
-        return;
-    }
-
-    size -= items_length;
-    entries.clear();
-    while (items_length >= 2) {
+    buf.getBits(descriptor_number, 4);
+    buf.getBits(last_descriptor_number, 4);
+    buf.getLanguageCode(language_code);
+    buf.pushReadSizeFromLength(8); // start length_of_items
+    while (buf.canRead()) {
         Entry entry;
-        duck.decodeWithByteLength(entry.item_description, data, items_length);
-        duck.decodeWithByteLength(entry.item, data, items_length);
+        buf.getStringWithByteLength(entry.item_description);
+        buf.getStringWithByteLength(entry.item);
         entries.push_back(entry);
     }
-
-    if (!(_is_valid = items_length == 0 && size > 0)) {
-        return;
-    }
-
-    duck.decodeWithByteLength(text, data, size);
-    _is_valid = size == 0;
+    buf.popState(); // close length_of_items
+    buf.getStringWithByteLength(text);
 }
 
 
@@ -290,35 +258,20 @@ void ts::ExtendedEventDescriptor::deserialize(DuckContext& duck, const Descripto
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ExtendedEventDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ExtendedEventDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 5) {
-        const uint8_t desc_num = data[0];
-        const UString lang(DeserializeLanguageCode(data + 1));
-        size_t length = data[4];
-        data += 5; size -= 5;
-        if (length > size) {
-            length = size;
+    if (buf.canReadBytes(5)) {
+        disp << margin << "Descriptor number: " << buf.getBits<uint32_t>(4);
+        disp << ", last: " << buf.getBits<uint32_t>(4) << std::endl;
+        disp << margin << "Language: " << buf.getLanguageCode() << std::endl;
+        buf.pushReadSizeFromLength(8); // start length_of_items
+        while (buf.canRead()) {
+            disp << margin << "\"" << buf.getStringWithByteLength();
+            disp << "\" : \"" << buf.getStringWithByteLength()<< "\"" << std::endl;
         }
-        strm << margin << "Descriptor number: " << int((desc_num >> 4) & 0x0F)
-             << ", last: " << int(desc_num & 0x0F) << std::endl
-             << margin << "Language: " << lang << std::endl;
-        size -= length;
-        while (length > 0) {
-            const UString description(duck.decodedWithByteLength(data, length));
-            const UString item(duck.decodedWithByteLength(data, length));
-            strm << margin << "\"" << description << "\" : \"" << item << "\"" << std::endl;
-        }
-        const UString text(duck.decodedWithByteLength(data, size));
-        strm << margin << "Text: \"" << text << "\"" << std::endl;
-        data += length; size -= length;
+        buf.popState(); // close length_of_items
+        disp << margin << "Text: \"" << buf.getStringWithByteLength() << "\"" << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 

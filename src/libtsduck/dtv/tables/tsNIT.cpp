@@ -31,6 +31,7 @@
 #include "tsBinaryTable.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -89,55 +90,22 @@ bool ts::NIT::isValidTableId(TID tid) const
 // A static method to display a NIT section.
 //----------------------------------------------------------------------------
 
-void ts::NIT::DisplaySection(TablesDisplay& display, const ts::Section& section, int indent)
+void ts::NIT::DisplaySection(TablesDisplay& disp, const ts::Section& section, PSIBuffer& buf, const UString& margin)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
+    // Display bouquet information
+    disp << margin << UString::Format(u"Network Id: %d (0x%<X)", {section.tableIdExtension()}) << std::endl;
+    disp.displayDescriptorListWithLength(section, buf, margin, u"Network information:");
 
-    const uint8_t* data = section.payload();
-    size_t size = section.payloadSize();
-
-    strm << margin << UString::Format(u"Network Id: %d (0x%X)", {section.tableIdExtension(), section.tableIdExtension()}) << std::endl;
-
-    if (size >= 2) {
-        // Display network information
-        size_t loop_length = GetUInt16(data) & 0x0FFF;
-        data += 2; size -= 2;
-        if (loop_length > size) {
-            loop_length = size;
-        }
-        if (loop_length > 0) {
-            strm << margin << "Network information:" << std::endl;
-            display.displayDescriptorList(section, data, loop_length, indent);
-        }
-        data += loop_length; size -= loop_length;
-
-        // Display transport information
-        if (size >= 2) {
-            loop_length = GetUInt16(data) & 0x0FFF;
-            data += 2; size -= 2;
-            if (loop_length > size) {
-                loop_length = size;
-            }
-
-            // Loop across all transports
-            while (loop_length >= 6) {
-                uint16_t tsid = GetUInt16(data);
-                uint16_t nwid = GetUInt16(data + 2);
-                size_t length = GetUInt16(data + 4) & 0x0FFF;
-                data += 6; size -= 6; loop_length -= 6;
-                if (length > loop_length) {
-                    length = loop_length;
-                }
-                strm << margin << UString::Format(u"Transport Stream Id: %d (0x%X), Original Network Id: %d (0x%X)", {tsid, tsid, nwid, nwid}) << std::endl;
-                display.displayDescriptorList(section, data, length, indent);
-                data += length; size -= length; loop_length -= length;
-            }
-        }
+    // Transport stream loop
+    buf.skipBits(4);
+    buf.pushReadSizeFromLength(12); // transport_stream_loop_length
+    while (buf.canReadBytes(6)) {
+        const uint16_t tsid = buf.getUInt16();
+        const uint16_t nwid = buf.getUInt16();
+        disp << margin << UString::Format(u"Transport Stream Id: %d (0x%<X), Original Network Id: %d (0x%<X)", {tsid, nwid}) << std::endl;
+        disp.displayDescriptorListWithLength(section, buf, margin);
     }
-
-    display.displayExtraData(data, size, indent);
+    buf.popState(); // transport_stream_loop_length
 }
 
 
@@ -174,9 +142,9 @@ bool ts::NIT::analyzeXML(DuckContext& duck, const xml::Element* element)
     xml::ElementVector children;
     bool actual = true;
     bool ok =
-        element->getIntAttribute<uint8_t>(version, u"version", false, 0, 0, 31) &&
+        element->getIntAttribute(version, u"version", false, 0, 0, 31) &&
         element->getBoolAttribute(is_current, u"current", false, true) &&
-        element->getIntAttribute<uint16_t>(network_id, u"network_id", true, 0, 0x0000, 0xFFFF) &&
+        element->getIntAttribute(network_id, u"network_id", true, 0, 0x0000, 0xFFFF) &&
         element->getBoolAttribute(actual, u"actual", false, true) &&
         descs.fromXML(duck, children, element, u"transport_stream");
 
@@ -184,11 +152,11 @@ bool ts::NIT::analyzeXML(DuckContext& duck, const xml::Element* element)
 
     for (size_t index = 0; ok && index < children.size(); ++index) {
         TransportStreamId ts;
-        ok = children[index]->getIntAttribute<uint16_t>(ts.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
-             children[index]->getIntAttribute<uint16_t>(ts.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
+        ok = children[index]->getIntAttribute(ts.transport_stream_id, u"transport_stream_id", true, 0, 0x0000, 0xFFFF) &&
+             children[index]->getIntAttribute(ts.original_network_id, u"original_network_id", true, 0, 0x0000, 0xFFFF) &&
              transports[ts].descs.fromXML(duck, children[index]);
         if (ok && children[index]->hasAttribute(u"preferred_section")) {
-            ok = children[index]->getIntAttribute<int>(transports[ts].preferred_section, u"preferred_section", true, 0, 0, 255);
+            ok = children[index]->getIntAttribute(transports[ts].preferred_section, u"preferred_section", true, 0, 0, 255);
         }
         else {
             transports[ts].preferred_section = -1;

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #-----------------------------------------------------------------------------
 #
 #  TSDuck - The MPEG Transport Stream Toolkit
@@ -50,4 +50,4 @@ FWDIR="$SYSROOT/lib/firmware"
 
 # Download and install in one pass.
 # Exclude the first two levels of directory (down to "firmware" directory).
-curl -sL $URL | tar -C "$FWDIR" -xzpf - --strip-components=2 'OpenELEC-dvb-firmware-*/firmware'
+curl -sL $URL | tar -C "$FWDIR" -xzpvf - --strip-components=2 --wildcards 'OpenELEC-dvb-firmware-*/firmware'

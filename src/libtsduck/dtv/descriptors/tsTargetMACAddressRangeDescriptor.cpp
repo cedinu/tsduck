@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -76,14 +77,12 @@ ts::TargetMACAddressRangeDescriptor::Range::Range(const MACAddress& addr1, const
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::TargetMACAddressRangeDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::TargetMACAddressRangeDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
     for (auto it = ranges.begin(); it != ranges.end(); ++it) {
-        bbp->appendUInt48(it->MAC_addr_low.address());
-        bbp->appendUInt48(it->MAC_addr_high.address());
+        buf.putUInt48(it->MAC_addr_low.address());
+        buf.putUInt48(it->MAC_addr_high.address());
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -91,19 +90,13 @@ void ts::TargetMACAddressRangeDescriptor::serialize(DuckContext& duck, Descripto
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::TargetMACAddressRangeDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::TargetMACAddressRangeDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size % 12 == 0;
-    ranges.clear();
-
-    if (_is_valid) {
-        while (size >= 12) {
-            ranges.push_back(Range(MACAddress(GetUInt48(data)), MACAddress(GetUInt48(data + 6))));
-            data += 12; size -= 12;
-        }
+    while (buf.canRead()) {
+        Range r;
+        r.MAC_addr_low.setAddress(buf.getUInt48());
+        r.MAC_addr_high.setAddress(buf.getUInt48());
+        ranges.push_back(r);
     }
 }
 
@@ -112,21 +105,12 @@ void ts::TargetMACAddressRangeDescriptor::deserialize(DuckContext& duck, const D
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::TargetMACAddressRangeDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::TargetMACAddressRangeDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    while (size >= 12) {
-        strm << margin
-             << "First address: " << MACAddress(GetUInt48(data))
-             << ", last: " << MACAddress(GetUInt48(data + 6))
-             << std::endl;
-        data += 12; size -= 12;
+    while (buf.canReadBytes(12)) {
+        disp << margin << "First address: " << MACAddress(buf.getUInt48());
+        disp << ", last: " << MACAddress(buf.getUInt48()) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 

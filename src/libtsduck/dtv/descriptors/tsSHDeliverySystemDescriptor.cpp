@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -104,50 +105,58 @@ ts::SHDeliverySystemDescriptor::OFDM::OFDM() :
 
 
 //----------------------------------------------------------------------------
+// This is an extension descriptor.
+//----------------------------------------------------------------------------
+
+ts::DID ts::SHDeliverySystemDescriptor::extendedTag() const
+{
+    return MY_EDID;
+}
+
+
+//----------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SHDeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SHDeliverySystemDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(MY_EDID);
-    bbp->appendUInt8(uint8_t((diversity_mode & 0x0F) << 4) | 0x0F);
+    buf.putBits(diversity_mode, 4);
+    buf.putBits(0xFF, 4);
     for (auto it = modulations.begin(); it != modulations.end(); ++it) {
-        bbp->appendUInt8((it->is_ofdm ? 0x80 : 0x00) |
-                         (it->interleaver_presence ? 0x40 : 0x00) |
-                         (it->short_interleaver ? 0x20 : 0x00) |
-                         0x1F);
+        buf.putBit(it->is_ofdm);
+        buf.putBit(it->interleaver_presence);
+        buf.putBit(it->short_interleaver);
+        buf.putBits(0xFF, 5);
         if (it->is_ofdm) {
-            bbp->appendUInt16(uint16_t((it->ofdm.bandwidth & 0x07) << 13) |
-                              uint16_t((it->ofdm.priority & 0x01) << 12) |
-                              uint16_t((it->ofdm.constellation_and_hierarchy & 0x07) << 9) |
-                              uint16_t((it->ofdm.code_rate & 0x0F) << 5) |
-                              uint16_t((it->ofdm.guard_interval & 0x03) << 3) |
-                              uint16_t((it->ofdm.transmission_mode & 0x03) << 1) |
-                              (it->ofdm.common_frequency ? 0x0001 : 0x0000));
+            buf.putBits(it->ofdm.bandwidth, 3);
+            buf.putBit(it->ofdm.priority);
+            buf.putBits(it->ofdm.constellation_and_hierarchy, 3);
+            buf.putBits(it->ofdm.code_rate, 4);
+            buf.putBits(it->ofdm.guard_interval, 2);
+            buf.putBits(it->ofdm.transmission_mode, 2);
+            buf.putBit(it->ofdm.common_frequency);
         }
         else {
-            bbp->appendUInt16(uint16_t((it->tdm.polarization & 0x03) << 14) |
-                              uint16_t((it->tdm.roll_off & 0x03) << 12) |
-                              uint16_t((it->tdm.modulation_mode & 0x03) << 10) |
-                              uint16_t((it->tdm.code_rate & 0x0F) << 6) |
-                              uint16_t((it->tdm.symbol_rate & 0x1F) << 1) |
-                              0x0001);
+            buf.putBits(it->tdm.polarization, 2);
+            buf.putBits(it->tdm.roll_off, 2);
+            buf.putBits(it->tdm.modulation_mode, 2);
+            buf.putBits(it->tdm.code_rate, 4);
+            buf.putBits(it->tdm.symbol_rate, 5);
+            buf.putBit(1);
         }
         if (it->interleaver_presence) {
+            buf.putBits(it->common_multiplier, 6);
             if (it->short_interleaver) {
-                bbp->appendUInt8(uint8_t((it->common_multiplier & 0x3F) << 2) | 0x03);
+                buf.putBits(0xFF, 2);
             }
             else {
-                bbp->appendUInt32(uint32_t((it->common_multiplier & 0x3F) << 26) |
-                                  uint32_t((it->nof_late_taps & 0x3F) << 20) |
-                                  uint32_t((it->nof_slices & 0x3F) << 14) |
-                                  uint32_t(it->slice_distance << 6) |
-                                  uint32_t(it->non_late_increments & 0x3F));
+                buf.putBits(it->nof_late_taps, 6);
+                buf.putBits(it->nof_slices, 6);
+                buf.putBits(it->slice_distance, 8);
+                buf.putBits(it->non_late_increments, 6);
             }
         }
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -155,70 +164,52 @@ void ts::SHDeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor& de
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::SHDeliverySystemDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SHDeliverySystemDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    modulations.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && data[0] == MY_EDID;
-
-    if (_is_valid) {
-        diversity_mode = (data[1] >> 4) & 0x0F;
-        data += 2; size -= 2;
-    }
-    while (_is_valid && size >= 3) {
+    buf.getBits(diversity_mode, 4);
+    buf.skipBits(4);
+    while (buf.canRead()) {
         Modulation mod;
-        const uint8_t flags = data[0];
-        const uint16_t mval = GetUInt16(data + 1);
-        data += 3; size -= 3;
-
-        mod.is_ofdm = (flags & 0x80) != 0;
-        mod.interleaver_presence = (flags & 0x40) != 0;
-        mod.short_interleaver = (flags & 0x20) != 0;
-
+        mod.is_ofdm = buf.getBool();
+        mod.interleaver_presence = buf.getBool();
+        mod.short_interleaver = buf.getBool();
+        buf.skipBits(5);
         if (mod.is_ofdm) {
-            mod.ofdm.bandwidth = uint8_t(mval >> 13) & 0x07;
-            mod.ofdm.priority = uint8_t(mval >> 12) & 0x01;
-            mod.ofdm.constellation_and_hierarchy = uint8_t(mval >> 9) & 0x07;
-            mod.ofdm.code_rate = uint8_t(mval >> 5) & 0x0F;
-            mod.ofdm.guard_interval = uint8_t(mval >> 3) & 0x03;
-            mod.ofdm.transmission_mode = uint8_t(mval >> 1) & 0x03;
-            mod.ofdm.common_frequency = (mval & 0x0001) != 0;
+            buf.getBits(mod.ofdm.bandwidth, 3);
+            mod.ofdm.priority = buf.getBit();
+            buf.getBits(mod.ofdm.constellation_and_hierarchy, 3);
+            buf.getBits(mod.ofdm.code_rate, 4);
+            buf.getBits(mod.ofdm.guard_interval, 2);
+            buf.getBits(mod.ofdm.transmission_mode, 2);
+            mod.ofdm.common_frequency = buf.getBool();
         }
         else {
-            mod.tdm.polarization = uint8_t(mval >> 14) & 0x03;
-            mod.tdm.roll_off = uint8_t(mval >> 12) & 0x03;
-            mod.tdm.modulation_mode = uint8_t(mval >> 10) & 0x03;
-            mod.tdm.code_rate = uint8_t(mval >> 6) & 0x0F;
-            mod.tdm.symbol_rate = uint8_t(mval >> 1) & 0x1F;
+            buf.getBits(mod.tdm.polarization, 2);
+            buf.getBits(mod.tdm.roll_off, 2);
+            buf.getBits(mod.tdm.modulation_mode, 2);
+            buf.getBits(mod.tdm.code_rate, 4);
+            buf.getBits(mod.tdm.symbol_rate, 5);
+            buf.skipBits(1);
         }
-
         if (mod.interleaver_presence) {
-            const size_t min_size = mod.short_interleaver ? 1 : 4;
-            if (size < min_size) {
-                _is_valid = false;
-                break;
+            buf.getBits(mod.common_multiplier, 6);
+            if (mod.short_interleaver) {
+                buf.skipBits(2);
             }
-            mod.common_multiplier = (data[0] >> 2) & 0x3F;
-            if (!mod.short_interleaver) {
-                const uint32_t val = GetUInt32(data);
-                mod.nof_late_taps = uint8_t(val >> 20) & 0x3F;
-                mod.nof_slices = uint8_t(val >> 14) & 0x3F;
-                mod.slice_distance = uint8_t(val >> 6);
-                mod.non_late_increments = uint8_t(val & 0x3F);
+            else {
+                buf.getBits(mod.nof_late_taps, 6);
+                buf.getBits(mod.nof_slices, 6);
+                buf.getBits(mod.slice_distance, 8);
+                buf.getBits(mod.non_late_increments, 6);
             }
-            data += min_size; size -= min_size;
         }
-
         modulations.push_back(mod);
     }
-    _is_valid = _is_valid && size == 0;
 }
 
 
 //----------------------------------------------------------------------------
-// Enumerations for XML and display.
+// Enumerations for XML and disp.
 //----------------------------------------------------------------------------
 
 const ts::Enumeration ts::SHDeliverySystemDescriptor::BandwidthNames({
@@ -270,80 +261,64 @@ const ts::Enumeration ts::SHDeliverySystemDescriptor::ModulationNames({
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SHDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SHDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    // Important: With extension descriptors, the DisplayDescriptor() function is called
-    // with extension payload. Meaning that data points after descriptor_tag_extension.
-    // See ts::TablesDisplay::displayDescriptorData()
-
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 1) {
-        const uint8_t div = (data[0] >> 4) & 0x0F;
-        data++; size--;
-
-        strm << margin << UString::Format(u"Diversity mode: 0x%X", {div});
+    if (buf.canReadBytes(1)) {
+        const uint8_t div = buf.getBits<uint8_t>(4);
+        buf.skipBits(4);
+        disp << margin << UString::Format(u"Diversity mode: 0x%X", {div});
         if ((div & 0x08) != 0) {
-            strm << ", paTS";
+            disp << ", paTS";
         }
         if ((div & 0x04) != 0) {
-            strm << ", FEC diversity";
+            disp << ", FEC diversity";
         }
         if ((div & 0x02) != 0) {
-            strm << ", FEC at phy";
+            disp << ", FEC at phy";
         }
         if ((div & 0x01) != 0) {
-            strm << ", FEC at link";
+            disp << ", FEC at link";
         }
-        strm << std::endl;
+        disp << std::endl;
 
-        while (size >= 3) {
-            const uint8_t flags = data[0];
-            const uint16_t mval = GetUInt16(data + 1);
-            data += 3; size -= 3;
-
-            if ((flags & 0x80) != 0) {
-                strm << margin << "- Modulation type: OFDM" << std::endl
-                     << margin << UString::Format(u"  Bandwidth: %s", {BandwidthNames.name((mval >> 13) & 0x07)}) << std::endl
-                     << margin << UString::Format(u"  Priority: %d", {(mval >> 12) & 0x01}) << std::endl
-                     << margin << UString::Format(u"  Constellation & hierarchy: %s", {NameFromSection(u"SHConstellationHierarchy", (mval >> 9) & 0x07, names::FIRST)}) << std::endl
-                     << margin << UString::Format(u"  Code rate: %s", {NameFromSection(u"SHCodeRate", (mval >> 5) & 0x0F, names::FIRST)}) << std::endl
-                     << margin << UString::Format(u"  Guard interval: %s", {GuardIntervalNames.name((mval >> 3) & 0x03)}) << std::endl
-                     << margin << UString::Format(u"  Transmission mode: %s", {TransmissionModeNames.name((mval >> 1) & 0x03)}) << std::endl
-                     << margin << UString::Format(u"  Common frequency: %s", {(mval & 0x01) != 0}) << std::endl;
+        while (buf.canReadBytes(3)) {
+            const bool is_ofdm = buf.getBool();
+            const bool interleaver = buf.getBool();
+            const bool short_interleaver = buf.getBool();
+            buf.skipBits(5);
+            if (is_ofdm) {
+                disp << margin << "- Modulation type: OFDM" << std::endl;
+                disp << margin << "  Bandwidth: " << BandwidthNames.name(buf.getBits<uint8_t>(3)) << std::endl;
+                disp << margin << UString::Format(u"  Priority: %d", {buf.getBit()}) << std::endl;
+                disp << margin << "  Constellation & hierarchy: " << NameFromSection(u"SHConstellationHierarchy", buf.getBits<uint8_t>(3), names::FIRST) << std::endl;
+                disp << margin << "  Code rate: " << NameFromSection(u"SHCodeRate", buf.getBits<uint8_t>(4), names::FIRST) << std::endl;
+                disp << margin << "  Guard interval: " << GuardIntervalNames.name(buf.getBits<uint8_t>(2)) << std::endl;
+                disp << margin << "  Transmission mode: " << TransmissionModeNames.name(buf.getBits<uint8_t>(2)) << std::endl;
+                disp << margin << UString::Format(u"  Common frequency: %s", {buf.getBool()}) << std::endl;
             }
             else {
-                const uint8_t symrate = uint8_t(mval >> 1) & 0x1F;
-                strm << margin << "- Modulation type: TDM" << std::endl
-                     << margin << UString::Format(u"  Polarization: %s", {PolarizationNames.name((mval >> 14) & 0x03)}) << std::endl
-                     << margin << UString::Format(u"  Roll off: %s", {RollOffNames.name((mval >> 12) & 0x03)}) << std::endl
-                     << margin << UString::Format(u"  Modulation mode: %s", {ModulationNames.name((mval >> 10) & 0x03)}) << std::endl
-                     << margin << UString::Format(u"  Code rate: %s", {NameFromSection(u"SHCodeRate", (mval >> 6) & 0x0F, names::FIRST)}) << std::endl
-                     << margin << UString::Format(u"  Symbol rate code: 0x%X (%d)", {symrate, symrate}) << std::endl;
+                disp << margin << "- Modulation type: TDM" << std::endl;
+                disp << margin << "  Polarization: " << PolarizationNames.name(buf.getBits<uint8_t>(2)) << std::endl;
+                disp << margin << "  Roll off: " << RollOffNames.name(buf.getBits<uint8_t>(2)) << std::endl;
+                disp << margin << "  Modulation mode: " << ModulationNames.name(buf.getBits<uint8_t>(2)) << std::endl;
+                disp << margin << "  Code rate: " << NameFromSection(u"SHCodeRate", buf.getBits<uint8_t>(4), names::FIRST) << std::endl;
+                disp << margin << UString::Format(u"  Symbol rate code: 0x%X (%<d)", {buf.getBits<uint8_t>(5)}) << std::endl;
+                buf.skipBits(1);
             }
-
-            if ((flags & 0x40) != 0) {
-                const bool short_interleaver = (flags & 0x20) != 0;
-                const size_t min_size = short_interleaver ? 1 : 4;
-                if (size < min_size) {
-                    break;
+            if (interleaver && buf.canReadBytes(short_interleaver ? 1 : 4)) {
+                disp << margin << UString::Format(u"  Common multiplier: %d", {buf.getBits<uint8_t>(6)}) << std::endl;
+                if (short_interleaver) {
+                    buf.skipBits(2);
                 }
-                strm << margin << UString::Format(u"  Common multiplier: %d", {(data[0] >> 2) & 0x3F}) << std::endl;
-                if (!short_interleaver) {
-                    const uint32_t val = GetUInt32(data);
-                    strm << margin << UString::Format(u"  Number of late taps: %d", {(val >> 20) & 0x3F}) << std::endl
-                         << margin << UString::Format(u"  Number of slices: %d", {(val >> 14) & 0x3F}) << std::endl
-                         << margin << UString::Format(u"  Slice distance: %d", {(val >> 6) & 0xFF}) << std::endl
-                         << margin << UString::Format(u"  Non-late increments: %d", {val & 0x3F}) << std::endl;
+                else {
+                    disp << margin << UString::Format(u"  Number of late taps: %d", {buf.getBits<uint8_t>(6)}) << std::endl;
+                    disp << margin << UString::Format(u"  Number of slices: %d", {buf.getBits<uint8_t>(6)}) << std::endl;
+                    disp << margin << UString::Format(u"  Slice distance: %d", {buf.getBits<uint8_t>(8)}) << std::endl;
+                    disp << margin << UString::Format(u"  Non-late increments: %d", {buf.getBits<uint8_t>(6)}) << std::endl;
                 }
-                data += min_size; size -= min_size;
             }
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -396,7 +371,7 @@ bool ts::SHDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::El
 {
     xml::ElementVector xmods;
     bool ok =
-        element->getIntAttribute<uint8_t>(diversity_mode, u"diversity_mode", true, 0, 0, 15) &&
+        element->getIntAttribute(diversity_mode, u"diversity_mode", true, 0, 0, 15) &&
         element->getChildren(xmods, u"modulation");
 
     for (size_t i = 0; ok && i < xmods.size(); ++i) {
@@ -413,9 +388,9 @@ bool ts::SHDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::El
             if (mod.is_ofdm) {
                 assert(xofdm.size() == 1);
                 ok = xofdm[0]->getIntEnumAttribute(mod.ofdm.bandwidth, BandwidthNames, u"bandwidth", true) &&
-                     xofdm[0]->getIntAttribute<uint8_t>(mod.ofdm.priority, u"priority", true, 0, 0, 1) &&
-                     xofdm[0]->getIntAttribute<uint8_t>(mod.ofdm.constellation_and_hierarchy, u"constellation_and_hierarchy", true, 0, 0, 0x07) &&
-                     xofdm[0]->getIntAttribute<uint8_t>(mod.ofdm.code_rate, u"code_rate", true, 0, 0, 0x0F) &&
+                     xofdm[0]->getIntAttribute(mod.ofdm.priority, u"priority", true, 0, 0, 1) &&
+                     xofdm[0]->getIntAttribute(mod.ofdm.constellation_and_hierarchy, u"constellation_and_hierarchy", true, 0, 0, 0x07) &&
+                     xofdm[0]->getIntAttribute(mod.ofdm.code_rate, u"code_rate", true, 0, 0, 0x0F) &&
                      xofdm[0]->getIntEnumAttribute(mod.ofdm.guard_interval, GuardIntervalNames, u"guard_interval", true) &&
                      xofdm[0]->getIntEnumAttribute(mod.ofdm.transmission_mode, TransmissionModeNames, u"transmission_mode", true) &&
                      xofdm[0]->getBoolAttribute(mod.ofdm.common_frequency, u"common_frequency", true);
@@ -425,15 +400,15 @@ bool ts::SHDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::El
                 ok = xtdm[0]->getIntEnumAttribute(mod.tdm.polarization, PolarizationNames, u"polarization", true) &&
                      xtdm[0]->getIntEnumAttribute(mod.tdm.roll_off, RollOffNames, u"roll_off", true) &&
                      xtdm[0]->getIntEnumAttribute(mod.tdm.modulation_mode, ModulationNames, u"modulation_mode", true) &&
-                     xtdm[0]->getIntAttribute<uint8_t>(mod.tdm.code_rate, u"code_rate", true, 0, 0, 0x0F) &&
-                     xtdm[0]->getIntAttribute<uint8_t>(mod.tdm.symbol_rate, u"symbol_rate", true, 0, 0, 0x1F);
+                     xtdm[0]->getIntAttribute(mod.tdm.code_rate, u"code_rate", true, 0, 0, 0x0F) &&
+                     xtdm[0]->getIntAttribute(mod.tdm.symbol_rate, u"symbol_rate", true, 0, 0, 0x1F);
             }
         }
 
         mod.interleaver_presence = ok && !xint.empty();
         if (mod.interleaver_presence) {
             assert(xint.size() == 1);
-            ok = xint[0]->getIntAttribute<uint8_t>(mod.common_multiplier, u"common_multiplier", true, 0, 0, 0x3F);
+            ok = xint[0]->getIntAttribute(mod.common_multiplier, u"common_multiplier", true, 0, 0, 0x3F);
             if (ok) {
                 const int attr_count =
                     xint[0]->hasAttribute(u"nof_late_taps") +
@@ -442,10 +417,10 @@ bool ts::SHDeliverySystemDescriptor::analyzeXML(DuckContext& duck, const xml::El
                     xint[0]->hasAttribute(u"non_late_increments");
                 mod.short_interleaver = attr_count == 0;
                 if (attr_count == 4) {
-                    ok = xint[0]->getIntAttribute<uint8_t>(mod.nof_late_taps, u"nof_late_taps", true, 0, 0, 0x3F) &&
-                         xint[0]->getIntAttribute<uint8_t>(mod.nof_slices, u"nof_slices", true, 0, 0, 0x3F) &&
-                         xint[0]->getIntAttribute<uint8_t>(mod.slice_distance, u"slice_distance", true, 0, 0, 0xFF) &&
-                         xint[0]->getIntAttribute<uint8_t>(mod.non_late_increments, u"non_late_increments", true, 0, 0, 0x3F);
+                    ok = xint[0]->getIntAttribute(mod.nof_late_taps, u"nof_late_taps", true, 0, 0, 0x3F) &&
+                         xint[0]->getIntAttribute(mod.nof_slices, u"nof_slices", true, 0, 0, 0x3F) &&
+                         xint[0]->getIntAttribute(mod.slice_distance, u"slice_distance", true, 0, 0, 0xFF) &&
+                         xint[0]->getIntAttribute(mod.non_late_increments, u"non_late_increments", true, 0, 0, 0x3F);
                 }
                 else if (attr_count != 0) {
                     ok = false;

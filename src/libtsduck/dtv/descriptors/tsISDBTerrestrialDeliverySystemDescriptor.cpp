@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -77,16 +78,14 @@ ts::ISDBTerrestrialDeliverySystemDescriptor::ISDBTerrestrialDeliverySystemDescri
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::ISDBTerrestrialDeliverySystemDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::ISDBTerrestrialDeliverySystemDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16(uint16_t(area_code << 4) |
-                      uint16_t((guard_interval & 0x03) << 2) |
-                      (transmission_mode & 0x03));
+    buf.putBits(area_code, 12);
+    buf.putBits(guard_interval, 2);
+    buf.putBits(transmission_mode, 2);
     for (auto it = frequencies.begin(); it != frequencies.end(); ++it) {
-        bbp->appendUInt16(HzToBin(*it));
+        buf.putUInt16(HzToBin(*it));
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -94,25 +93,13 @@ void ts::ISDBTerrestrialDeliverySystemDescriptor::serialize(DuckContext& duck, D
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::ISDBTerrestrialDeliverySystemDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::ISDBTerrestrialDeliverySystemDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 2 && size % 2 == 0;
-
-    frequencies.clear();
-    if (_is_valid) {
-        const uint16_t v = GetUInt16(data);
-        data += 2; size -= 2;
-
-        area_code = (v >> 4) & 0x0FFF;
-        guard_interval = uint8_t((v >> 2) & 0x03);
-        transmission_mode = uint8_t(v & 0x03);
-
-        while (size >= 2) {
-            frequencies.push_back(BinToHz(GetUInt16(data)));
-            data += 2; size -= 2;
-        }
+    buf.getBits(area_code, 12);
+    buf.getBits(guard_interval, 2);
+    buf.getBits(transmission_mode, 2);
+    while (buf.canRead()) {
+        frequencies.push_back(BinToHz(buf.getUInt16()));
     }
 }
 
@@ -144,30 +131,18 @@ namespace {
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::ISDBTerrestrialDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::ISDBTerrestrialDeliverySystemDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 2) {
-        const uint16_t v = GetUInt16(data);
-        const uint16_t area = (v >> 4) & 0x0FFF;
-        const uint8_t guard = uint8_t((v >> 2) & 0x03);
-        const uint8_t mode = uint8_t(v & 0x03);
-        data += 2; size -= 2;
-
-        strm << margin << UString::Format(u"Area code: 0x%3X (%d)", {area, area}) << std::endl
-             << margin << UString::Format(u"Guard interval: %d (%s)", {guard, GuardIntervalNames.name(guard)}) << std::endl
-             << margin << UString::Format(u"Transmission mode: %d (%s)", {mode, TransmissionModeNames.name(mode)}) << std::endl;
+    if (buf.canReadBytes(2)) {
+        disp << margin << UString::Format(u"Area code: 0x%3X (%<d)", {buf.getBits<uint16_t>(12)}) << std::endl;
+        const uint8_t guard = buf.getBits<uint8_t>(2);
+        const uint8_t mode = buf.getBits<uint8_t>(2);
+        disp << margin << UString::Format(u"Guard interval: %d (%s)", {guard, GuardIntervalNames.name(guard)}) << std::endl;
+        disp << margin << UString::Format(u"Transmission mode: %d (%s)", {mode, TransmissionModeNames.name(mode)}) << std::endl;
     }
-
-    while (size >= 2) {
-        strm << margin << UString::Format(u"Frequency: %'d Hz", {BinToHz(GetUInt16(data))}) << std::endl;
-        data += 2; size -= 2;
+    while (buf.canReadBytes(2)) {
+        disp << margin << UString::Format(u"Frequency: %'d Hz", {BinToHz(buf.getUInt16())}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -194,14 +169,14 @@ bool ts::ISDBTerrestrialDeliverySystemDescriptor::analyzeXML(DuckContext& duck, 
 {
     xml::ElementVector xfreq;
     bool ok =
-        element->getIntAttribute<uint16_t>(area_code, u"area_code", true, 0, 0, 0x0FFF) &&
+        element->getIntAttribute(area_code, u"area_code", true, 0, 0, 0x0FFF) &&
         element->getIntEnumAttribute(guard_interval, GuardIntervalNames, u"guard_interval", true) &&
         element->getIntEnumAttribute(transmission_mode, TransmissionModeNames, u"transmission_mode", true) &&
         element->getChildren(xfreq, u"frequency", 0, 126);
 
     for (auto it = xfreq.begin(); ok && it != xfreq.end(); ++it) {
         uint64_t f = 0;
-        ok = (*it)->getIntAttribute<uint64_t>(f, u"value", true);
+        ok = (*it)->getIntAttribute(f, u"value", true);
         frequencies.push_back(f);
     }
     return ok;

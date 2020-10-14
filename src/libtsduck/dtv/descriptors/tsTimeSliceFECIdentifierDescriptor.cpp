@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -81,18 +82,16 @@ ts::TimeSliceFECIdentifierDescriptor::TimeSliceFECIdentifierDescriptor(DuckConte
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::TimeSliceFECIdentifierDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::TimeSliceFECIdentifierDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8((time_slicing ? 0x80 : 0x00) |
-                     uint8_t((mpe_fec & 0x03) << 5) |
-                     0x18 |
-                     (frame_size & 0x07));
-    bbp->appendUInt8(max_burst_duration);
-    bbp->appendUInt8(uint8_t((max_average_rate & 0x0F) << 4) |
-                     (time_slice_fec_id & 0x0F));
-    bbp->append(id_selector_bytes);
-    serializeEnd(desc, bbp);
+    buf.putBit(time_slicing);
+    buf.putBits(mpe_fec, 2);
+    buf.putBits(0xFF, 2);
+    buf.putBits(frame_size, 3);
+    buf.putUInt8(max_burst_duration);
+    buf.putBits(max_average_rate, 4);
+    buf.putBits(time_slice_fec_id, 4);
+    buf.putBytes(id_selector_bytes);
 }
 
 
@@ -100,24 +99,16 @@ void ts::TimeSliceFECIdentifierDescriptor::serialize(DuckContext& duck, Descript
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::TimeSliceFECIdentifierDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::TimeSliceFECIdentifierDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    id_selector_bytes.clear();
-
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 3;
-
-    if (_is_valid) {
-        time_slicing = (data[0] & 0x80) != 0;
-        mpe_fec = (data[0] >> 5) & 0x03;
-        frame_size = data[0] & 0x07;
-        max_burst_duration = data[1];
-        max_average_rate = (data[2] >> 4) & 0x0F;
-        time_slice_fec_id = data[2] & 0x0F;
-        id_selector_bytes.copy(data + 3, size - 3);
-    }
+    time_slicing = buf.getBool();
+    buf.getBits(mpe_fec, 2);
+    buf.skipBits(2);
+    buf.getBits(frame_size, 3);
+    max_burst_duration = buf.getUInt8();
+    buf.getBits(max_average_rate, 4);
+    buf.getBits(time_slice_fec_id, 4);
+    buf.getBytes(id_selector_bytes);
 }
 
 
@@ -144,11 +135,11 @@ void ts::TimeSliceFECIdentifierDescriptor::buildXML(DuckContext& duck, xml::Elem
 bool ts::TimeSliceFECIdentifierDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
     return  element->getBoolAttribute(time_slicing, u"time_slicing", true) &&
-            element->getIntAttribute<uint8_t>(mpe_fec, u"mpe_fec", true, 0, 0, 0x03) &&
-            element->getIntAttribute<uint8_t>(frame_size, u"frame_size", true, 0, 0x00, 0x07) &&
-            element->getIntAttribute<uint8_t>(max_burst_duration, u"max_burst_duration", true) &&
-            element->getIntAttribute<uint8_t>(max_average_rate, u"max_average_rate", true, 0, 0x00, 0x0F) &&
-            element->getIntAttribute<uint8_t>(time_slice_fec_id, u"time_slice_fec_id", false, 0, 0x00, 0x0F) &&
+            element->getIntAttribute(mpe_fec, u"mpe_fec", true, 0, 0, 0x03) &&
+            element->getIntAttribute(frame_size, u"frame_size", true, 0, 0x00, 0x07) &&
+            element->getIntAttribute(max_burst_duration, u"max_burst_duration", true) &&
+            element->getIntAttribute(max_average_rate, u"max_average_rate", true, 0, 0x00, 0x0F) &&
+            element->getIntAttribute(time_slice_fec_id, u"time_slice_fec_id", false, 0, 0x00, 0x0F) &&
             element->getHexaTextChild(id_selector_bytes, u"id_selector_bytes", false, 0, MAX_DESCRIPTOR_SIZE - 5);
 }
 
@@ -157,55 +148,45 @@ bool ts::TimeSliceFECIdentifierDescriptor::analyzeXML(DuckContext& duck, const x
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::TimeSliceFECIdentifierDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::TimeSliceFECIdentifierDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 3) {
-        const bool time_slicing = (data[0] & 0x80) != 0;
-        const uint8_t mpe_fec = (data[0] >> 5) & 0x03;
-        const uint8_t frame_size = data[0] & 0x07;
-        const uint8_t max_burst_duration = data[1];
-        const uint8_t max_average_rate = (data[2] >> 4) & 0x0F;
-        const uint8_t time_slice_fec_id = data[2] & 0x0F;
-        data += 3; size -= 3;
-
-        strm << margin << "Use time slice: " << UString::TrueFalse(time_slicing) << std::endl
-             << margin << "MPE FEC: ";
+    if (buf.canReadBytes(3)) {
+        disp << margin << "Use time slice: " << UString::TrueFalse(buf.getBool()) << std::endl;
+        const uint8_t mpe_fec = buf.getBits<uint8_t>(2);
+        disp << margin << "MPE FEC: ";
         switch (mpe_fec) {
-            case 0:  strm << "none"; break;
-            case 1:  strm << "Reed-Solomon(255, 191, 64)"; break;
-            default: strm << UString::Format(u"reserved value 0x%X", {mpe_fec}); break;
+            case 0:  disp << "none"; break;
+            case 1:  disp << "Reed-Solomon(255, 191, 64)"; break;
+            default: disp << UString::Format(u"reserved value 0x%X", {mpe_fec}); break;
         }
-        strm << std::endl << margin << "Frame size: ";
+        disp << std::endl;
+        buf.skipBits(2);
+        const uint8_t frame_size = buf.getBits<uint8_t>(3);
+        disp << margin << "Frame size: ";
         switch (frame_size) {
-            case 0:  strm << "512 kbits, 256 rows"; break;
-            case 1:  strm << "1024 kbits, 512 rows"; break;
-            case 2:  strm << "1536 kbits, 768 rows"; break;
-            case 3:  strm << "2048 kbits, 1024 rows"; break;
-            default: strm << UString::Format(u"reserved value 0x%X", {frame_size}); break;
+            case 0:  disp << "512 kbits, 256 rows"; break;
+            case 1:  disp << "1024 kbits, 512 rows"; break;
+            case 2:  disp << "1536 kbits, 768 rows"; break;
+            case 3:  disp << "2048 kbits, 1024 rows"; break;
+            default: disp << UString::Format(u"reserved value 0x%X", {frame_size}); break;
         }
-        strm << std::endl
-             << margin << UString::Format(u"Max burst duration: 0x%X (%d)", {max_burst_duration, max_burst_duration}) << std::endl
-             << margin << "Max average rate: ";
+        disp << std::endl;
+        disp << margin << UString::Format(u"Max burst duration: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        const uint8_t max_average_rate = buf.getBits<uint8_t>(4);
+        disp << margin << "Max average rate: ";
         switch (max_average_rate) {
-            case 0:  strm << "16 kbps"; break;
-            case 1:  strm << "32 kbps"; break;
-            case 2:  strm << "64 kbps"; break;
-            case 3:  strm << "128 kbps"; break;
-            case 4:  strm << "256 kbps"; break;
-            case 5:  strm << "512 kbps"; break;
-            case 6:  strm << "1024 kbps"; break;
-            case 7:  strm << "2048 kbps"; break;
-            default: strm << UString::Format(u"reserved value 0x%X", {max_average_rate}); break;
+            case 0:  disp << "16 kbps"; break;
+            case 1:  disp << "32 kbps"; break;
+            case 2:  disp << "64 kbps"; break;
+            case 3:  disp << "128 kbps"; break;
+            case 4:  disp << "256 kbps"; break;
+            case 5:  disp << "512 kbps"; break;
+            case 6:  disp << "1024 kbps"; break;
+            case 7:  disp << "2048 kbps"; break;
+            default: disp << UString::Format(u"reserved value 0x%X", {max_average_rate}); break;
         }
-        strm << std::endl
-             << margin << UString::Format(u"Time slice FEC id: 0x%X (%d)", {time_slice_fec_id, time_slice_fec_id}) << std::endl;
-        display.displayPrivateData(u"Id selector bytes", data, size, indent);
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+        disp << std::endl;
+        disp << margin << UString::Format(u"Time slice FEC id: 0x%X (%<d)", {buf.getBits<uint8_t>(4)}) << std::endl;
+        disp.displayPrivateData(u"Id selector bytes", buf, NPOS, margin);
     }
 }

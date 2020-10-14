@@ -39,7 +39,7 @@
 namespace ts {
     //!
     //! Representation of a DTS_HD_descriptor.
-    //! @see ETSI 300 468, G.3.1.
+    //! @see ETSI EN 300 468, G.3.1.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL DTSHDDescriptor : public AbstractDescriptor
@@ -92,27 +92,23 @@ namespace ts {
         //!
         DTSHDDescriptor(DuckContext& duck, const Descriptor& bin);
 
-        //!
-        //! Reset the content of this descriptor object.
-        //!
-        void reset();
-
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
+        virtual DID extendedTag() const override;
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
 
     private:
         // Conversions of substrean info structures.
-        static void SerializeSubstreamInfo(const Variable<SubstreamInfo>&, ByteBlock&);
-        static bool DeserializeSubstreamInfo(Variable<SubstreamInfo>&, bool present, const uint8_t*& data, size_t& size);
-        static bool DisplaySubstreamInfo(TablesDisplay& display, bool present, int indent, const UString& name, const uint8_t*& data, size_t& size);
+        static void SerializeSubstreamInfo(const Variable<SubstreamInfo>&, PSIBuffer&);
+        static void DeserializeSubstreamInfo(Variable<SubstreamInfo>&, bool present, PSIBuffer&);
+        static void DisplaySubstreamInfo(TablesDisplay& display, bool present, const UString& margin, const UString& name, PSIBuffer&);
         static void SubstreamInfoToXML(const Variable<SubstreamInfo>&, const UString& name, xml::Element* parent);
         static bool SubstreamInfoFromXML(Variable<SubstreamInfo>&, const UString& name, const xml::Element* parent);
     };

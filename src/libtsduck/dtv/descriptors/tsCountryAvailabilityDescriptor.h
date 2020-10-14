@@ -38,15 +38,15 @@
 namespace ts {
     //!
     //! Representation of a country_availability_descriptor.
-    //! @see ETSI 300 468, 6.2.10.
+    //! @see ETSI EN 300 468, 6.2.10.
     //! @ingroup descriptor
     //!
     class TSDUCKDLL CountryAvailabilityDescriptor : public AbstractDescriptor
     {
     public:
         // Public members:
-        bool          country_availability; //!< See ETSI 300 468, 6.2.10.
-        UStringVector country_codes;        //!< See ETSI 300 468, 6.2.10.
+        bool          country_availability; //!< See ETSI EN 300 468, 6.2.10.
+        UStringVector country_codes;        //!< See ETSI EN 300 468, 6.2.10.
 
         //!
         //! Maximum number of entries to fit in 255 bytes.
@@ -73,14 +73,14 @@ namespace ts {
         CountryAvailabilityDescriptor(DuckContext& duck, const Descriptor& bin);
 
         // Inherited methods
-        virtual void serialize(DuckContext&, Descriptor&) const override;
-        virtual void deserialize(DuckContext&, const Descriptor&) override;
         DeclareDisplayDescriptor();
 
     protected:
         // Inherited methods
         virtual void clearContent() override;
+        virtual void serializePayload(PSIBuffer&) const override;
+        virtual void deserializePayload(PSIBuffer&) override;
         virtual void buildXML(DuckContext&, xml::Element*) const override;
-        virtual bool analyzeXML(DuckContext& duck, const xml::Element* element) override;
+        virtual bool analyzeXML(DuckContext&, const xml::Element*) override;
     };
 }

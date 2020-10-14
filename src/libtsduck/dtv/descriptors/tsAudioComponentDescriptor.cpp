@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -91,29 +92,24 @@ void ts::AudioComponentDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::AudioComponentDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::AudioComponentDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(0xF0 | stream_content);
-    bbp->appendUInt8(component_type);
-    bbp->appendUInt8(component_tag);
-    bbp->appendUInt8(stream_type);
-    bbp->appendUInt8(simulcast_group_tag);
-    bbp->appendUInt8((ISO_639_language_code_2.empty() ? 0x00 : 0x80) |
-                     (main_component ? 0x40 : 0x00) |
-                     uint8_t((quality_indicator & 0x03) << 4) |
-                     uint8_t((sampling_rate & 0x07) << 1) |
-                     0x01);
-    if (!SerializeLanguageCode(*bbp, ISO_639_language_code)) {
-        desc.invalidate();
-        return;
+    buf.putBits(0xFF, 4);
+    buf.putBits(stream_content, 4);
+    buf.putUInt8(component_type);
+    buf.putUInt8(component_tag);
+    buf.putUInt8(stream_type);
+    buf.putUInt8(simulcast_group_tag);
+    buf.putBit(!ISO_639_language_code_2.empty());
+    buf.putBit(main_component);
+    buf.putBits(quality_indicator, 2);
+    buf.putBits(sampling_rate, 3);
+    buf.putBit(1);
+    buf.putLanguageCode(ISO_639_language_code);
+    if (!ISO_639_language_code_2.empty()) {
+        buf.putLanguageCode(ISO_639_language_code_2);
     }
-    if (!ISO_639_language_code_2.empty() && !SerializeLanguageCode(*bbp, ISO_639_language_code_2)) {
-        desc.invalidate();
-        return;
-    }
-    bbp->append(duck.encoded(text));
-    serializeEnd(desc, bbp);
+    buf.putString(text);
 }
 
 
@@ -121,36 +117,24 @@ void ts::AudioComponentDescriptor::serialize(DuckContext& duck, Descriptor& desc
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::AudioComponentDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::AudioComponentDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 9;
-
-    ISO_639_language_code.clear();
-    ISO_639_language_code_2.clear();
-    text.clear();
-
-    if (_is_valid) {
-        stream_content = data[0] & 0x0F;
-        component_type = data[1];
-        component_tag = data[2];
-        stream_type = data[3];
-        simulcast_group_tag = data[4];
-        const bool multi = (data[5] & 0x80) != 0;
-        main_component = (data[5] & 0x40) != 0;
-        quality_indicator = (data[5] >> 4) & 0x03;
-        sampling_rate = (data[5] >> 1) & 0x07;
-        data += 6; size -= 6;
-
-        deserializeLanguageCode(ISO_639_language_code, data, size);
-        if (multi) {
-            deserializeLanguageCode(ISO_639_language_code_2, data, size);
-        }
-        if (_is_valid) {
-            duck.decode(text, data, size);
-        }
+    buf.skipBits(4);
+    buf.getBits(stream_content, 4);
+    component_type = buf.getUInt8();
+    component_tag = buf.getUInt8();
+    stream_type = buf.getUInt8();
+    simulcast_group_tag = buf.getUInt8();
+    const bool multi = buf.getBool();
+    main_component = buf.getBool();
+    buf.getBits(quality_indicator, 2);
+    buf.getBits(sampling_rate, 3);
+    buf.skipBits(1);
+    buf.getLanguageCode(ISO_639_language_code);
+    if (multi) {
+        buf.getLanguageCode(ISO_639_language_code_2);
     }
+    buf.getString(text);
 }
 
 
@@ -158,32 +142,26 @@ void ts::AudioComponentDescriptor::deserialize(DuckContext& duck, const Descript
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::AudioComponentDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::AudioComponentDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 9) {
-        const bool multi = (data[5] & 0x80) != 0;
-        strm << margin << UString::Format(u"Content type: 0x%X (%d)", {data[0] & 0x0F, data[0] & 0x0F}) << std::endl
-             << margin << "Component type: " << NameFromSection(u"ISDBAudioComponentType", data[1], names::FIRST) << std::endl
-             << margin << UString::Format(u"Component tag: 0x%X (%d)", {data[2], data[2]}) << std::endl
-             << margin << "Stream type: " << names::StreamType(data[3], names::FIRST) << std::endl
-             << margin << UString::Format(u"Simulcast group: 0x%X (%d%s)", {data[4], data[4], data[4] == 0xFF ? u", none" : u""}) << std::endl
-             << margin << UString::Format(u"Main component: %s", {(data[5] & 0x40) != 0}) << std::endl
-             << margin << "Quality indicator: " << NameFromSection(u"ISDBAudioQuality", (data[5] >> 4) & 0x03, names::FIRST) << std::endl
-             << margin << "Sampling rate: " << NameFromSection(u"ISDBAudioSampling", (data[5] >> 1) & 0x07, names::FIRST) << std::endl
-             << margin << "Language code: \"" << DeserializeLanguageCode(data + 6) << "\"" << std::endl;
-        data += 9; size -= 9;
-        if (multi && size >= 3) {
-            strm << margin << "Language code 2: \"" << DeserializeLanguageCode(data) << "\"" << std::endl;
-            data += 3; size -= 3;
+    if (buf.canReadBytes(9)) {
+        buf.skipBits(4);
+        disp << margin << UString::Format(u"Content type: 0x%X (%<d)", {buf.getBits<uint8_t>(4)}) << std::endl;
+        disp << margin << "Component type: " << NameFromSection(u"ISDBAudioComponentType", buf.getUInt8(), names::FIRST) << std::endl;
+        disp << margin << UString::Format(u"Component tag: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        disp << margin << "Stream type: " << names::StreamType(buf.getUInt8(), names::FIRST) << std::endl;
+        const uint8_t group = buf.getUInt8();
+        disp << margin << UString::Format(u"Simulcast group: 0x%X (%<d%s)", {group, group == 0xFF ? u", none" : u""}) << std::endl;
+        const bool multi = buf.getBool();
+        disp << margin << UString::Format(u"Main component: %s", {buf.getBool()}) << std::endl;
+        disp << margin << "Quality indicator: " << NameFromSection(u"ISDBAudioQuality", buf.getBits<uint8_t>(2), names::FIRST) << std::endl;
+        disp << margin << "Sampling rate: " << NameFromSection(u"ISDBAudioSampling", buf.getBits<uint8_t>(3), names::FIRST) << std::endl;
+        buf.skipBits(1);
+        disp << margin << "Language code: \"" << buf.getLanguageCode() << "\"" << std::endl;
+        if (multi && buf.canReadBytes(3)) {
+            disp << margin << "Language code 2: \"" << buf.getLanguageCode() << "\"" << std::endl;
         }
-        strm << margin << "Text: \"" << duck.decoded(data, size) << "\"" << std::endl;
-    }
-    else {
-        display.displayExtraData(data, size, indent);
+        disp << margin << "Text: \"" << buf.getString() << "\"" << std::endl;
     }
 }
 
@@ -216,14 +194,14 @@ void ts::AudioComponentDescriptor::buildXML(DuckContext& duck, xml::Element* roo
 
 bool ts::AudioComponentDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return  element->getIntAttribute<uint8_t>(stream_content, u"stream_content", false, 0x02, 0x00, 0x0F) &&
-            element->getIntAttribute<uint8_t>(component_type, u"component_type", true) &&
-            element->getIntAttribute<uint8_t>(component_tag, u"component_tag", true) &&
-            element->getIntAttribute<uint8_t>(stream_type, u"stream_type", true) &&
-            element->getIntAttribute<uint8_t>(simulcast_group_tag, u"simulcast_group_tag", false, 0xFF) &&
+    return  element->getIntAttribute(stream_content, u"stream_content", false, 0x02, 0x00, 0x0F) &&
+            element->getIntAttribute(component_type, u"component_type", true) &&
+            element->getIntAttribute(component_tag, u"component_tag", true) &&
+            element->getIntAttribute(stream_type, u"stream_type", true) &&
+            element->getIntAttribute(simulcast_group_tag, u"simulcast_group_tag", false, 0xFF) &&
             element->getBoolAttribute(main_component, u"main_component", false, true) &&
-            element->getIntAttribute<uint8_t>(quality_indicator, u"quality_indicator", true, 0, 0, 3) &&
-            element->getIntAttribute<uint8_t>(sampling_rate, u"sampling_rate", true, 0, 0, 7) &&
+            element->getIntAttribute(quality_indicator, u"quality_indicator", true, 0, 0, 3) &&
+            element->getIntAttribute(sampling_rate, u"sampling_rate", true, 0, 0, 7) &&
             element->getAttribute(ISO_639_language_code, u"ISO_639_language_code", true, UString(), 3, 3) &&
             element->getAttribute(ISO_639_language_code_2, u"ISO_639_language_code_2", false, UString(), 3, 3) &&
             element->getAttribute(text, u"text");

@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsNames.h"
@@ -81,27 +82,28 @@ ts::LogoTransmissionDescriptor::LogoTransmissionDescriptor(DuckContext& duck, co
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::LogoTransmissionDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::LogoTransmissionDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(logo_transmission_type);
+    buf.putUInt8(logo_transmission_type);
     switch (logo_transmission_type) {
         case 0x01:
-            bbp->appendUInt16(0xFE00 | logo_id);
-            bbp->appendUInt16(0xF000 | logo_version);
-            bbp->appendUInt16(download_data_id);
+            buf.putBits(0xFF, 7);
+            buf.putBits(logo_id, 9);
+            buf.putBits(0xFF, 4);
+            buf.putBits(logo_version, 12);
+            buf.putUInt16(download_data_id);
             break;
         case 0x02:
-            bbp->appendUInt16(0xFE00 | logo_id);
+            buf.putBits(0xFF, 7);
+            buf.putBits(logo_id, 9);
             break;
         case 0x03:
-            bbp->append(duck.encoded(logo_char));
+            buf.putString(logo_char);
             break;
         default:
-            bbp->append(reserved_future_use);
+            buf.putBytes(reserved_future_use);
             break;
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -109,44 +111,27 @@ void ts::LogoTransmissionDescriptor::serialize(DuckContext& duck, Descriptor& de
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::LogoTransmissionDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::LogoTransmissionDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 1;
-
-    logo_char.clear();
-    reserved_future_use.clear();
-
-    if (_is_valid) {
-        logo_transmission_type = data[0];
-        data += 1; size -= 1;
-        switch (logo_transmission_type) {
-            case 0x01:
-                if (size != 6) {
-                    _is_valid = false;
-                }
-                else {
-                    logo_id = GetUInt16(data) & 0x01FF;
-                    logo_version = GetUInt16(data + 2) & 0x0FFF;
-                    download_data_id = GetUInt16(data + 4);
-                }
-                break;
-            case 0x02:
-                if (size != 2) {
-                    _is_valid = false;
-                }
-                else {
-                    logo_id = GetUInt16(data) & 0x01FF;
-                }
-                break;
-            case 0x03:
-                duck.decode(logo_char, data, size);
-                break;
-            default:
-                reserved_future_use.copy(data, size);
-                break;
-        }
+    logo_transmission_type = buf.getUInt8();
+    switch (logo_transmission_type) {
+        case 0x01:
+            buf.skipBits(7);
+            buf.getBits(logo_id, 9);
+            buf.skipBits(4);
+            buf.getBits(logo_version, 12);
+            download_data_id = buf.getUInt16();
+            break;
+        case 0x02:
+            buf.skipBits(7);
+            buf.getBits(logo_id, 9);
+            break;
+        case 0x03:
+            buf.getString(logo_char);
+            break;
+        default:
+            buf.getBytes(reserved_future_use);
+            break;
     }
 }
 
@@ -155,44 +140,27 @@ void ts::LogoTransmissionDescriptor::deserialize(DuckContext& duck, const Descri
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::LogoTransmissionDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::LogoTransmissionDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size > 0) {
-        const uint8_t ttype = data[0];
-        strm << margin << "Logo transmission type: " << NameFromSection(u"LogoTransmissionType", ttype, names::HEXA_FIRST) << std::endl;
-        data += 1; size -= 1;
-
-        switch (ttype) {
-            case 0x01:
-                if (size >= 6) {
-                    const uint16_t id = GetUInt16(data) & 0x01FF;
-                    const uint16_t version = GetUInt16(data + 2) & 0x0FFF;
-                    const uint16_t ddid = GetUInt16(data + 4);
-                    data += 6; size -= 6;
-                    strm << margin << UString::Format(u"Logo id: 0x%03X (%d)", {id, id}) << std::endl
-                         << margin << UString::Format(u"Logo version: 0x%03X (%d)", {version, version}) << std::endl
-                         << margin << UString::Format(u"Download data id: 0x%X (%d)", {ddid, ddid}) << std::endl;
-                }
-                display.displayExtraData(data, size, indent);
-                break;
-            case 0x02:
-                if (size >= 2) {
-                    const uint16_t id = GetUInt16(data) & 0x01FF;
-                    data += 2; size -= 2;
-                    strm << margin << UString::Format(u"Logo id: 0x%03X (%d)", {id, id}) << std::endl;
-                }
-                display.displayExtraData(data, size, indent);
-                break;
-            case 0x03:
-                strm << margin << "Logo characters: \"" << duck.decoded(data, size) << "\"" << std::endl;
-                break;
-            default:
-                display.displayPrivateData(u"Reserved for future use", data, size, indent);
-                break;
+    if (buf.canReadBytes(1)) {
+        const uint8_t ttype = buf.getUInt8();
+        disp << margin << "Logo transmission type: " << NameFromSection(u"LogoTransmissionType", ttype, names::HEXA_FIRST) << std::endl;
+        if (ttype == 0x01 && buf.canReadBytes(6)) {
+            buf.skipBits(7);
+            disp << margin << UString::Format(u"Logo id: 0x%03X (%<d)", {buf.getBits<uint16_t>(9)}) << std::endl;
+            buf.skipBits(4);
+            disp << margin << UString::Format(u"Logo version: 0x%03X (%<d)", {buf.getBits<uint16_t>(12)}) << std::endl;
+            disp << margin << UString::Format(u"Download data id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        }
+        else if (ttype == 0x02 && buf.canReadBytes(2)) {
+            buf.skipBits(7);
+            disp << margin << UString::Format(u"Logo id: 0x%03X (%<d)", {buf.getBits<uint16_t>(9)}) << std::endl;
+        }
+        else if (ttype == 0x03) {
+            disp << margin << "Logo characters: \"" << buf.getString() << "\"" << std::endl;
+        }
+        else {
+            disp.displayPrivateData(u"Reserved for future use", buf, NPOS, margin);
         }
     }
 }
@@ -230,10 +198,10 @@ void ts::LogoTransmissionDescriptor::buildXML(DuckContext& duck, xml::Element* r
 
 bool ts::LogoTransmissionDescriptor::analyzeXML(DuckContext& duck, const xml::Element* element)
 {
-    return element->getIntAttribute<uint8_t>(logo_transmission_type, u"logo_transmission_type", true) &&
-           element->getIntAttribute<uint16_t>(logo_id, u"logo_id", logo_transmission_type == 0x01 || logo_transmission_type == 0x02, 0, 0, 0x01FF) &&
-           element->getIntAttribute<uint16_t>(logo_version, u"logo_version", logo_transmission_type == 0x01, 0, 0, 0x0FFF) &&
-           element->getIntAttribute<uint16_t>(download_data_id, u"download_data_id", logo_transmission_type == 0x01) &&
+    return element->getIntAttribute(logo_transmission_type, u"logo_transmission_type", true) &&
+           element->getIntAttribute(logo_id, u"logo_id", logo_transmission_type == 0x01 || logo_transmission_type == 0x02, 0, 0, 0x01FF) &&
+           element->getIntAttribute(logo_version, u"logo_version", logo_transmission_type == 0x01, 0, 0, 0x0FFF) &&
+           element->getIntAttribute(download_data_id, u"download_data_id", logo_transmission_type == 0x01) &&
            element->getAttribute(logo_char, u"logo_char", logo_transmission_type == 0x03) &&
            element->getHexaTextChild(reserved_future_use, u"reserved_future_use");
 }

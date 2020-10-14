@@ -31,6 +31,7 @@
 #include "tsDescriptor.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 TSDUCK_SOURCE;
@@ -73,13 +74,11 @@ void ts::IBPDescriptor::clearContent()
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::IBPDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::IBPDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt16((closed_gop ? 0x8000 : 0x0000) |
-                      (identical_gop ? 0x4000 : 0x0000) |
-                      (max_gop_length & 0x3FFF));
-    serializeEnd(desc, bbp);
+    buf.putBit(closed_gop);
+    buf.putBit(identical_gop);
+    buf.putBits(max_gop_length, 14);
 }
 
 
@@ -87,18 +86,11 @@ void ts::IBPDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::IBPDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::IBPDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-
-    _is_valid = desc.isValid() && desc.tag() == tag() && size == 2;
-
-    if (_is_valid) {
-        closed_gop = (data[0] & 0x80) != 0;
-        identical_gop = (data[0] & 0x40) != 0;
-        max_gop_length = GetUInt16(data) & 0x3FFF;
-    }
+    closed_gop = buf.getBool();
+    identical_gop = buf.getBool();
+    buf.getBits(max_gop_length, 14);
 }
 
 
@@ -106,24 +98,13 @@ void ts::IBPDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::IBPDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::IBPDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 2) {
-        const uint16_t n = GetUInt16(data);
-        data += 2; size -= 2;
-        strm << margin
-             << UString::Format(u"Closed GOP: %s, identical GOP: %s, max GOP length: 0x%X (%'d)",
-                                {UString::YesNo((n & 0x8000) != 0),
-                                 UString::YesNo((n & 0x4000) != 0),
-                                 n & 0x3FFF, n & 0x3FFF})
-             << std::endl;
+    if (buf.canReadBytes(2)) {
+        disp << margin << UString::Format(u"Closed GOP: %s", {buf.getBool()});
+        disp << UString::Format(u", identical GOP: %s", {buf.getBool()});
+        disp << UString::Format(u", max GOP length: 0x%X (%<'d)", {buf.getBits<uint16_t>(14)}) << std::endl;
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -147,5 +128,5 @@ bool ts::IBPDescriptor::analyzeXML(DuckContext& duck, const xml::Element* elemen
 {
     return element->getBoolAttribute(closed_gop, u"closed_gop", true) &&
            element->getBoolAttribute(identical_gop, u"identical_gop", true) &&
-           element->getIntAttribute<uint16_t>(max_gop_length, u"max_gop_length", true, 0, 0x0001, 0x3FFF);
+           element->getIntAttribute(max_gop_length, u"max_gop_length", true, 0, 0x0001, 0x3FFF);
 }

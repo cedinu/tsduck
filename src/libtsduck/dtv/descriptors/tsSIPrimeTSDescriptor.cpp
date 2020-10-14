@@ -32,6 +32,7 @@
 #include "tsNames.h"
 #include "tsTablesDisplay.h"
 #include "tsPSIRepository.h"
+#include "tsPSIBuffer.h"
 #include "tsDuckContext.h"
 #include "tsxmlElement.h"
 #include "tsMJD.h"
@@ -86,19 +87,17 @@ ts::SIPrimeTSDescriptor::Entry::Entry() :
 // Serialization
 //----------------------------------------------------------------------------
 
-void ts::SIPrimeTSDescriptor::serialize(DuckContext& duck, Descriptor& desc) const
+void ts::SIPrimeTSDescriptor::serializePayload(PSIBuffer& buf) const
 {
-    ByteBlockPtr bbp(serializeStart());
-    bbp->appendUInt8(parameter_version);
-    EncodeMJD(update_time, bbp->enlarge(2), 2);  // date only
-    bbp->appendUInt16(SI_prime_TS_network_id);
-    bbp->appendUInt16(SI_prime_transport_stream_id);
+    buf.putUInt8(parameter_version);
+    buf.putMJD(update_time, 2);  // date only
+    buf.putUInt16(SI_prime_TS_network_id);
+    buf.putUInt16(SI_prime_transport_stream_id);
     for (auto it = entries.begin(); it != entries.end(); ++it) {
-        bbp->appendUInt8(it->table_id);
-        bbp->appendUInt8(uint8_t(it->table_description.size()));
-        bbp->append(it->table_description);
+        buf.putUInt8(it->table_id);
+        buf.putUInt8(uint8_t(it->table_description.size()));
+        buf.putBytes(it->table_description);
     }
-    serializeEnd(desc, bbp);
 }
 
 
@@ -106,28 +105,18 @@ void ts::SIPrimeTSDescriptor::serialize(DuckContext& duck, Descriptor& desc) con
 // Deserialization
 //----------------------------------------------------------------------------
 
-void ts::SIPrimeTSDescriptor::deserialize(DuckContext& duck, const Descriptor& desc)
+void ts::SIPrimeTSDescriptor::deserializePayload(PSIBuffer& buf)
 {
-    const uint8_t* data = desc.payload();
-    size_t size = desc.payloadSize();
-    _is_valid = desc.isValid() && desc.tag() == tag() && size >= 7;
-    entries.clear();
-
-    if (_is_valid) {
-        parameter_version = data[0];
-        DecodeMJD(data + 1, 2, update_time);
-        SI_prime_TS_network_id = GetUInt16(data + 3);
-        SI_prime_transport_stream_id = GetUInt16(data + 5);
-        data += 7; size -= 7;
-
-        while (size >= 2) {
-            Entry e;
-            e.table_id = data[0];
-            const size_t len = std::min<size_t>(data[1], size - 2);
-            e.table_description.copy(data + 2, len);
-            entries.push_back(e);
-            data += 2 + len; size -= 2 + len;
-        }
+    parameter_version = buf.getUInt8();
+    update_time = buf.getMJD(2);  // date only
+    SI_prime_TS_network_id = buf.getUInt16();
+    SI_prime_transport_stream_id = buf.getUInt16();
+    while (buf.canRead()) {
+        Entry e;
+        e.table_id = buf.getUInt8();
+        const size_t len = buf.getUInt8();
+        buf.getBytes(e.table_description, len);
+        entries.push_back(e);
     }
 }
 
@@ -136,34 +125,18 @@ void ts::SIPrimeTSDescriptor::deserialize(DuckContext& duck, const Descriptor& d
 // Static method to display a descriptor.
 //----------------------------------------------------------------------------
 
-void ts::SIPrimeTSDescriptor::DisplayDescriptor(TablesDisplay& display, DID did, const uint8_t* data, size_t size, int indent, TID tid, PDS pds)
+void ts::SIPrimeTSDescriptor::DisplayDescriptor(TablesDisplay& disp, PSIBuffer& buf, const UString& margin, DID did, TID tid, PDS pds)
 {
-    DuckContext& duck(display.duck());
-    std::ostream& strm(duck.out());
-    const std::string margin(indent, ' ');
-
-    if (size >= 7) {
-        const uint8_t version = data[0];
-        Time update;
-        DecodeMJD(data + 1, 2, update);
-        const uint16_t net_id = GetUInt16(data + 3);
-        const uint16_t ts_id = GetUInt16(data + 5);
-        data += 7; size -= 7;
-
-        strm << margin << UString::Format(u"Parameter version: 0x%X (%d)", {version, version}) << std::endl
-             << margin << "Update time: " << update.format(Time::DATE) << std::endl
-             << margin << UString::Format(u"SI prime TS network id: 0x%X (%d)", {net_id, net_id}) << std::endl
-             << margin << UString::Format(u"SI prime TS id: 0x%X (%d)", {ts_id, ts_id}) << std::endl;
-
-        while (size >= 2) {
-            strm << margin << "- Table id: " << names::TID(duck, data[0], CASID_NULL, names::HEXA_FIRST) << std::endl;
-            const size_t len = std::min<size_t>(data[1], size - 2);
-            display.displayPrivateData(u"Table description", data + 2, len, indent + 2);
-            data += 2 + len; size -= 2 + len;
+    if (buf.canReadBytes(7)) {
+        disp << margin << UString::Format(u"Parameter version: 0x%X (%<d)", {buf.getUInt8()}) << std::endl;
+        disp << margin << "Update time: " << buf.getMJD(2).format(Time::DATE) << std::endl;
+        disp << margin << UString::Format(u"SI prime TS network id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        disp << margin << UString::Format(u"SI prime TS id: 0x%X (%<d)", {buf.getUInt16()}) << std::endl;
+        while (buf.canReadBytes(2)) {
+            disp << margin << "- Table id: " << names::TID(disp.duck(), buf.getUInt8(), CASID_NULL, names::HEXA_FIRST) << std::endl;
+            disp.displayPrivateData(u"Table description", buf, buf.getUInt8(), margin + u"  ");
         }
     }
-
-    display.displayExtraData(data, size, indent);
 }
 
 
@@ -195,15 +168,15 @@ bool ts::SIPrimeTSDescriptor::analyzeXML(DuckContext& duck, const xml::Element* 
 {
     xml::ElementVector xtables;
     bool ok =
-        element->getIntAttribute<uint8_t>(parameter_version, u"parameter_version", true) &&
+        element->getIntAttribute(parameter_version, u"parameter_version", true) &&
         element->getDateAttribute(update_time, u"update_time", true) &&
-        element->getIntAttribute<uint16_t>(SI_prime_TS_network_id, u"SI_prime_TS_network_id", true) &&
-        element->getIntAttribute<uint16_t>(SI_prime_transport_stream_id, u"SI_prime_transport_stream_id", true) &&
+        element->getIntAttribute(SI_prime_TS_network_id, u"SI_prime_TS_network_id", true) &&
+        element->getIntAttribute(SI_prime_transport_stream_id, u"SI_prime_transport_stream_id", true) &&
         element->getChildren(xtables, u"table");
 
     for (auto it = xtables.begin(); ok && it != xtables.end(); ++it) {
         Entry entry;
-        ok = (*it)->getIntAttribute<uint8_t>(entry.table_id, u"id", true) &&
+        ok = (*it)->getIntAttribute(entry.table_id, u"id", true) &&
              (*it)->getHexaText(entry.table_description, 0, 255);
         entries.push_back(entry);
     }
